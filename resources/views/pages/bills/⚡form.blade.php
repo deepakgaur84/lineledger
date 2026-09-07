@@ -504,7 +504,12 @@ new #[Title('Bill')] class extends Component
 
         $validated = $this->validate([
             'contact_id' => ['required', 'integer', Rule::exists('contacts', 'id')->where('company_id', $companyId)->where('is_vendor', true)],
-            'bill_no' => ['required', 'string', 'max:40'],
+            'bill_no' => [
+                'required', 'string', 'max:40',
+                Rule::unique('bills', 'bill_no')
+                    ->where('company_id', $companyId)
+                    ->ignore($this->bill?->id),
+            ],
             'vendor_reference' => ['nullable', 'string', 'max:100'],
             'bill_date' => ['required', 'date'],
             'due_date' => ['required', 'date'],

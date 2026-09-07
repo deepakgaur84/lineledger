@@ -328,7 +328,12 @@ new #[Title('Sales Order')] class extends Component
 
         $validated = $this->validate([
             'contact_id' => ['required', 'integer', Rule::exists('contacts', 'id')->where('company_id', $companyId)->where('is_customer', true)],
-            'order_no' => ['required', 'string', 'max:40'],
+            'order_no' => [
+                'required', 'string', 'max:40',
+                Rule::unique('sales_orders', 'order_no')
+                    ->where('company_id', $companyId)
+                    ->ignore($this->salesOrder?->id),
+            ],
             'order_date' => ['required', 'date'],
             'expected_date' => ['nullable', 'date'],
             'terms_id' => ['nullable', 'integer', Rule::exists('payment_terms', 'id')->where('company_id', $companyId)],

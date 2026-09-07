@@ -72,6 +72,13 @@ final class SaveSalesOrder
                 'customer_message' => $data['customer_message'] ?? null,
             ];
 
+            // The number is user-editable, so a correction has to reach an existing
+            // sales order too — not just the create below. filled() keeps a partial update
+            // that omits the key from blanking the current number.
+            if (filled($data['order_no'] ?? null)) {
+                $header['order_no'] = $data['order_no'];
+            }
+
             if ($salesOrder && $salesOrder->exists) {
                 $salesOrder->update($header);
             } else {

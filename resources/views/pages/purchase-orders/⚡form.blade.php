@@ -298,7 +298,12 @@ new #[Title('Purchase Order')] class extends Component
 
         $validated = $this->validate([
             'contact_id' => ['required', 'integer', Rule::exists('contacts', 'id')->where('company_id', $companyId)->where('is_vendor', true)],
-            'po_no' => ['required', 'string', 'max:40'],
+            'po_no' => [
+                'required', 'string', 'max:40',
+                Rule::unique('purchase_orders', 'po_no')
+                    ->where('company_id', $companyId)
+                    ->ignore($this->purchaseOrder?->id),
+            ],
             'po_date' => ['required', 'date'],
             'expected_date' => ['nullable', 'date'],
             'terms_id' => ['nullable', 'integer', Rule::exists('payment_terms', 'id')->where('company_id', $companyId)],

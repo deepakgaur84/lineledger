@@ -236,7 +236,12 @@ new #[Title('Make deposit')] class extends Component
 
         $validated = $this->validate([
             'bank_account_id' => ['required', 'integer', Rule::exists('accounts', 'id')->where('company_id', $companyId)->where('subtype', AccountSubtype::Bank->value)],
-            'deposit_no' => ['required', 'string', 'max:40'],
+            'deposit_no' => [
+                'required', 'string', 'max:40',
+                Rule::unique('deposits', 'deposit_no')
+                    ->where('company_id', $companyId)
+                    ->ignore($this->deposit?->id),
+            ],
             'deposit_date' => ['required', 'date'],
             'memo' => ['nullable', 'string'],
             'otherLines.*.account_id' => ['nullable', 'integer', Rule::exists('accounts', 'id')->where('company_id', $companyId)],

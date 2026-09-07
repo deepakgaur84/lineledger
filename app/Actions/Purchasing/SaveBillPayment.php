@@ -53,6 +53,13 @@ final class SaveBillPayment
                 'memo' => $data['memo'] ?? null,
             ];
 
+            // The number is user-editable, so a correction has to reach an existing
+            // payment too — not just the create below. filled() keeps a partial update
+            // that omits the key from blanking the current number.
+            if (filled($data['payment_no'] ?? null)) {
+                $header['payment_no'] = $data['payment_no'];
+            }
+
             if ($payment && $payment->exists) {
                 $payment->update($header);
             } else {

@@ -76,6 +76,13 @@ final class SaveInvoice
                 'customer_message' => $data['customer_message'] ?? null,
             ];
 
+            // The number is user-editable, so a correction has to reach an existing
+            // invoice too — not just the create below. filled() keeps a partial update
+            // that omits the key from blanking the current number.
+            if (filled($data['invoice_no'] ?? null)) {
+                $header['invoice_no'] = $data['invoice_no'];
+            }
+
             if ($invoice && $invoice->exists) {
                 $invoice->update($header);
             } else {

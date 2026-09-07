@@ -59,6 +59,13 @@ final class SaveSalesReceipt
                 'memo' => $data['memo'] ?? null,
             ];
 
+            // The number is user-editable, so a correction has to reach an existing
+            // sales receipt too — not just the create below. filled() keeps a partial update
+            // that omits the key from blanking the current number.
+            if (filled($data['sales_receipt_no'] ?? null)) {
+                $header['sales_receipt_no'] = $data['sales_receipt_no'];
+            }
+
             if ($receipt && $receipt->exists) {
                 $receipt->update($header);
             } else {

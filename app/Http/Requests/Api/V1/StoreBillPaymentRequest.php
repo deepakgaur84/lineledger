@@ -40,7 +40,7 @@ class StoreBillPaymentRequest extends FormRequest
                     ->where('company_id', $company->id)
                     ->where($contactRole, true),
             ],
-            'payment_no' => ['nullable', 'string', 'max:40'],
+            'payment_no' => ['nullable', 'string', 'max:40', Rule::unique('bill_payments', 'payment_no')->where('company_id', $company->id)],
             'payment_date' => ['required', 'date'],
             'paid_from_account_id' => ['required', 'integer', $inCompany('accounts')],
             'payment_method_id' => ['nullable', 'integer', $inCompany('payment_methods')],

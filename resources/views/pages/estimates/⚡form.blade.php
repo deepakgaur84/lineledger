@@ -318,7 +318,12 @@ new #[Title('Estimate')] class extends Component
 
         $validated = $this->validate([
             'contact_id' => ['required', 'integer', Rule::exists('contacts', 'id')->where('company_id', $companyId)->where('is_customer', true)],
-            'estimate_no' => ['required', 'string', 'max:40'],
+            'estimate_no' => [
+                'required', 'string', 'max:40',
+                Rule::unique('estimates', 'estimate_no')
+                    ->where('company_id', $companyId)
+                    ->ignore($this->estimate?->id),
+            ],
             'estimate_date' => ['required', 'date'],
             'expires_on' => ['nullable', 'date'],
             'terms_id' => ['nullable', 'integer', Rule::exists('payment_terms', 'id')->where('company_id', $companyId)],

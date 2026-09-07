@@ -69,6 +69,13 @@ final class SaveBill
                 'memo' => $data['memo'] ?? null,
             ];
 
+            // The number is user-editable, so a correction has to reach an existing
+            // bill too — not just the create below. filled() keeps a partial update
+            // that omits the key from blanking the current number.
+            if (filled($data['bill_no'] ?? null)) {
+                $header['bill_no'] = $data['bill_no'];
+            }
+
             if ($bill && $bill->exists) {
                 $bill->update($header);
             } else {

@@ -349,7 +349,12 @@ new #[Title('Vendor credit')] class extends Component
 
         $validated = $this->validate([
             'contact_id' => ['required', 'integer', Rule::exists('contacts', 'id')->where('company_id', $companyId)->where('is_vendor', true)],
-            'vendor_credit_no' => ['required', 'string', 'max:40'],
+            'vendor_credit_no' => [
+                'required', 'string', 'max:40',
+                Rule::unique('vendor_credits', 'vendor_credit_no')
+                    ->where('company_id', $companyId)
+                    ->ignore($this->vendorCredit?->id),
+            ],
             'vendor_credit_date' => ['required', 'date'],
             'memo' => ['nullable', 'string'],
             'vendor_message' => ['nullable', 'string'],

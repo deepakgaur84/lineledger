@@ -33,7 +33,7 @@ class UpdateDepositRequest extends FormRequest
                     ->where('company_id', $company->id)
                     ->where('subtype', AccountSubtype::Bank->value),
             ],
-            'deposit_no' => ['nullable', 'string', 'max:40'],
+            'deposit_no' => ['nullable', 'string', 'max:40', Rule::unique('deposits', 'deposit_no')->where('company_id', $company->id)->ignore($this->route('deposit')?->id)],
             'deposit_date' => ['required', 'date'],
             'memo' => ['nullable', 'string'],
 

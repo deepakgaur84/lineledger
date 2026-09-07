@@ -47,6 +47,13 @@ final class SaveDeposit
                 'memo' => $data['memo'] ?? null,
             ];
 
+            // The number is user-editable, so a correction has to reach an existing
+            // deposit too — not just the create below. filled() keeps a partial update
+            // that omits the key from blanking the current number.
+            if (filled($data['deposit_no'] ?? null)) {
+                $header['deposit_no'] = $data['deposit_no'];
+            }
+
             if ($deposit && $deposit->exists) {
                 $deposit->update($header);
             } else {

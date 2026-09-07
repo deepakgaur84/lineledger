@@ -60,6 +60,13 @@ final class SavePurchaseOrder
                 'vendor_message' => $data['vendor_message'] ?? null,
             ];
 
+            // The number is user-editable, so a correction has to reach an existing
+            // purchase order too — not just the create below. filled() keeps a partial update
+            // that omits the key from blanking the current number.
+            if (filled($data['po_no'] ?? null)) {
+                $header['po_no'] = $data['po_no'];
+            }
+
             if ($purchaseOrder && $purchaseOrder->exists) {
                 $purchaseOrder->update($header);
             } else {

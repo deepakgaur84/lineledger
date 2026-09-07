@@ -157,7 +157,12 @@ new #[Title('Pay bills')] class extends Component {
 
         $validated = $this->validate([
             'contact_id' => ['required', 'integer', Rule::exists('contacts', 'id')->where('company_id', $companyId)->where($roleFilter, true)],
-            'payment_no' => ['required', 'string', 'max:40'],
+            'payment_no' => [
+                'required', 'string', 'max:40',
+                Rule::unique('bill_payments', 'payment_no')
+                    ->where('company_id', $companyId)
+                    ->ignore($this->payment?->id),
+            ],
             'payment_date' => ['required', 'date'],
             'paid_from_account_id' => ['required', 'integer', Rule::exists('accounts', 'id')->where('company_id', $companyId)],
             'payment_method_id' => ['nullable', 'integer', Rule::exists('payment_methods', 'id')->where('company_id', $companyId)],

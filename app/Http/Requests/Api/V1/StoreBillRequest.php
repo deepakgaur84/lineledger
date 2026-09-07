@@ -38,7 +38,7 @@ class StoreBillRequest extends FormRequest
                     ->where('company_id', $company->id)
                     ->where($contactRole, true),
             ],
-            'bill_no' => ['nullable', 'string', 'max:40'],
+            'bill_no' => ['nullable', 'string', 'max:40', Rule::unique('bills', 'bill_no')->where('company_id', $company->id)],
             'vendor_reference' => ['nullable', 'string', 'max:100'],
             'bill_date' => ['required', 'date'],
             'due_date' => ['nullable', 'date', 'after_or_equal:bill_date'],

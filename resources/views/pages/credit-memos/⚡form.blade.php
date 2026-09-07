@@ -386,7 +386,12 @@ new #[Title('Credit memo')] class extends Component
 
         $validated = $this->validate([
             'contact_id' => ['required', 'integer', Rule::exists('contacts', 'id')->where('company_id', $companyId)->where('is_customer', true)],
-            'credit_memo_no' => ['required', 'string', 'max:40'],
+            'credit_memo_no' => [
+                'required', 'string', 'max:40',
+                Rule::unique('credit_memos', 'credit_memo_no')
+                    ->where('company_id', $companyId)
+                    ->ignore($this->creditMemo?->id),
+            ],
             'credit_memo_date' => ['required', 'date'],
             'sales_rep_id' => ['nullable', 'integer', Rule::exists('contacts', 'id')->where('company_id', $companyId)->where('is_employee', true)],
             'memo' => ['nullable', 'string'],

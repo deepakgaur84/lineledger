@@ -262,7 +262,12 @@ new #[Title('Receive payment')] class extends Component {
 
         $validated = $this->validate([
             'contact_id' => ['required', 'integer', Rule::exists('contacts', 'id')->where('company_id', $companyId)->where('is_customer', true)],
-            'receipt_no' => ['required', 'string', 'max:40'],
+            'receipt_no' => [
+                'required', 'string', 'max:40',
+                Rule::unique('customer_receipts', 'receipt_no')
+                    ->where('company_id', $companyId)
+                    ->ignore($this->receipt?->id),
+            ],
             'receipt_date' => ['required', 'date'],
             'deposit_to_account_id' => ['required', 'integer', Rule::exists('accounts', 'id')->where('company_id', $companyId)],
             'payment_method_id' => ['nullable', 'integer', Rule::exists('payment_methods', 'id')->where('company_id', $companyId)],
