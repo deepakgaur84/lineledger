@@ -212,3 +212,59 @@ it('rejects an invoice whose lines net to exactly zero', function () {
         ->assertStatus(422)
         ->assertJsonValidationErrors(['lines']);
 });
+
+it('credits an employee contact as the sales rep', function () {
+    app()->instance('current_company', $this->company);
+    $rep = Contact::create(['display_name' => 'Annika Anderson', 'is_employee' => true]);
+    app()->forgetInstance('current_company');
+
+    $this->postJson('/api/v1/invoices', [
+        'contact_id' => $this->customer->id,
+        'sales_rep_id' => $rep->id,
+        'invoice_date' => '2026-05-20',
+        'lines' => [['quantity' => '1', 'unit_price_cents' => 5000, 'account_id' => $this->income->id]],
+    ], ['Authorization' => "Bearer {$this->plain}"])
+        ->assertStatus(201)
+        ->assertJsonPath('data.sales_rep_id', $rep->id);
+
+    expect(Invoice::query()->withoutGlobalScopes()->firstOrFail()->sales_rep_id)->toBe($rep->id);
+});
+
+it('leaves the sales rep null when none is sent', function () {
+    $this->postJson('/api/v1/invoices', [
+        'contact_id' => $this->customer->id,
+        'invoice_date' => '2026-05-20',
+        'lines' => [['quantity' => '1', 'unit_price_cents' => 5000, 'account_id' => $this->income->id]],
+    ], ['Authorization' => "Bearer {$this->plain}"])
+        ->assertStatus(201)
+        ->assertJsonPath('data.sales_rep_id', null);
+});
+
+it('rejects a sales rep that is not an employee contact', function () {
+    $this->postJson('/api/v1/invoices', [
+        'contact_id' => $this->customer->id,
+        'sales_rep_id' => $this->customer->id,
+        'invoice_date' => '2026-05-20',
+        'lines' => [['quantity' => '1', 'unit_price_cents' => 5000, 'account_id' => $this->income->id]],
+    ], ['Authorization' => "Bearer {$this->plain}"])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors(['sales_rep_id']);
+
+    expect(Invoice::query()->withoutGlobalScopes()->count())->toBe(0);
+});
+
+it('rejects a sales rep from another company', function () {
+    $other = Company::factory()->create();
+    app()->instance('current_company', $other);
+    $foreignRep = Contact::create(['display_name' => 'Someone Else', 'is_employee' => true]);
+    app()->forgetInstance('current_company');
+
+    $this->postJson('/api/v1/invoices', [
+        'contact_id' => $this->customer->id,
+        'sales_rep_id' => $foreignRep->id,
+        'invoice_date' => '2026-05-20',
+        'lines' => [['quantity' => '1', 'unit_price_cents' => 5000, 'account_id' => $this->income->id]],
+    ], ['Authorization' => "Bearer {$this->plain}"])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors(['sales_rep_id']);
+});

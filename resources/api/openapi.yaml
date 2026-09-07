@@ -491,6 +491,7 @@ components:
       properties:
         post: { type: boolean, default: true, description: Set false to create a draft. }
         contact_id: { type: integer }
+        sales_rep_id: { type: integer, description: "Employee contact credited with the sale. Must be a contact with is_employee set; reps only surface in the UI when the Employees feature is on." }
         invoice_date: { type: string, format: date }
         due_date: { type: string, format: date }
         terms_id: { type: integer }
@@ -521,6 +522,7 @@ components:
         id: { type: integer }
         invoice_no: { type: string }
         contact_id: { type: integer }
+        sales_rep_id: { type: [integer, "null"] }
         sales_order_id: { type: [integer, "null"] }
         invoice_date: { type: string, format: date }
         due_date: { type: string, format: date }
@@ -582,6 +584,7 @@ components:
       properties:
         post: { type: boolean, default: true }
         contact_id: { type: integer }
+        sales_rep_id: { type: integer, description: "Employee contact credited with the sale. Must be a contact with is_employee set; reps only surface in the UI when the Employees feature is on." }
         credit_memo_date: { type: string, format: date }
         memo: { type: string }
         lines: { type: array, items: { $ref: '#/components/schemas/InvoiceLineInput' } }

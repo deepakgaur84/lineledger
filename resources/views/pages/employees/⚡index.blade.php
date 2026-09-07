@@ -259,6 +259,20 @@ new #[Title('Employees')] class extends Component {
                 <flux:input wire:model="f_employee_id" :label="__('Employee ID')" :placeholder="__('e.g. EMP-014')" />
             </div>
 
+            {{-- The API's id for this person, shown only once they exist. Distinct
+                 from the Employee ID above, which is whatever payroll code the
+                 company types in. Same idea as Account ID (API) on the Accounts
+                 page: the one thing an integrator cannot work out from the UI. --}}
+            @if ($editingId)
+                <div>
+                    <flux:label>{{ __('Contact ID (API)') }}</flux:label>
+                    <div class="mt-1 font-mono text-sm text-muted-foreground" data-test="employee-api-id">{{ $editingId }}</div>
+                    <flux:text size="sm" class="mt-1 text-muted-foreground">
+                        {{ __('Pass this as sales_rep_id to credit this employee with a sale, or as contact_id on their expense records.') }}
+                    </flux:text>
+                </div>
+            @endif
+
             <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <flux:input wire:model="f_billing_line1" :label="__('Address')" class="md:col-span-2" />
                 <flux:input wire:model="f_billing_city" :label="__('City')" />

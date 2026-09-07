@@ -34,6 +34,13 @@ class StoreInvoiceRequest extends FormRequest
                     ->where('company_id', $company->id)
                     ->where('is_customer', true),
             ],
+            'sales_rep_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('contacts', 'id')
+                    ->where('company_id', $company->id)
+                    ->where('is_employee', true),
+            ],
             'invoice_date' => ['required', 'date'],
             'due_date' => ['nullable', 'date', 'after_or_equal:invoice_date'],
             'terms_id' => ['nullable', 'integer', $inCompany('payment_terms')],

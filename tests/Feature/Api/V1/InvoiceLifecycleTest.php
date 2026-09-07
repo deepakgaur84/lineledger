@@ -199,3 +199,32 @@ it('rejects an update whose lines net to a credit', function () {
     // The posted invoice is untouched.
     expect((int) Invoice::query()->withoutGlobalScopes()->findOrFail($id)->total_cents)->toBe(10000);
 });
+
+it('changes the sales rep on update and reposts', function () {
+    app()->instance('current_company', $this->company);
+    $first = Contact::create(['display_name' => 'Annika Anderson', 'is_employee' => true]);
+    $second = Contact::create(['display_name' => 'Kristi Olson', 'is_employee' => true]);
+    app()->forgetInstance('current_company');
+
+    $id = $this->postJson('/api/v1/invoices', invoicePayload(['sales_rep_id' => $first->id]), authHeader())
+        ->assertStatus(201)
+        ->json('data.id');
+
+    $this->patchJson("/api/v1/invoices/{$id}", invoicePayload(['sales_rep_id' => $second->id]), authHeader())
+        ->assertStatus(200)
+        ->assertJsonPath('data.sales_rep_id', $second->id);
+});
+
+it('clears the sales rep when update omits it', function () {
+    app()->instance('current_company', $this->company);
+    $rep = Contact::create(['display_name' => 'Annika Anderson', 'is_employee' => true]);
+    app()->forgetInstance('current_company');
+
+    $id = $this->postJson('/api/v1/invoices', invoicePayload(['sales_rep_id' => $rep->id]), authHeader())->json('data.id');
+
+    // PATCH replaces the whole document (see docs §7), so an omitted rep is a
+    // cleared rep — not a kept one.
+    $this->patchJson("/api/v1/invoices/{$id}", invoicePayload(), authHeader())
+        ->assertStatus(200)
+        ->assertJsonPath('data.sales_rep_id', null);
+});

@@ -31,6 +31,13 @@ class UpdateCreditMemoRequest extends FormRequest
                     ->where('company_id', $company->id)
                     ->where('is_customer', true),
             ],
+            'sales_rep_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('contacts', 'id')
+                    ->where('company_id', $company->id)
+                    ->where('is_employee', true),
+            ],
             'credit_memo_date' => ['required', 'date'],
             'memo' => ['nullable', 'string'],
 

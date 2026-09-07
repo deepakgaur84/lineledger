@@ -352,6 +352,7 @@ Common causes:
   `deposit_to_account_id`). Every `*_id` is validated against the calling key's
   company — an id from another company is a validation error, not a 404.
 - `contact_id` exists but doesn't hold the required role (`is_customer = false`).
+- `sales_rep_id` points at a contact that isn't an employee (`is_employee = false`).
 - `applications.*.invoice_id` doesn't belong to the same `contact_id`, or is in
   `draft` / `void` / `paid`.
 - Sum of `applications[].amount_cents` exceeds `amount_cents`.
@@ -419,6 +420,7 @@ When validating `*_id` fields you'll see referenced in payloads:
 | `item_id` | `items` | **Settings → Lists → Items**, or `/api/v1/items`. The MCP `items-catalog-tool` reports the id as `API id`. |
 | `payment_method_id` | `payment_methods` | **Settings → Lists → Payment methods**, or `/api/v1/payment-methods`. The MCP `payment-methods-tool` reports the id as `API id`. |
 | `contact_id` | `contacts` | `/api/v1/customers`, `/vendors`, `/employees`, or the web UI. The MCP `contacts-directory-tool` reports the id as `API id`. |
+| `sales_rep_id` | `contacts` | `/api/v1/employees`, or the **Employees** page in the web UI — edit an employee and read **Contact ID (API)**. Only a contact with `is_employee` qualifies; a customer id here is a validation error. |
 
 All of these are scoped per company; an ID is only valid for the
 company that owns the API key making the call.

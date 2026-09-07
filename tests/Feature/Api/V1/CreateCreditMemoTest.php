@@ -55,3 +55,33 @@ it('requires at least one line', function () {
         ->assertStatus(422)
         ->assertJsonValidationErrors(['lines']);
 });
+
+it('credits an employee contact as the sales rep', function () {
+    app()->instance('current_company', $this->company);
+    $rep = Contact::create(['display_name' => 'Annika Anderson', 'is_employee' => true]);
+    app()->forgetInstance('current_company');
+
+    $this->postJson('/api/v1/credit-memos', [
+        'contact_id' => $this->customer->id,
+        'sales_rep_id' => $rep->id,
+        'credit_memo_date' => '2026-05-20',
+        'lines' => [['quantity' => '1', 'unit_price_cents' => 3000, 'account_id' => $this->income->id]],
+    ], ['Authorization' => "Bearer {$this->plain}"])
+        ->assertStatus(201)
+        ->assertJsonPath('data.sales_rep_id', $rep->id);
+
+    expect(CreditMemo::query()->withoutGlobalScopes()->firstOrFail()->sales_rep_id)->toBe($rep->id);
+});
+
+it('rejects a credit-memo sales rep that is not an employee contact', function () {
+    $this->postJson('/api/v1/credit-memos', [
+        'contact_id' => $this->customer->id,
+        'sales_rep_id' => $this->customer->id,
+        'credit_memo_date' => '2026-05-20',
+        'lines' => [['quantity' => '1', 'unit_price_cents' => 3000, 'account_id' => $this->income->id]],
+    ], ['Authorization' => "Bearer {$this->plain}"])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors(['sales_rep_id']);
+
+    expect(CreditMemo::query()->withoutGlobalScopes()->count())->toBe(0);
+});

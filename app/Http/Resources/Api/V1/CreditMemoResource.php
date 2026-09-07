@@ -20,6 +20,7 @@ class CreditMemoResource extends JsonResource
             'id' => $this->id,
             'credit_memo_no' => $this->credit_memo_no,
             'contact_id' => $this->contact_id,
+            'sales_rep_id' => $this->sales_rep_id,
             'credit_memo_date' => optional($this->credit_memo_date)->toDateString(),
             'status' => $this->status?->value,
             'subtotal_cents' => (int) $this->subtotal_cents,

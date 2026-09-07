@@ -20,6 +20,7 @@ class InvoiceResource extends JsonResource
             'id' => $this->id,
             'invoice_no' => $this->invoice_no,
             'contact_id' => $this->contact_id,
+            'sales_rep_id' => $this->sales_rep_id,
             'sales_order_id' => $this->sales_order_id,
             'invoice_date' => optional($this->invoice_date)->toDateString(),
             'due_date' => optional($this->due_date)->toDateString(),
