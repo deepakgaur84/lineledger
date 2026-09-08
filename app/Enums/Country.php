@@ -6,6 +6,7 @@ use App\Models\Company;
 use App\Support\Defaults\AmericanDefaults;
 use App\Support\Defaults\CanadianDefaults;
 use App\Support\Defaults\CompanyDefaults;
+use App\Support\Defaults\GenericDefaults;
 
 /**
  * The legal jurisdiction a company operates under. Set once at creation and
@@ -15,17 +16,27 @@ use App\Support\Defaults\CompanyDefaults;
  *
  * Add new cases here when expanding internationally. Each case must implement
  * every method below — there is no fallback.
+ *
+ * `Global` is a deliberate escape hatch rather than a real jurisdiction: it
+ * covers any company outside CA/US with no jurisdiction-specific compliance
+ * built in. Region, currency, and tax setup are the owner's own responsibility
+ * (see GenericDefaults) — this exists so the app is usable everywhere, not so
+ * it's correct everywhere. Prefer adding a proper Country case with its own
+ * CompanyDefaults implementation over relying on Global once a jurisdiction's
+ * rules are actually known.
  */
 enum Country: string
 {
     case Canada = 'CA';
     case UnitedStates = 'US';
+    case Global = 'GLOBAL';
 
     public function label(): string
     {
         return match ($this) {
             self::Canada => 'Canada',
             self::UnitedStates => 'United States',
+            self::Global => 'Other / Global',
         };
     }
 
@@ -37,6 +48,7 @@ enum Country: string
         return match ($this) {
             self::Canada => '🇨🇦',
             self::UnitedStates => '🇺🇸',
+            self::Global => '🌐',
         };
     }
 
@@ -44,6 +56,10 @@ enum Country: string
      * Resolve the deployment's country from its request host: a `.ca` apex maps
      * to Canada, anything else (`.com`, `localhost`, …) to the United States.
      * Used to tailor the guest country-switcher banner to the site being viewed.
+     *
+     * Global is never inferred from host — it's only reachable by explicitly
+     * picking it in the company wizard's country dropdown, or by an operator
+     * setting APP_REGION=GLOBAL for a self-hosted, non-CA/US deployment.
      */
     public static function fromHost(?string $host): self
     {
@@ -52,11 +68,16 @@ enum Country: string
         return str_ends_with($host, '.ca') ? self::Canada : self::UnitedStates;
     }
 
+    /**
+     * Prefill only — the setup wizard requires an explicit currency pick
+     * regardless of jurisdiction, so this default is never silently relied on.
+     */
     public function defaultCurrencyCode(): string
     {
         return match ($this) {
             self::Canada => 'CAD',
             self::UnitedStates => 'USD',
+            self::Global => 'USD',
         };
     }
 
@@ -70,6 +91,10 @@ enum Country: string
      * shared North American zones (Pacific/Mountain/Central/Eastern) use their
      * canonical US-city ids; these are DST-identical to the Canadian-city
      * equivalents, so the stored offset/day boundary is the same either way.
+     *
+     * Global has no region list to refine from, so it always returns UTC — a
+     * neutral, unambiguous starting point the owner is expected to change in
+     * company settings immediately after setup.
      */
     public function defaultTimezone(?string $regionCode = null): string
     {
@@ -93,6 +118,7 @@ enum Country: string
                 'HI' => 'Pacific/Honolulu',
                 default => 'America/New_York',
             },
+            self::Global => 'UTC',
         };
     }
 
@@ -106,6 +132,9 @@ enum Country: string
      * America/Los_Angeles, America/Denver) are deliberately left unmapped: a
      * wrong tax jurisdiction is worse than an empty field, and region — unlike
      * country — stays editable after setup.
+     *
+     * Global has no fixed region list at all (see regions()), so this always
+     * returns null — the owner types their region as free text instead.
      *
      * @return string|null one of the {@see self::regions()} keys
      */
@@ -135,17 +164,23 @@ enum Country: string
                 'America/Boise' => 'ID',
                 default => null,
             },
+            self::Global => null,
         };
 
         // Never return a code we don't actually offer as a selectable option.
         return $region !== null && array_key_exists($region, $this->regions()) ? $region : null;
     }
 
+    /**
+     * Global uses a neutral, generic label since "state" and "province" are
+     * both wrong more often than right outside North America.
+     */
     public function regionLabel(): string
     {
         return match ($this) {
             self::Canada => 'Province',
             self::UnitedStates => 'State',
+            self::Global => 'Region',
         };
     }
 
@@ -154,14 +189,21 @@ enum Country: string
         return match ($this) {
             self::Canada => 'Postal Code',
             self::UnitedStates => 'ZIP Code',
+            self::Global => 'Postal Code',
         };
     }
 
+    /**
+     * Global returns a generic label since there's no fixed tax regime — the
+     * owner defines their own tax codes and agency (see GenericDefaults, which
+     * seeds neither), so this is just display text for whatever they set up.
+     */
     public function taxLabel(): string
     {
         return match ($this) {
             self::Canada => 'GST/HST',
             self::UnitedStates => 'Sales Tax',
+            self::Global => 'Tax',
         };
     }
 
@@ -201,18 +243,28 @@ enum Country: string
                 'UT' => 'Utah', 'VT' => 'Vermont', 'VA' => 'Virginia', 'WA' => 'Washington',
                 'WV' => 'West Virginia', 'WI' => 'Wisconsin', 'WY' => 'Wyoming',
             ],
+            // Deliberately empty: the setup wizard and company edit form both
+            // already fall back to a plain free-text "Region" input whenever
+            // regions() returns []. No dropdown to maintain, no wrong list to
+            // offer a New Zealand (or any other) user.
+            self::Global => [],
         };
     }
 
     /**
      * Singular or plural noun for cheque/check, sentence-cased.
      * Pass 'singular' (default) or 'plural'.
+     *
+     * Global defaults to the international "Cheque" spelling rather than the
+     * US "Check" — most countries outside the US use it, and it reads oddly
+     * only to US users, who have their own dedicated Country case anyway.
      */
     public function cheque(string $form = 'singular'): string
     {
         $singular = match ($this) {
             self::Canada => 'Cheque',
             self::UnitedStates => 'Check',
+            self::Global => 'Cheque',
         };
 
         return $form === 'plural' ? $singular.'s' : $singular;
@@ -248,6 +300,7 @@ enum Country: string
             'checkbook' => match ($this) {
                 self::Canada => 'Chequebook view',
                 self::UnitedStates => 'Checkbook view',
+                self::Global => 'Chequebook view',
             },
             'method' => $singular.' method',
             'plural' => $plural,
@@ -256,17 +309,25 @@ enum Country: string
         };
     }
 
+    /**
+     * Global reuses GenericDefaults as-is: a jurisdiction-neutral chart of
+     * accounts with no preset tax agency or tax codes. This is a deliberate
+     * choice, not a placeholder — pretending to know a tax regime we don't
+     * would be worse than seeding nothing and letting the owner set up their
+     * own tax code (e.g. a flat-rate GST/VAT) after creation.
+     */
     public function defaults(): CompanyDefaults
     {
         return match ($this) {
             self::Canada => new CanadianDefaults,
             self::UnitedStates => new AmericanDefaults,
+            self::Global => new GenericDefaults,
         };
     }
 
     /**
      * Country cases offered as form options, in declaration order
-     * (Canada, United States).
+     * (Canada, United States, Global).
      *
      * @return array<array{value: string, label: string}>
      */
