@@ -13,13 +13,15 @@ use App\Exceptions\Posting\UnbalancedJournalException;
 use App\Models\Account;
 use App\Models\Bill;
 use App\Models\BillPayment;
-use App\Models\BillPaymentApplication;
+use App\Models\Contact;
 use App\Models\JournalEntry;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
 use App\Services\Currency\ExchangeRateService;
 use App\Support\Currency;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -158,7 +160,13 @@ class BillPaymentPoster
                 throw new RuntimeException('Applied amount exceeds payment total.');
             }
 
-            $touchedBillIds = $payment->applications->pluck('bill_id')->all();
+            // Every bill whose paid amount this edit can change: the ones the
+            // payment applies to now, plus the ones it applied to before
+            // SaveBillPayment rewrote the rows (remembered on the instance).
+            $touchedBillIds = array_values(array_unique(array_map('intval', array_merge(
+                $payment->applications->pluck('bill_id')->all(),
+                $payment->previousApplicationBillIds(),
+            ))));
             $oldAccountIds = $entry->lines->pluck('account_id')->all();
 
             $control = $this->controlAccount($payment);
@@ -196,7 +204,13 @@ class BillPaymentPoster
                 $this->recomputeBillPaidFromAllPayments($bill);
             }
 
+            // Safety net for anything the explicit list missed.
+            $this->recomputeDriftedBillsForContacts((int) $payment->company_id, [(int) $payment->contact_id, $payment->previousContactId()]);
+
             $payment->contact->recomputeApBalance();
+            if ($payment->previousContactId() !== null && $payment->previousContactId() !== (int) $payment->contact_id) {
+                Contact::withoutGlobalScopes()->find($payment->previousContactId())?->recomputeApBalance();
+            }
 
             $entry = $entry->fresh();
 
@@ -217,19 +231,115 @@ class BillPaymentPoster
         }));
     }
 
-    protected function recomputeBillPaidFromAllPayments(Bill $bill): void
+    /**
+     * Public so integrity:check --fix can repair a drifted cache.
+     */
+    public function recomputeBillPaidFromAllPayments(Bill $bill): void
     {
-        $paid = (int) BillPaymentApplication::query()
-            ->whereHas('payment', fn ($q) => $q->where('status', BillPaymentStatus::Posted->value))
-            ->where('bill_id', $bill->id)
-            ->sum('amount_cents');
-
         $bill->forceFill([
-            'amount_paid_cents' => min($paid, (int) $bill->total_cents),
+            'amount_paid_cents' => $this->expectedPaidCents($bill),
         ])->save();
 
         $this->refreshBillStatus($bill);
         $bill->contact?->recomputeApBalance();
+    }
+
+    /**
+     * What amount_paid_cents SHOULD be: live applications from posted
+     * payments, capped at the total. A plain query so it reads the same
+     * regardless of the bound company.
+     */
+    public function expectedPaidCents(Bill $bill): int
+    {
+        $paid = (int) DB::table('bill_payment_applications as a')
+            ->join('bill_payments as p', 'p.id', '=', 'a.bill_payment_id')
+            ->where('a.bill_id', $bill->id)
+            ->where('p.status', BillPaymentStatus::Posted->value)
+            ->whereNull('p.deleted_at')
+            ->sum('a.amount_cents');
+
+        return min($paid, (int) $bill->total_cents);
+    }
+
+    /**
+     * Recompute every posted/partial/paid bill of the given vendors whose
+     * cached paid amount disagrees with its live applications. One grouped
+     * query finds the drift; only the drifted rows are touched. Returns how many.
+     *
+     * @param  array<int, int|null>  $contactIds
+     */
+    public function recomputeDriftedBillsForContacts(int $companyId, array $contactIds): int
+    {
+        $contactIds = array_values(array_unique(array_filter(array_map('intval', $contactIds))));
+        if ($contactIds === []) {
+            return 0;
+        }
+
+        $fixed = 0;
+        foreach ($this->driftedBillRows($companyId, $contactIds) as $row) {
+            $bill = Bill::withoutGlobalScopes()->find((int) $row->id);
+            if ($bill) {
+                $this->recomputeBillPaidFromAllPayments($bill);
+                $fixed++;
+            }
+        }
+
+        return $fixed;
+    }
+
+    /**
+     * Posted/partial/paid bills whose cached amount_paid_cents differs from what
+     * their live applications (posted, non-deleted payments) say, capped at the
+     * total. Rows carry id, bill_no, total_cents, amount_paid_cents, live_cents.
+     *
+     * @param  list<int>|null  $contactIds  null = every vendor in the company
+     * @return Collection<int, \stdClass>
+     */
+    public function driftedBillRows(int $companyId, ?array $contactIds = null): Collection
+    {
+        return $this->billPaidCacheQuery($companyId, $contactIds)
+            ->whereRaw('b.amount_paid_cents <> CASE WHEN COALESCE(x.live_cents, 0) > b.total_cents THEN b.total_cents ELSE COALESCE(x.live_cents, 0) END')
+            ->get();
+    }
+
+    /**
+     * Bills whose live applications exceed their total. Reported, never "fixed".
+     *
+     * @return Collection<int, \stdClass>
+     */
+    public function overAppliedBillRows(int $companyId): Collection
+    {
+        return $this->billPaidCacheQuery($companyId)
+            ->whereRaw('COALESCE(x.live_cents, 0) > b.total_cents')
+            ->get();
+    }
+
+    /**
+     * @param  list<int>|null  $contactIds
+     */
+    private function billPaidCacheQuery(int $companyId, ?array $contactIds = null): Builder
+    {
+        $live = DB::table('bill_payment_applications as a')
+            ->join('bill_payments as p', 'p.id', '=', 'a.bill_payment_id')
+            ->where('p.status', BillPaymentStatus::Posted->value)
+            ->whereNull('p.deleted_at')
+            ->groupBy('a.bill_id')
+            ->selectRaw('a.bill_id, SUM(a.amount_cents) as live_cents');
+
+        $query = DB::table('bills as b')
+            ->leftJoinSub($live, 'x', 'x.bill_id', '=', 'b.id')
+            ->where('b.company_id', $companyId)
+            ->whereNull('b.deleted_at')
+            ->whereIn('b.status', [BillStatus::Posted->value, BillStatus::Partial->value, BillStatus::Paid->value])
+            ->orderBy('b.id')
+            ->select(['b.id', 'b.bill_no', 'b.total_cents', 'b.amount_paid_cents'])
+            ->selectRaw('COALESCE(x.live_cents, 0) as live_cents');
+
+        if ($contactIds !== null) {
+            $query->whereIn('b.contact_id', $contactIds);
+        }
+
+        return $query;
     }
 
     public function void(BillPayment $payment, ?CarbonImmutable $voidDate = null): void
@@ -247,22 +357,20 @@ class BillPaymentPoster
 
             $this->journalPoster->void($payment->journalEntry, $voidDate, "Void of payment {$payment->payment_no}");
 
-            foreach ($payment->applications as $app) {
-                $bill = $app->bill;
-
-                $bill->forceFill([
-                    'amount_paid_cents' => max(0, (int) $bill->amount_paid_cents - (int) $app->amount_cents),
-                ])->save();
-
-                $this->refreshBillStatus($bill);
-                $bill->contact->recomputeApBalance();
-            }
-
+            // Void first, then recompute each applied bill from the ledger of
+            // live applications — the same canonical formula repost() and
+            // integrity:check use.
             $payment->forceFill([
                 'status' => BillPaymentStatus::Void,
                 'voided_at' => now(),
                 'voided_by_user_id' => Auth::id(),
             ])->save();
+
+            foreach ($payment->applications as $app) {
+                if ($app->bill) {
+                    $this->recomputeBillPaidFromAllPayments($app->bill);
+                }
+            }
 
             $payment->contact->recomputeApBalance();
 

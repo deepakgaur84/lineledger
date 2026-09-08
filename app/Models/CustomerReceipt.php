@@ -23,6 +23,43 @@ class CustomerReceipt extends Model
     use BelongsToCompany, GuardsPostedDeletion, SoftDeletes;
 
     /**
+     * Where this receipt was applied BEFORE SaveReceipt last rewrote its
+     * applications: the invoice ids the previous rows pointed at, and the
+     * contact it belonged to. SaveReceipt records them on the instance it
+     * returns; ReceiptPoster::repost() reads them so the invoices the receipt
+     * no longer pays are recomputed too. Transient — never persisted.
+     *
+     * @var list<int>
+     */
+    protected array $previousApplicationInvoiceIds = [];
+
+    protected ?int $previousContactId = null;
+
+    /**
+     * @param  list<int>  $invoiceIds
+     */
+    public function rememberPreviousApplications(array $invoiceIds, ?int $contactId): static
+    {
+        $this->previousApplicationInvoiceIds = array_values(array_unique(array_map('intval', $invoiceIds)));
+        $this->previousContactId = $contactId;
+
+        return $this;
+    }
+
+    /**
+     * @return list<int>
+     */
+    public function previousApplicationInvoiceIds(): array
+    {
+        return $this->previousApplicationInvoiceIds;
+    }
+
+    public function previousContactId(): ?int
+    {
+        return $this->previousContactId;
+    }
+
+    /**
      * @return BelongsTo<Contact, $this>
      */
     public function contact(): BelongsTo

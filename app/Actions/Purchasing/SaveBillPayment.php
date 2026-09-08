@@ -60,7 +60,12 @@ final class SaveBillPayment
                 $header['payment_no'] = $data['payment_no'];
             }
 
+            $previousBillIds = [];
+            $previousContactId = null;
+
             if ($payment && $payment->exists) {
+                $previousBillIds = $payment->applications()->pluck('bill_id')->map(fn ($id) => (int) $id)->all();
+                $previousContactId = (int) $payment->contact_id;
                 $payment->update($header);
             } else {
                 $payment = BillPayment::create($header + [
@@ -81,7 +86,10 @@ final class SaveBillPayment
                 ]);
             }
 
-            return $payment->fresh(['applications']);
+            // Remembered so BillPaymentPoster::repost() also recomputes the
+            // bills this payment no longer applies to.
+            return $payment->fresh(['applications'])
+                ->rememberPreviousApplications($previousBillIds, $previousContactId);
         });
     }
 

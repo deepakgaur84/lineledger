@@ -4,15 +4,20 @@ namespace App\Console\Commands;
 
 use App\Enums\NormalBalance;
 use App\Models\Account;
+use App\Models\Bill;
 use App\Models\Company;
+use App\Models\Invoice;
 use App\Notifications\LedgerIntegrityAlert;
+use App\Services\Audit\AuditMute;
+use App\Services\Posting\BillPaymentPoster;
+use App\Services\Posting\ReceiptPoster;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 
 /**
- * Nightly proof that the books still reconcile. Three checks per company:
+ * Nightly proof that the books still reconcile. Four checks per company:
  *
  *   1. Audit hash chain — delegated to {@see VerifyAccountingAuditCommand}.
  *   2. Double-entry balance — every posted journal nets to zero across the GL,
@@ -29,10 +34,10 @@ class CheckLedgerIntegrity extends Command
 {
     protected $signature = 'integrity:check
         {company? : Company ID; checks all companies when omitted}
-        {--fix : Recompute drifted account-balance caches in place}
+        {--fix : Recompute drifted account-balance and document paid caches in place}
         {--no-alert : Report failures without emailing}';
 
-    protected $description = 'Verify ledger integrity: audit hash chain, double-entry balance, and account-balance cache.';
+    protected $description = 'Verify ledger integrity: audit hash chain, double-entry balance, account-balance cache, and invoice/bill paid caches.';
 
     /**
      * Length of the rolling full-verification cycle, in days.
@@ -130,6 +135,12 @@ class CheckLedgerIntegrity extends Command
         // 3. Account-balance cache drift.
         $issues = array_merge($issues, $this->checkBalanceCache($companyId));
 
+        // 4. Document paid-cache drift: invoices.amount_paid_cents and
+        //    bills.amount_paid_cents are denormalized from the live
+        //    applications of posted receipts / payments. A stale value shows a
+        //    document as paid (or owing) that the ledger says otherwise.
+        $issues = array_merge($issues, $this->checkPaidCaches($companyId));
+
         return $issues;
     }
 
@@ -201,6 +212,97 @@ class CheckLedgerIntegrity extends Command
                 $account->name,
                 (int) $account->balance_cents,
                 $expected,
+            );
+        }
+
+        return $issues;
+    }
+
+    /**
+     * Invoices and bills whose cached amount_paid_cents disagrees with the sum
+     * of their live applications — one grouped query per document type, like
+     * check 3. --fix recomputes them through the posters (which also refresh
+     * the document status and the contact's AR/AP), silently like check 3 but
+     * listed in the output. Applications that EXCEED a document's total are a
+     * separate issue the cache repair cannot resolve, so they are always
+     * reported.
+     *
+     * @return list<string>
+     */
+    protected function checkPaidCaches(int $companyId): array
+    {
+        $issues = [];
+        $fix = (bool) $this->option('fix');
+        $receipts = app(ReceiptPoster::class);
+        $payments = app(BillPaymentPoster::class);
+
+        foreach ($receipts->driftedInvoiceRows($companyId) as $row) {
+            $expected = min((int) $row->live_cents, (int) $row->total_cents);
+
+            if ($fix) {
+                $invoice = Invoice::withoutGlobalScopes()->find((int) $row->id);
+                if ($invoice) {
+                    AuditMute::silence(fn () => $receipts->recomputeInvoicePaidFromAllReceipts($invoice));
+                    $this->line(sprintf('  Repaired invoice %s (#%d): paid cache %d -> %d.', $row->invoice_no, $row->id, (int) $row->amount_paid_cents, $expected));
+                    Log::info('Repaired invoice paid cache.', ['company_id' => $companyId, 'invoice_id' => (int) $row->id, 'from' => (int) $row->amount_paid_cents, 'to' => $expected]);
+                }
+
+                continue;
+            }
+
+            $issues[] = sprintf(
+                'Invoice %s (#%d) paid cache is %d but its live receipt applications sum to %d (capped at the %d total: %d).',
+                $row->invoice_no,
+                $row->id,
+                (int) $row->amount_paid_cents,
+                (int) $row->live_cents,
+                (int) $row->total_cents,
+                $expected,
+            );
+        }
+
+        foreach ($receipts->overAppliedInvoiceRows($companyId) as $row) {
+            $issues[] = sprintf(
+                'Invoice %s (#%d) has %d applied from receipts against a total of %d — an over-application that only editing the receipts can resolve.',
+                $row->invoice_no,
+                $row->id,
+                (int) $row->live_cents,
+                (int) $row->total_cents,
+            );
+        }
+
+        foreach ($payments->driftedBillRows($companyId) as $row) {
+            $expected = min((int) $row->live_cents, (int) $row->total_cents);
+
+            if ($fix) {
+                $bill = Bill::withoutGlobalScopes()->find((int) $row->id);
+                if ($bill) {
+                    AuditMute::silence(fn () => $payments->recomputeBillPaidFromAllPayments($bill));
+                    $this->line(sprintf('  Repaired bill %s (#%d): paid cache %d -> %d.', $row->bill_no, $row->id, (int) $row->amount_paid_cents, $expected));
+                    Log::info('Repaired bill paid cache.', ['company_id' => $companyId, 'bill_id' => (int) $row->id, 'from' => (int) $row->amount_paid_cents, 'to' => $expected]);
+                }
+
+                continue;
+            }
+
+            $issues[] = sprintf(
+                'Bill %s (#%d) paid cache is %d but its live payment applications sum to %d (capped at the %d total: %d).',
+                $row->bill_no,
+                $row->id,
+                (int) $row->amount_paid_cents,
+                (int) $row->live_cents,
+                (int) $row->total_cents,
+                $expected,
+            );
+        }
+
+        foreach ($payments->overAppliedBillRows($companyId) as $row) {
+            $issues[] = sprintf(
+                'Bill %s (#%d) has %d applied from payments against a total of %d — an over-application that only editing the payments can resolve.',
+                $row->bill_no,
+                $row->id,
+                (int) $row->live_cents,
+                (int) $row->total_cents,
             );
         }
 

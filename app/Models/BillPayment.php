@@ -24,6 +24,43 @@ class BillPayment extends Model
     use BelongsToCompany, GuardsPostedDeletion, SoftDeletes;
 
     /**
+     * Where this payment was applied BEFORE SaveBillPayment last rewrote its
+     * applications: the bill ids the previous rows pointed at, and the vendor
+     * it belonged to. SaveBillPayment records them on the instance it returns;
+     * BillPaymentPoster::repost() reads them so the bills the payment no
+     * longer pays are recomputed too. Transient — never persisted.
+     *
+     * @var list<int>
+     */
+    protected array $previousApplicationBillIds = [];
+
+    protected ?int $previousContactId = null;
+
+    /**
+     * @param  list<int>  $billIds
+     */
+    public function rememberPreviousApplications(array $billIds, ?int $contactId): static
+    {
+        $this->previousApplicationBillIds = array_values(array_unique(array_map('intval', $billIds)));
+        $this->previousContactId = $contactId;
+
+        return $this;
+    }
+
+    /**
+     * @return list<int>
+     */
+    public function previousApplicationBillIds(): array
+    {
+        return $this->previousApplicationBillIds;
+    }
+
+    public function previousContactId(): ?int
+    {
+        return $this->previousContactId;
+    }
+
+    /**
      * @return BelongsTo<Contact, $this>
      */
     public function contact(): BelongsTo

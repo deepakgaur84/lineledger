@@ -145,6 +145,7 @@ new #[Title('Receive payment')] class extends Component {
 
     public function startNewContact(): void
     {
+        $this->distributionIsAuto = true;
         $this->new_contact_name = trim($this->contact_query);
         $this->contact_creating = true;
         $this->contact_id = null;
@@ -155,6 +156,7 @@ new #[Title('Receive payment')] class extends Component {
 
     public function clearContact(): void
     {
+        $this->distributionIsAuto = true;
         $this->contact_id = null;
         $this->contact_creating = false;
         $this->new_contact_name = '';
@@ -163,9 +165,29 @@ new #[Title('Receive payment')] class extends Component {
         $this->resetErrorBag(['contact_id', 'new_contact_name']);
     }
 
+    /**
+     * True while the apply table holds a distribution autoApply() produced.
+     * It turns false as soon as the distribution is someone's decision — loaded
+     * from an existing receipt, or typed into an Apply cell — and from then on a
+     * changed amount is NOT re-walked over the table: that walk goes oldest due
+     * date first, so on an edit it would silently pull a payment off the
+     * invoice it was meant for. (Amount syncs live per keystroke, which is why
+     * the guard cannot simply be "the table has numbers in it".)
+     */
+    public bool $distributionIsAuto = true;
+
     public function updatedAmount(): void
     {
+        if (! $this->distributionIsAuto) {
+            return;
+        }
+
         $this->autoApply();
+    }
+
+    public function updatedApplyTable(mixed $value = null, ?string $key = null): void
+    {
+        $this->distributionIsAuto = false;
     }
 
     protected function refreshApplyTable(): void
@@ -198,6 +220,7 @@ new #[Title('Receive payment')] class extends Component {
                 }
             })
             ->orderBy('due_date')
+            ->orderBy('id')
             ->get();
 
         foreach ($invoices as $inv) {
@@ -216,9 +239,13 @@ new #[Title('Receive payment')] class extends Component {
         }
 
         // Don't auto-apply on initial edit load — keep the user's existing distribution.
-        if (! $editingSameContact) {
-            $this->autoApply();
+        if ($editingSameContact) {
+            $this->distributionIsAuto = false;
+
+            return;
         }
+
+        $this->autoApply();
     }
 
     /**
@@ -237,6 +264,8 @@ new #[Title('Receive payment')] class extends Component {
             $this->applyTable[$i]['apply'] = number_format($applied / 100, 2, '.', '');
             $remaining -= $applied;
         }
+
+        $this->distributionIsAuto = true;
     }
 
     public function save(ReceiptPoster $poster): void
@@ -312,21 +341,31 @@ new #[Title('Receive payment')] class extends Component {
 
         $wasPosted = $this->receipt?->journal_entry_id !== null;
 
-        $receipt = app(SaveReceipt::class)->handle([
-            'contact_id' => $validated['contact_id'],
-            'receipt_no' => $validated['receipt_no'],
-            'receipt_date' => $validated['receipt_date'],
-            'deposit_to_account_id' => $validated['deposit_to_account_id'],
-            'payment_method_id' => $validated['payment_method_id'] ?: null,
-            'reference' => $validated['reference'] ?: null,
-            'amount_cents' => $amountCents,
-            'memo' => $validated['memo'] ?: null,
-            'applications' => $applications,
-        ], $this->receipt);
-
+        // Save and (re)post as ONE unit of work, as the API does: a repost
+        // refused by the poster (locked period, bad amount) must roll the
+        // rewritten applications back too, or the invoices would be left
+        // re-applied on paper with nothing recomputed.
         try {
-            $wasPosted ? $poster->repost($receipt) : $poster->post($receipt);
+            $receipt = DB::transaction(function () use ($validated, $amountCents, $applications, $wasPosted, $poster): CustomerReceipt {
+                $receipt = app(SaveReceipt::class)->handle([
+                    'contact_id' => $validated['contact_id'],
+                    'receipt_no' => $validated['receipt_no'],
+                    'receipt_date' => $validated['receipt_date'],
+                    'deposit_to_account_id' => $validated['deposit_to_account_id'],
+                    'payment_method_id' => $validated['payment_method_id'] ?: null,
+                    'reference' => $validated['reference'] ?: null,
+                    'amount_cents' => $amountCents,
+                    'memo' => $validated['memo'] ?: null,
+                    'applications' => $applications,
+                ], $this->receipt);
+
+                $wasPosted ? $poster->repost($receipt) : $poster->post($receipt);
+
+                return $receipt;
+            });
         } catch (PeriodLockedException|\RuntimeException $e) {
+            // The rolled-back save mutated the bound model in memory; put it back.
+            $this->receipt?->refresh();
             $this->addError('amount', $e->getMessage());
 
             return;

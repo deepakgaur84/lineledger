@@ -15,6 +15,12 @@ use Illuminate\Support\Facades\DB;
  * Shared by the Livewire form and the API. Does NOT post — the caller decides
  * whether to hand the result to ReceiptPoster.
  *
+ * On an update the returned receipt remembers which invoices (and contact) it
+ * applied to BEFORE the rewrite — see CustomerReceipt::previousApplicationInvoiceIds()
+ * — so ReceiptPoster::repost() can recompute the invoices this receipt no
+ * longer pays. Without that, moving a receipt from one invoice to another left
+ * the old invoice's paid amount and status stale.
+ *
  * Expected $data shape (cents-based, framework-agnostic):
  *   contact_id:            int
  *   receipt_no:            ?string  (null → auto-generated)
@@ -55,7 +61,12 @@ final class SaveReceipt
                 $header['receipt_no'] = $data['receipt_no'];
             }
 
+            $previousInvoiceIds = [];
+            $previousContactId = null;
+
             if ($receipt && $receipt->exists) {
+                $previousInvoiceIds = $receipt->applications()->pluck('invoice_id')->map(fn ($id) => (int) $id)->all();
+                $previousContactId = (int) $receipt->contact_id;
                 $receipt->update($header);
             } else {
                 $receipt = CustomerReceipt::create($header + [
@@ -75,7 +86,8 @@ final class SaveReceipt
                 ]);
             }
 
-            return $receipt->fresh(['applications']);
+            return $receipt->fresh(['applications'])
+                ->rememberPreviousApplications($previousInvoiceIds, $previousContactId);
         });
     }
 

@@ -10,15 +10,17 @@ use App\Exceptions\Posting\AlreadyPostedException;
 use App\Exceptions\Posting\PeriodLockedException;
 use App\Exceptions\Posting\UnbalancedJournalException;
 use App\Models\Account;
+use App\Models\Contact;
 use App\Models\CustomerReceipt;
 use App\Models\Invoice;
 use App\Models\JournalEntry;
-use App\Models\ReceiptApplication;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
 use App\Services\Currency\ExchangeRateService;
 use App\Support\Currency;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -109,14 +111,17 @@ class ReceiptPoster
      * Re-post a posted receipt in place after the user edits it.
      *
      * Steps in a single transaction:
-     *   1. Un-apply the existing applications from their invoices
-     *      (so each invoice's amount_paid/status reverts to its pre-receipt state).
-     *   2. Mutate the existing journal entry — delete its lines, rebuild from the
+     *   1. Mutate the existing journal entry — delete its lines, rebuild from the
      *      edited deposit account/amount.
-     *   3. Replace the application rows with the caller's new applications
-     *      (already saved on the receipt by the form).
-     *   4. Apply the new applications to invoices and recompute their statuses.
-     *   5. Recompute affected account balances and the contact's AR balance.
+     *   2. Recompute every invoice the receipt applies to NOW and every invoice
+     *      it applied to BEFORE the edit (SaveReceipt remembers those on the
+     *      instance it returns) from the canonical ledger of live applications,
+     *      so a receipt moved from one invoice to another leaves the old invoice
+     *      unpaid again instead of stuck at "paid".
+     *   3. Safety net: recompute any other invoice of the contact(s) involved
+     *      whose cached paid amount disagrees with its live applications, so
+     *      historic drift heals the next time the receipt is touched.
+     *   4. Recompute affected account balances and the contact's AR balance.
      *
      * Lock-date is enforced on both the original posting date and the (possibly
      * new) receipt date — neither side can fall in a closed period.
@@ -151,24 +156,15 @@ class ReceiptPoster
 
             $this->assertAmountValid($receipt);
 
-            // 1. Un-apply the OLD applications. The caller may have already
-            // wiped+re-created applications on the receipt before invoking
-            // repost(); to do this correctly we must look up what was applied
-            // historically. We capture that from the original journal lines:
-            // the AR line carries the receipt's full amount, but per-invoice
-            // application history lives only on `receipt_applications`. So
-            // here we trust the caller: they pass in a receipt whose
-            // applications collection represents the NEW state. To unwind
-            // the old apply, we need a different signal.
-            //
-            // Strategy used: the OLD applications must be passed via a
-            // dedicated "previousApplications" parameter — but for callers
-            // that simply update applications in place, we instead derive
-            // the unapply by recomputing each touched invoice's amount_paid
-            // from scratch (sum of remaining applications across all
-            // posted, non-void receipts pointing at it). That's robust
-            // regardless of caller order.
-            $touchedInvoiceIds = $receipt->applications->pluck('invoice_id')->all();
+            // Every invoice whose paid amount this edit can change: the ones
+            // the receipt applies to now, plus the ones it applied to before
+            // SaveReceipt rewrote the rows (it remembers them on the instance).
+            // Each is recomputed from scratch below, which unwinds the old
+            // application and applies the new one in one step.
+            $touchedInvoiceIds = array_values(array_unique(array_map('intval', array_merge(
+                $receipt->applications->pluck('invoice_id')->all(),
+                $receipt->previousApplicationInvoiceIds(),
+            ))));
 
             // Capture old JE account ids for balance recompute
             $oldAccountIds = $entry->lines->pluck('account_id')->all();
@@ -203,12 +199,6 @@ class ReceiptPoster
                 Account::withoutGlobalScopes()->find($id)?->recomputeBalance();
             }
 
-            // Also include invoices the receipt USED to apply to but no
-            // longer does — those are not in $touchedInvoiceIds. For those
-            // we'd need historical tracking. For now we accept that
-            // un-targeting an invoice without separately re-saving the
-            // receipt isn't supported via repost(); callers should keep
-            // applications stable or pass the old set explicitly.
             foreach ($touchedInvoiceIds as $invoiceId) {
                 $invoice = Invoice::withoutGlobalScopes()->find($invoiceId);
                 if (! $invoice) {
@@ -217,7 +207,16 @@ class ReceiptPoster
                 $this->recomputeInvoicePaidFromAllReceipts($invoice);
             }
 
+            // Safety net for anything the explicit list missed (a caller that
+            // rewrote applications without going through SaveReceipt, or drift
+            // left behind before previous applications were tracked).
+            $contactIds = [(int) $receipt->contact_id, $receipt->previousContactId()];
+            $this->recomputeDriftedInvoicesForContacts((int) $receipt->company_id, $contactIds);
+
             $receipt->contact->recomputeArBalance();
+            if ($receipt->previousContactId() !== null && $receipt->previousContactId() !== (int) $receipt->contact_id) {
+                Contact::withoutGlobalScopes()->find($receipt->previousContactId())?->recomputeArBalance();
+            }
 
             $entry = $entry->fresh();
 
@@ -243,22 +242,118 @@ class ReceiptPoster
      * invoice. Updates amount_paid_cents and status. This is the safe
      * canonical recompute — no matter what mutations happen on receipts,
      * the invoice ends up consistent with the ledger of applications.
+     * Public so integrity:check --fix can repair a drifted cache.
      */
-    protected function recomputeInvoicePaidFromAllReceipts(Invoice $invoice): void
+    public function recomputeInvoicePaidFromAllReceipts(Invoice $invoice): void
     {
-        $paid = (int) ReceiptApplication::query()
-            ->whereHas('receipt', fn ($q) => $q->whereIn('status', [
-                ReceiptStatus::Posted->value,
-            ]))
-            ->where('invoice_id', $invoice->id)
-            ->sum('amount_cents');
-
         $invoice->forceFill([
-            'amount_paid_cents' => min($paid, (int) $invoice->total_cents),
+            'amount_paid_cents' => $this->expectedPaidCents($invoice),
         ])->save();
 
         $this->refreshInvoiceStatus($invoice);
         $invoice->contact?->recomputeArBalance();
+    }
+
+    /**
+     * What amount_paid_cents SHOULD be: live applications from posted receipts,
+     * capped at the total. A plain query so it reads the same in a request, a
+     * queued job and a console command regardless of the bound company.
+     */
+    public function expectedPaidCents(Invoice $invoice): int
+    {
+        $paid = (int) DB::table('receipt_applications as ra')
+            ->join('customer_receipts as r', 'r.id', '=', 'ra.customer_receipt_id')
+            ->where('ra.invoice_id', $invoice->id)
+            ->where('r.status', ReceiptStatus::Posted->value)
+            ->whereNull('r.deleted_at')
+            ->sum('ra.amount_cents');
+
+        return min($paid, (int) $invoice->total_cents);
+    }
+
+    /**
+     * Recompute every posted/partial/paid invoice of the given contacts whose
+     * cached paid amount disagrees with its live applications. One grouped
+     * query finds the drift, so this stays cheap however long the contact's
+     * history is; only the drifted rows are touched. Returns how many.
+     *
+     * @param  array<int, int|null>  $contactIds
+     */
+    public function recomputeDriftedInvoicesForContacts(int $companyId, array $contactIds): int
+    {
+        $contactIds = array_values(array_unique(array_filter(array_map('intval', $contactIds))));
+        if ($contactIds === []) {
+            return 0;
+        }
+
+        $fixed = 0;
+        foreach ($this->driftedInvoiceRows($companyId, $contactIds) as $row) {
+            $invoice = Invoice::withoutGlobalScopes()->find((int) $row->id);
+            if ($invoice) {
+                $this->recomputeInvoicePaidFromAllReceipts($invoice);
+                $fixed++;
+            }
+        }
+
+        return $fixed;
+    }
+
+    /**
+     * Posted/partial/paid invoices whose cached amount_paid_cents differs from
+     * what their live applications (posted, non-deleted receipts) say, capped
+     * at the total. One grouped query; each row carries id, invoice_no,
+     * total_cents, amount_paid_cents and live_cents (the uncapped sum).
+     *
+     * @param  list<int>|null  $contactIds  null = every contact in the company
+     * @return Collection<int, \stdClass>
+     */
+    public function driftedInvoiceRows(int $companyId, ?array $contactIds = null): Collection
+    {
+        return $this->invoicePaidCacheQuery($companyId, $contactIds)
+            ->whereRaw('i.amount_paid_cents <> CASE WHEN COALESCE(x.live_cents, 0) > i.total_cents THEN i.total_cents ELSE COALESCE(x.live_cents, 0) END')
+            ->get();
+    }
+
+    /**
+     * Invoices whose live applications exceed their total — more money applied
+     * than was billed. The cache repair caps at the total, so this can only be
+     * resolved by editing the receipts; it is reported, never "fixed".
+     *
+     * @return Collection<int, \stdClass>
+     */
+    public function overAppliedInvoiceRows(int $companyId): Collection
+    {
+        return $this->invoicePaidCacheQuery($companyId)
+            ->whereRaw('COALESCE(x.live_cents, 0) > i.total_cents')
+            ->get();
+    }
+
+    /**
+     * @param  list<int>|null  $contactIds
+     */
+    private function invoicePaidCacheQuery(int $companyId, ?array $contactIds = null): Builder
+    {
+        $live = DB::table('receipt_applications as ra')
+            ->join('customer_receipts as r', 'r.id', '=', 'ra.customer_receipt_id')
+            ->where('r.status', ReceiptStatus::Posted->value)
+            ->whereNull('r.deleted_at')
+            ->groupBy('ra.invoice_id')
+            ->selectRaw('ra.invoice_id, SUM(ra.amount_cents) as live_cents');
+
+        $query = DB::table('invoices as i')
+            ->leftJoinSub($live, 'x', 'x.invoice_id', '=', 'i.id')
+            ->where('i.company_id', $companyId)
+            ->whereNull('i.deleted_at')
+            ->whereIn('i.status', [InvoiceStatus::Posted->value, InvoiceStatus::Partial->value, InvoiceStatus::Paid->value])
+            ->orderBy('i.id')
+            ->select(['i.id', 'i.invoice_no', 'i.total_cents', 'i.amount_paid_cents'])
+            ->selectRaw('COALESCE(x.live_cents, 0) as live_cents');
+
+        if ($contactIds !== null) {
+            $query->whereIn('i.contact_id', $contactIds);
+        }
+
+        return $query;
     }
 
     public function void(CustomerReceipt $receipt, ?CarbonImmutable $voidDate = null): void
@@ -276,23 +371,21 @@ class ReceiptPoster
 
             $this->journalPoster->void($receipt->journalEntry, $voidDate, "Void of receipt {$receipt->receipt_no}");
 
-            // Un-apply: reduce each invoice's amount_paid by what this receipt applied
-            foreach ($receipt->applications as $app) {
-                $invoice = $app->invoice;
-
-                $invoice->forceFill([
-                    'amount_paid_cents' => max(0, (int) $invoice->amount_paid_cents - (int) $app->amount_cents),
-                ])->save();
-
-                $this->refreshInvoiceStatus($invoice);
-                $invoice->contact->recomputeArBalance();
-            }
-
+            // Void first, then recompute each applied invoice from the ledger of
+            // live applications — the same canonical formula repost() and
+            // integrity:check use — instead of subtracting from a cache that
+            // may itself be stale.
             $receipt->forceFill([
                 'status' => ReceiptStatus::Void,
                 'voided_at' => now(),
                 'voided_by_user_id' => Auth::id(),
             ])->save();
+
+            foreach ($receipt->applications as $app) {
+                if ($app->invoice) {
+                    $this->recomputeInvoicePaidFromAllReceipts($app->invoice);
+                }
+            }
 
             $receipt->contact->recomputeArBalance();
 

@@ -201,22 +201,30 @@ new #[Title('Pay bills')] class extends Component {
         $billType = $this->contactRole === 'employee' ? BillType::Reimbursement : BillType::Vendor;
         $wasPosted = $this->payment?->journal_entry_id !== null;
 
-        $payment = app(SaveBillPayment::class)->handle([
-            'contact_id' => $validated['contact_id'],
-            'payment_type' => $billType->value,
-            'payment_no' => $validated['payment_no'],
-            'payment_date' => $validated['payment_date'],
-            'paid_from_account_id' => $validated['paid_from_account_id'],
-            'payment_method_id' => $validated['payment_method_id'] ?: null,
-            'reference' => $validated['reference'] ?: null,
-            'amount_cents' => $totalCents,
-            'memo' => $validated['memo'] ?: null,
-            'applications' => $applications,
-        ], $this->payment);
-
+        // Save and (re)post as ONE unit of work, as the API does: a repost the
+        // poster refuses must roll the rewritten applications back too.
         try {
-            $wasPosted ? $poster->repost($payment) : $poster->post($payment);
+            $payment = DB::transaction(function () use ($validated, $billType, $totalCents, $applications, $wasPosted, $poster): BillPayment {
+                $payment = app(SaveBillPayment::class)->handle([
+                    'contact_id' => $validated['contact_id'],
+                    'payment_type' => $billType->value,
+                    'payment_no' => $validated['payment_no'],
+                    'payment_date' => $validated['payment_date'],
+                    'paid_from_account_id' => $validated['paid_from_account_id'],
+                    'payment_method_id' => $validated['payment_method_id'] ?: null,
+                    'reference' => $validated['reference'] ?: null,
+                    'amount_cents' => $totalCents,
+                    'memo' => $validated['memo'] ?: null,
+                    'applications' => $applications,
+                ], $this->payment);
+
+                $wasPosted ? $poster->repost($payment) : $poster->post($payment);
+
+                return $payment;
+            });
         } catch (PeriodLockedException|\RuntimeException $e) {
+            // The rolled-back save mutated the bound model in memory; put it back.
+            $this->payment?->refresh();
             $this->addError('applyTable', $e->getMessage());
 
             return;
