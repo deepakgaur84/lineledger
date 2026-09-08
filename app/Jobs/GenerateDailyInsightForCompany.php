@@ -29,7 +29,15 @@ class GenerateDailyInsightForCompany implements ShouldQueue
 
     public function handle(DailyInsightGenerator $generator): void
     {
-        $company = Company::query()->findOrFail($this->companyId);
+        $company = Company::query()->find($this->companyId);
+
+        // Deleted between dispatch and execution: nothing to do, and not a
+        // failure worth a failed_jobs row and an ops alert.
+        if (! $company) {
+            Log::info('Skipping daily insight: company no longer exists.', ['company_id' => $this->companyId]);
+
+            return;
+        }
 
         // Defensive: BelongsToCompany's automatic company_id stamping on
         // creating() looks at the bound `current_company` (see

@@ -20,9 +20,12 @@ class GenerateRecurringDocuments extends Command
     {
         $arg = $this->argument('company');
 
+        // Live companies only: Company's one global scope is soft-deletion, so
+        // enumerating without scopes queued work for deleted tenants that the
+        // per-company job could then never load (nightly failed jobs).
         $companies = $arg !== null
-            ? Company::query()->withoutGlobalScopes()->where('id', $arg)->orWhere('slug', $arg)->get()
-            : Company::query()->withoutGlobalScopes()->orderBy('id')->get();
+            ? Company::query()->where(fn ($q) => $q->where('id', $arg)->orWhere('slug', $arg))->get()
+            : Company::query()->orderBy('id')->get();
 
         if ($companies->isEmpty()) {
             $this->error('No matching company.');

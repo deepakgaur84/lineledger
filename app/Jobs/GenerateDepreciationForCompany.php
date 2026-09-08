@@ -6,6 +6,7 @@ use App\Models\Company;
 use App\Services\Assets\DepreciationGenerator;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Generates all due monthly book-depreciation drafts for one company.
@@ -21,7 +22,15 @@ class GenerateDepreciationForCompany implements ShouldQueue
 
     public function handle(DepreciationGenerator $generator): void
     {
-        $company = Company::query()->findOrFail($this->companyId);
+        $company = Company::query()->find($this->companyId);
+
+        // Deleted between dispatch and execution: nothing to do, and not a
+        // failure worth a failed_jobs row and an ops alert.
+        if (! $company) {
+            Log::info('Skipping depreciation drafts: company no longer exists.', ['company_id' => $this->companyId]);
+
+            return;
+        }
 
         $generator->generateDue($company, $company->currentDateTime()->startOfDay());
     }
