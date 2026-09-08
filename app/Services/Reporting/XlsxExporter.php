@@ -2058,27 +2058,39 @@ class XlsxExporter
     // ─────────────────────────── Contact Statement ─────────────────────────
 
     /**
-     * @param  array{opening: int, lines: array<int, array{date: string, doc_no: string, type: string, memo: string, debit: int, credit: int, running: int}>, period_debit: int, period_credit: int, closing: int}  $report
+     * $showRep adds a Rep column after Doc #, shifting the money columns right by
+     * one. Only the staff-facing AR statement passes it; the customer portal
+     * download renders the same report without it.
+     *
+     * @param  array{opening: int, lines: array<int, array{date: string, doc_no: string, type: string, memo: string, sales_rep?: string, debit: int, credit: int, running: int}>, period_debit: int, period_credit: int, closing: int}  $report
      */
-    public function contactStatement(string $filename, string $title, Company $company, Contact $contact, array $report, string $startDate, string $endDate): BinaryFileResponse
+    public function contactStatement(string $filename, string $title, Company $company, Contact $contact, array $report, string $startDate, string $endDate, bool $showRep = false): BinaryFileResponse
     {
-        return $this->buildAndStream($filename, function (Writer $writer) use ($title, $company, $contact, $report, $startDate, $endDate) {
+        return $this->buildAndStream($filename, function (Writer $writer) use ($title, $company, $contact, $report, $startDate, $endDate, $showRep) {
             $sheet = $writer->getCurrentSheet();
             $sheet->setName(substr($title, 0, 30));
+
+            $cols = $showRep ? 8 : 7;
+            $memoCol = $showRep ? 5 : 4;
+            $debitLetter = $showRep ? 'F' : 'E';
+            $creditLetter = $showRep ? 'G' : 'F';
 
             $sheet->setColumnWidth(14, 1);  // Date
             $sheet->setColumnWidth(14, 2);  // Type
             $sheet->setColumnWidth(16, 3);  // Doc #
-            $sheet->setColumnWidth(48, 4);  // Memo
-            $sheet->setColumnWidth(14, 5, 6, 7);
+            if ($showRep) {
+                $sheet->setColumnWidth(24, 4);  // Rep
+            }
+            $sheet->setColumnWidth(48, $memoCol);  // Memo
+            $sheet->setColumnWidth(14, $memoCol + 1, $memoCol + 2, $memoCol + 3);
 
             $headerRowsUsed = $this->writeReportHeader($writer, $title, $company->name, [
                 $contact->display_name,
                 'Period: '.$startDate.' to '.$endDate,
-            ], totalColumns: 7);
+            ], totalColumns: $cols);
 
             $writer->addRow(Row::fromValuesWithStyle(
-                ['Date', 'Type', 'Doc #', 'Memo', 'Debit', 'Credit', 'Running'],
+                array_merge(['Date', 'Type', 'Doc #'], $showRep ? ['Rep'] : [], ['Memo', 'Debit', 'Credit', 'Running']),
                 $this->makeStyle(bold: true, backgroundColor: self::HEADER_FILL),
             ));
             $columnHeaderRow = $headerRowsUsed + 1;
@@ -2087,29 +2099,30 @@ class XlsxExporter
             $moneyStyle = $this->makeStyle(format: self::MONEY_FORMAT);
             $italicGrey = $this->makeStyle(italic: true, fontColor: '6B7280');
 
-            $writer->addRow(new Row([
-                Cell::fromValue('Opening balance', $italicGrey),
-                Cell::fromValue('', $italicGrey),
-                Cell::fromValue('', $italicGrey),
-                Cell::fromValue('', $italicGrey),
-                Cell::fromValue('', $italicGrey),
-                Cell::fromValue('', $italicGrey),
-                Cell::fromValue($report['opening'] / 100, $moneyStyle),
-            ]));
+            $writer->addRow(new Row(array_merge(
+                [Cell::fromValue('Opening balance', $italicGrey)],
+                array_fill(0, $cols - 2, Cell::fromValue('', $italicGrey)),
+                [Cell::fromValue($report['opening'] / 100, $moneyStyle)],
+            )));
 
             $firstDataRow = $columnHeaderRow + 2;
             $rowIndex = $firstDataRow;
 
             foreach ($report['lines'] as $line) {
-                $writer->addRow(new Row([
-                    Cell::fromValue($line['date']),
-                    $this->text($line['type']),
-                    $this->text($line['doc_no']),
-                    $this->text($line['memo'] ?? ''),
-                    Cell::fromValue($line['debit'] ? $line['debit'] / 100 : null, $moneyStyle),
-                    Cell::fromValue($line['credit'] ? $line['credit'] / 100 : null, $moneyStyle),
-                    Cell::fromValue($line['running'] / 100, $moneyStyle),
-                ]));
+                $writer->addRow(new Row(array_merge(
+                    [
+                        Cell::fromValue($line['date']),
+                        $this->text($line['type']),
+                        $this->text($line['doc_no']),
+                    ],
+                    $showRep ? [$this->text($line['sales_rep'] ?? '')] : [],
+                    [
+                        $this->text($line['memo'] ?? ''),
+                        Cell::fromValue($line['debit'] ? $line['debit'] / 100 : null, $moneyStyle),
+                        Cell::fromValue($line['credit'] ? $line['credit'] / 100 : null, $moneyStyle),
+                        Cell::fromValue($line['running'] / 100, $moneyStyle),
+                    ],
+                )));
                 $rowIndex++;
             }
             $lastDataRow = $rowIndex - 1;
@@ -2119,30 +2132,26 @@ class XlsxExporter
             $totalMoney = $this->makeStyle(bold: true, backgroundColor: self::TOTAL_FILL, format: self::MONEY_FORMAT);
 
             if ($lastDataRow >= $firstDataRow) {
-                $writer->addRow(new Row([
-                    Cell::fromValue('', $totalBlank),
-                    Cell::fromValue('', $totalBlank),
-                    Cell::fromValue('', $totalBlank),
-                    Cell::fromValue('Period totals', $totalLabel),
-                    Cell::fromValue($this->sumFormula('E', $firstDataRow, $lastDataRow), $totalMoney),
-                    Cell::fromValue($this->sumFormula('F', $firstDataRow, $lastDataRow), $totalMoney),
-                    Cell::fromValue('', $totalBlank),
-                ]));
+                $writer->addRow(new Row(array_merge(
+                    array_fill(0, $cols - 4, Cell::fromValue('', $totalBlank)),
+                    [
+                        Cell::fromValue('Period totals', $totalLabel),
+                        Cell::fromValue($this->sumFormula($debitLetter, $firstDataRow, $lastDataRow), $totalMoney),
+                        Cell::fromValue($this->sumFormula($creditLetter, $firstDataRow, $lastDataRow), $totalMoney),
+                        Cell::fromValue('', $totalBlank),
+                    ],
+                )));
             }
 
             $closingLabel = $this->makeStyle(bold: true, backgroundColor: self::SUBHEADER_FILL, alignment: CellAlignment::RIGHT);
             $closingBlank = $this->makeStyle(backgroundColor: self::SUBHEADER_FILL);
             $closingMoney = $this->makeStyle(bold: true, backgroundColor: self::SUBHEADER_FILL, format: self::MONEY_FORMAT);
 
-            $writer->addRow(new Row([
-                Cell::fromValue('Closing balance', $closingLabel),
-                Cell::fromValue('', $closingBlank),
-                Cell::fromValue('', $closingBlank),
-                Cell::fromValue('', $closingBlank),
-                Cell::fromValue('', $closingBlank),
-                Cell::fromValue('', $closingBlank),
-                Cell::fromValue($report['closing'] / 100, $closingMoney),
-            ]));
+            $writer->addRow(new Row(array_merge(
+                [Cell::fromValue('Closing balance', $closingLabel)],
+                array_fill(0, $cols - 2, Cell::fromValue('', $closingBlank)),
+                [Cell::fromValue($report['closing'] / 100, $closingMoney)],
+            )));
         });
     }
 

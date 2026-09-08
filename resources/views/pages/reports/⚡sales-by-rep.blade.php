@@ -208,7 +208,13 @@ new #[Title('Sales by Rep')] class extends Component {
             <tbody class="divide-y divide-border">
                 @forelse ($this->rows as $row)
                     <tr data-test="sales-row">
-                        <td class="px-4 py-2">{{ $row->label }}</td>
+                        <td class="px-4 py-2">
+                            @if ($row->key)
+                                <a href="{{ route('reports.sales-by-rep-detail', ['company' => $company->slug, 'rep' => $row->key, 'start' => $startDate, 'end' => $endDate, 'class' => $this->effectiveClassId(), 'location' => $this->effectiveLocationId()]) }}" wire:navigate class="hover:underline" data-test="drill-rep">{{ $row->label }}</a>
+                            @else
+                                {{ $row->label }}
+                            @endif
+                        </td>
                         <td class="px-4 py-2 text-right font-mono">{{ number_format($row->amountCents / 100, 2) }}</td>
                         @if ($this->showComparison() && $this->columnVisible('prior'))
                             <td class="px-4 py-2 text-right font-mono text-muted-foreground">{{ number_format($row->priorAmountCents / 100, 2) }}</td>

@@ -3,6 +3,7 @@
 use App\Enums\AccountSubtype;
 use App\Enums\BillType;
 use App\Enums\CompanyRole;
+use App\Enums\CustomerStatementType;
 use App\Enums\Section;
 use App\Models\Account;
 use App\Models\Bill;
@@ -12,6 +13,7 @@ use App\Models\Contact;
 use App\Models\CreditMemo;
 use App\Models\CustomerReceipt;
 use App\Models\Invoice;
+use App\Models\InvoiceSetting;
 use App\Models\JournalEntry;
 use App\Models\User;
 use App\Services\Posting\BillPaymentPoster;
@@ -20,6 +22,8 @@ use App\Services\Posting\CreditMemoPoster;
 use App\Services\Posting\InvoicePoster;
 use App\Services\Posting\JournalPoster;
 use App\Services\Posting\ReceiptPoster;
+use App\Services\Reporting\ContactStatementBuilder;
+use App\Services\Reporting\CustomerStatementBuilder;
 use Carbon\CarbonImmutable;
 
 beforeEach(function () {
@@ -402,4 +406,149 @@ it('hides the statement and edit actions from a member without customer access',
     $response->assertDontSee('data-test="statement-open-modal"', escape: false);
     $response->assertDontSee('data-test="customer-statement-modal"', escape: false);
     $response->assertDontSee('data-test="statement-edit-contact"', escape: false);
+});
+
+it('shows the sales rep on the AR statement, and leaves it blank when a document has none', function () {
+    $customer = Contact::create(['display_name' => 'Acme Co', 'is_customer' => true]);
+    $rep = Contact::create(['display_name' => 'Jane Rep', 'is_employee' => true]);
+    $income = Account::query()->where('subtype', AccountSubtype::Income->value)->first();
+
+    $withRep = Invoice::create([
+        'contact_id' => $customer->id,
+        'sales_rep_id' => $rep->id,
+        'invoice_no' => 'INV-REP-1',
+        'invoice_date' => CarbonImmutable::create(2026, 3, 1),
+        'due_date' => CarbonImmutable::create(2026, 3, 31),
+    ]);
+    $withRep->lines()->create(['account_id' => $income->id, 'description' => 'Service', 'quantity' => '1', 'unit_price_cents' => 20000, 'line_subtotal_cents' => 20000, 'line_tax_cents' => 0, 'line_total_cents' => 20000, 'line_order' => 0]);
+    app(InvoicePoster::class)->post($withRep);
+
+    $noRep = Invoice::create([
+        'contact_id' => $customer->id,
+        'invoice_no' => 'INV-REP-2',
+        'invoice_date' => CarbonImmutable::create(2026, 4, 1),
+        'due_date' => CarbonImmutable::create(2026, 4, 30),
+    ]);
+    $noRep->lines()->create(['account_id' => $income->id, 'description' => 'Service', 'quantity' => '1', 'unit_price_cents' => 5000, 'line_subtotal_cents' => 5000, 'line_tax_cents' => 0, 'line_total_cents' => 5000, 'line_order' => 0]);
+    app(InvoicePoster::class)->post($noRep);
+
+    $this->actingAs($this->user);
+
+    $response = $this->get(route('reports.contact-statement', [
+        'company' => $this->company->slug,
+        'contact' => $customer->id,
+        'kind' => 'ar',
+        'start' => '2026-01-01',
+        'end' => '2026-12-31',
+    ]));
+
+    $response->assertOk();
+    $response->assertSee('Rep');
+    $response->assertSee('Jane Rep');
+    $response->assertSee('INV-REP-2');
+    // Both invoices render; the rep-less one simply has an empty cell.
+    expect(substr_count($response->getContent(), 'data-test="statement-rep"'))->toBe(2);
+});
+
+it('omits the Rep column on the AP statement', function () {
+    $vendor = Contact::create(['display_name' => 'Beta Supplies', 'is_vendor' => true]);
+    $expense = Account::query()->where('subtype', AccountSubtype::Expense->value)->orderBy('code')->first();
+
+    $bill = Bill::create([
+        'contact_id' => $vendor->id,
+        'bill_type' => BillType::Vendor,
+        'bill_no' => 'BILL-REP',
+        'bill_date' => CarbonImmutable::create(2026, 3, 1),
+        'due_date' => CarbonImmutable::create(2026, 3, 31),
+    ]);
+    $bill->lines()->create(['account_id' => $expense->id, 'description' => 'Goods', 'quantity' => '1', 'unit_price_cents' => 8000, 'line_subtotal_cents' => 8000, 'line_tax_cents' => 0, 'line_total_cents' => 8000, 'line_order' => 0]);
+    app(BillPoster::class)->post($bill);
+
+    $this->actingAs($this->user);
+
+    $response = $this->get(route('reports.contact-statement', [
+        'company' => $this->company->slug,
+        'contact' => $vendor->id,
+        'kind' => 'ap',
+        'start' => '2026-01-01',
+        'end' => '2026-12-31',
+    ]));
+
+    $response->assertOk();
+    $response->assertSee('BILL-REP');
+    $response->assertDontSee('data-test="statement-rep"', false);
+});
+
+it('keeps the sales rep off every customer-facing statement surface', function () {
+    $customer = Contact::factory()->customer()->create(['display_name' => 'Acme Co']);
+    $rep = Contact::create(['display_name' => 'Zebedee Repperson', 'is_employee' => true]);
+    $income = Account::query()->where('subtype', AccountSubtype::Income->value)->first();
+
+    $invoice = Invoice::create([
+        'contact_id' => $customer->id,
+        'sales_rep_id' => $rep->id,
+        'invoice_no' => 'INV-HIDE-1',
+        'invoice_date' => CarbonImmutable::create(2026, 3, 1),
+        'due_date' => CarbonImmutable::create(2026, 3, 31),
+    ]);
+    $invoice->lines()->create(['account_id' => $income->id, 'description' => 'Service', 'quantity' => '1', 'unit_price_cents' => 20000, 'line_subtotal_cents' => 20000, 'line_tax_cents' => 0, 'line_total_cents' => 20000, 'line_order' => 0]);
+    app(InvoicePoster::class)->post($invoice);
+
+    $this->actingAs($this->user);
+
+    // 1 & 2. The customer-facing print/download statement, both flavours.
+    foreach ([CustomerStatementType::OpenInvoices, CustomerStatementType::Activity] as $type) {
+        $data = $type === CustomerStatementType::OpenInvoices
+            ? app(CustomerStatementBuilder::class)->openInvoices($this->company, $customer, CarbonImmutable::create(2026, 12, 31))
+            : app(CustomerStatementBuilder::class)->activity($this->company, $customer, CarbonImmutable::create(2026, 1, 1), CarbonImmutable::create(2026, 12, 31));
+
+        $html = view('pdf.statements.customer-statement', [
+            'company' => $this->company,
+            'contact' => $customer,
+            'type' => $type,
+            'settings' => new InvoiceSetting([...InvoiceSetting::defaults(), 'company_id' => $this->company->id]),
+            'data' => $data,
+        ])->render();
+
+        expect($html)->toContain('INV-HIDE-1')
+            ->and($html)->not->toContain('Zebedee Repperson')
+            ->and($html)->not->toContain('<th>Rep</th>');
+    }
+
+    // 3. The customer portal's own statement download reuses the internal PDF
+    //    view — without showRep, so the column must not appear there either.
+    $report = app(ContactStatementBuilder::class)->build(
+        $this->company,
+        $customer,
+        AccountSubtype::AccountsReceivable,
+        CarbonImmutable::create(2026, 1, 1),
+        CarbonImmutable::create(2026, 12, 31),
+    );
+
+    $portalHtml = view('pdf.reports.contact-statement', [
+        'company' => $this->company,
+        'contact' => $customer,
+        'title' => 'Account Statement',
+        'report' => $report,
+        'startDate' => '2026-01-01',
+        'endDate' => '2026-12-31',
+    ])->render();
+
+    expect($portalHtml)->toContain('INV-HIDE-1')
+        ->and($portalHtml)->not->toContain('Zebedee Repperson')
+        ->and($portalHtml)->not->toContain('<th>Rep</th>');
+
+    // 4. The staff export of the same view does carry it.
+    $staffHtml = view('pdf.reports.contact-statement', [
+        'company' => $this->company,
+        'contact' => $customer,
+        'title' => 'AR Statement',
+        'report' => $report,
+        'startDate' => '2026-01-01',
+        'endDate' => '2026-12-31',
+        'showRep' => true,
+    ])->render();
+
+    expect($staffHtml)->toContain('<th>Rep</th>')
+        ->and($staffHtml)->toContain('Zebedee Repperson');
 });

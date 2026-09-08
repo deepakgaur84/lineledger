@@ -937,31 +937,31 @@ parameters:
 			path: app/Mcp/Tools/FinancialSummaryTool.php
 
 		-
-			message: '#^Offset ''closing'' on array\{opening\: int, lines\: array\<int, array\{date\: string, doc_no\: string, type\: string, memo\: string, debit\: int, credit\: int, running\: int, route_name\: string, \.\.\.\}\>, period_debit\: int, period_credit\: int, closing\: int\} on left side of \?\? always exists and is not nullable\.$#'
+			message: '#^Offset ''closing'' on array\{opening\: int, lines\: array\<int, array\{date\: string, doc_no\: string, type\: string, memo\: string, sales_rep\: string, debit\: int, credit\: int, running\: int, \.\.\.\}\>, period_debit\: int, period_credit\: int, closing\: int\} on left side of \?\? always exists and is not nullable\.$#'
 			identifier: nullCoalesce.offset
 			count: 1
 			path: app/Mcp/Tools/FindContactTool.php
 
 		-
-			message: '#^Offset ''credit'' on array\{date\: string, doc_no\: string, type\: string, memo\: string, debit\: int, credit\: int, running\: int, route_name\: string, \.\.\.\} on left side of \?\? always exists and is not nullable\.$#'
+			message: '#^Offset ''credit'' on array\{date\: string, doc_no\: string, type\: string, memo\: string, sales_rep\: string, debit\: int, credit\: int, running\: int, \.\.\.\} on left side of \?\? always exists and is not nullable\.$#'
 			identifier: nullCoalesce.offset
 			count: 1
 			path: app/Mcp/Tools/FindContactTool.php
 
 		-
-			message: '#^Offset ''debit'' on array\{date\: string, doc_no\: string, type\: string, memo\: string, debit\: int, credit\: int, running\: int, route_name\: string, \.\.\.\} on left side of \?\? always exists and is not nullable\.$#'
+			message: '#^Offset ''debit'' on array\{date\: string, doc_no\: string, type\: string, memo\: string, sales_rep\: string, debit\: int, credit\: int, running\: int, \.\.\.\} on left side of \?\? always exists and is not nullable\.$#'
 			identifier: nullCoalesce.offset
 			count: 1
 			path: app/Mcp/Tools/FindContactTool.php
 
 		-
-			message: '#^Offset ''lines'' on array\{opening\: int, lines\: array\<int, array\{date\: string, doc_no\: string, type\: string, memo\: string, debit\: int, credit\: int, running\: int, route_name\: string, \.\.\.\}\>, period_debit\: int, period_credit\: int, closing\: int\} on left side of \?\? always exists and is not nullable\.$#'
+			message: '#^Offset ''lines'' on array\{opening\: int, lines\: array\<int, array\{date\: string, doc_no\: string, type\: string, memo\: string, sales_rep\: string, debit\: int, credit\: int, running\: int, \.\.\.\}\>, period_debit\: int, period_credit\: int, closing\: int\} on left side of \?\? always exists and is not nullable\.$#'
 			identifier: nullCoalesce.offset
 			count: 1
 			path: app/Mcp/Tools/FindContactTool.php
 
 		-
-			message: '#^Offset ''opening'' on array\{opening\: int, lines\: array\<int, array\{date\: string, doc_no\: string, type\: string, memo\: string, debit\: int, credit\: int, running\: int, route_name\: string, \.\.\.\}\>, period_debit\: int, period_credit\: int, closing\: int\} on left side of \?\? always exists and is not nullable\.$#'
+			message: '#^Offset ''opening'' on array\{opening\: int, lines\: array\<int, array\{date\: string, doc_no\: string, type\: string, memo\: string, sales_rep\: string, debit\: int, credit\: int, running\: int, \.\.\.\}\>, period_debit\: int, period_credit\: int, closing\: int\} on left side of \?\? always exists and is not nullable\.$#'
 			identifier: nullCoalesce.offset
 			count: 1
 			path: app/Mcp/Tools/FindContactTool.php
@@ -3169,7 +3169,7 @@ parameters:
 			path: app/Services/Reporting/XlsxExporter.php
 
 		-
-			message: '#^Offset ''memo'' on array\{date\: string, doc_no\: string, type\: string, memo\: string, debit\: int, credit\: int, running\: int\} on left side of \?\? always exists and is not nullable\.$#'
+			message: '#^Offset ''memo'' on array\{date\: string, doc_no\: string, type\: string, memo\: string, sales_rep\?\: string, debit\: int, credit\: int, running\: int\} on left side of \?\? always exists and is not nullable\.$#'
 			identifier: nullCoalesce.offset
 			count: 1
 			path: app/Services/Reporting/XlsxExporter.php

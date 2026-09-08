@@ -112,25 +112,28 @@ new #[Title('Account Statement')] class extends Component
         $r = $this->report;
 
         $rows = collect();
-        $rows->push(['(Opening balance)', '', '', '', '', '', CsvExporter::cents($r['opening'])]);
+        $pad = $this->isAr() ? [''] : [];
+
+        $rows->push(array_merge(['(Opening balance)', '', ''], $pad, ['', '', '', CsvExporter::cents($r['opening'])]));
 
         foreach ($r['lines'] as $line) {
-            $rows->push([
-                $line['date'],
-                $line['type'],
-                $line['doc_no'],
-                $line['memo'],
-                $line['debit'] ? CsvExporter::cents($line['debit']) : '',
-                $line['credit'] ? CsvExporter::cents($line['credit']) : '',
-                CsvExporter::cents($line['running']),
-            ]);
+            $rows->push(array_merge(
+                [$line['date'], $line['type'], $line['doc_no']],
+                $this->isAr() ? [$line['sales_rep']] : [],
+                [
+                    $line['memo'],
+                    $line['debit'] ? CsvExporter::cents($line['debit']) : '',
+                    $line['credit'] ? CsvExporter::cents($line['credit']) : '',
+                    CsvExporter::cents($line['running']),
+                ],
+            ));
         }
 
-        $rows->push(['(Closing balance)', '', '', '', CsvExporter::cents($r['period_debit']), CsvExporter::cents($r['period_credit']), CsvExporter::cents($r['closing'])]);
+        $rows->push(array_merge(['(Closing balance)', '', ''], $pad, ['', CsvExporter::cents($r['period_debit']), CsvExporter::cents($r['period_credit']), CsvExporter::cents($r['closing'])]));
 
         return app(CsvExporter::class)->stream(
             $this->filenameStem().'.csv',
-            ['Date', 'Type', 'Doc #', 'Memo', 'Debit', 'Credit', 'Running'],
+            array_merge(['Date', 'Type', 'Doc #'], $this->isAr() ? ['Rep'] : [], ['Memo', 'Debit', 'Credit', 'Running']),
             $rows,
         );
     }
@@ -145,6 +148,7 @@ new #[Title('Account Statement')] class extends Component
             $this->report,
             $this->startDate,
             $this->endDate,
+            showRep: $this->isAr(),
         );
     }
 
@@ -157,6 +161,7 @@ new #[Title('Account Statement')] class extends Component
             'report' => $this->report,
             'startDate' => $this->startDate,
             'endDate' => $this->endDate,
+            'showRep' => $this->isAr(),
         ], $this->filenameStem().'.pdf');
     }
 }; ?>
@@ -219,6 +224,8 @@ new #[Title('Account Statement')] class extends Component
         <flux:input type="date" wire:model.live="endDate" :label="__('End')" class="max-w-[180px]" />
     </div>
 
+    @php($cols = $this->isAr() ? 8 : 7)
+
     <div class="overflow-x-auto rounded-lg border border-border">
         <table class="w-full text-sm">
             <thead class="bg-muted">
@@ -226,6 +233,9 @@ new #[Title('Account Statement')] class extends Component
                     <th class="px-4 py-2 text-left">{{ __('Date') }}</th>
                     <th class="px-4 py-2 text-left">{{ __('Type') }}</th>
                     <th class="px-4 py-2 text-left">{{ __('Doc #') }}</th>
+                    @if ($this->isAr())
+                        <th class="px-4 py-2 text-left">{{ __('Rep') }}</th>
+                    @endif
                     <th class="px-4 py-2 text-left">{{ __('Memo') }}</th>
                     <th class="px-4 py-2 text-right">{{ __('Debit') }}</th>
                     <th class="px-4 py-2 text-right">{{ __('Credit') }}</th>
@@ -234,7 +244,7 @@ new #[Title('Account Statement')] class extends Component
             </thead>
             <tbody class="divide-y divide-border">
                 <tr class="bg-muted">
-                    <td class="px-4 py-2 text-muted-foreground italic" colspan="6">{{ __('Opening balance') }}</td>
+                    <td class="px-4 py-2 text-muted-foreground italic" colspan="{{ $cols - 1 }}">{{ __('Opening balance') }}</td>
                     <td class="px-4 py-2 text-right font-mono" data-test="statement-opening">{{ number_format($this->report['opening'] / 100, 2) }}</td>
                 </tr>
                 @forelse ($this->report['lines'] as $line)
@@ -247,22 +257,25 @@ new #[Title('Account Statement')] class extends Component
                                 class="underline"
                             >{{ $line['doc_no'] }}</a>
                         </td>
+                        @if ($this->isAr())
+                            <td class="px-4 py-2" data-test="statement-rep">{{ $line['sales_rep'] }}</td>
+                        @endif
                         <td class="px-4 py-2 text-muted-foreground">{{ $line['memo'] }}</td>
                         <td class="px-4 py-2 text-right font-mono">{{ $line['debit'] ? number_format($line['debit'] / 100, 2) : '' }}</td>
                         <td class="px-4 py-2 text-right font-mono">{{ $line['credit'] ? number_format($line['credit'] / 100, 2) : '' }}</td>
                         <td class="px-4 py-2 text-right font-mono">{{ number_format($line['running'] / 100, 2) }}</td>
                     </tr>
                 @empty
-                    <tr><td colspan="7" class="px-4 py-8 text-center text-muted-foreground">{{ __('No transactions in this range.') }}</td></tr>
+                    <tr><td colspan="{{ $cols }}" class="px-4 py-8 text-center text-muted-foreground">{{ __('No transactions in this range.') }}</td></tr>
                 @endforelse
                 <tr class="bg-muted text-xs">
-                    <td class="px-4 py-1.5" colspan="4"></td>
+                    <td class="px-4 py-1.5" colspan="{{ $cols - 3 }}"></td>
                     <td class="px-4 py-1.5 text-right text-muted-foreground italic">{{ __('Period totals') }}</td>
                     <td class="px-4 py-1.5 text-right font-mono">{{ number_format($this->report['period_debit'] / 100, 2) }}</td>
                     <td class="px-4 py-1.5 text-right font-mono">{{ number_format($this->report['period_credit'] / 100, 2) }}</td>
                 </tr>
                 <tr class="bg-muted">
-                    <td class="px-4 py-2 text-right font-semibold" colspan="6">{{ __('Closing balance') }}</td>
+                    <td class="px-4 py-2 text-right font-semibold" colspan="{{ $cols - 1 }}">{{ __('Closing balance') }}</td>
                     <td class="px-4 py-2 text-right font-mono font-semibold" data-test="statement-closing">{{ number_format($this->report['closing'] / 100, 2) }}</td>
                 </tr>
             </tbody>

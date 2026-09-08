@@ -341,6 +341,7 @@ Route::prefix('{company}')
         Route::livewire('reports/sales-by-customer-detail', 'pages::reports.sales-by-customer-detail')->name('reports.sales-by-customer-detail');
         Route::livewire('reports/sales-by-item', 'pages::reports.sales-by-item')->name('reports.sales-by-item');
         Route::livewire('reports/sales-by-rep', 'pages::reports.sales-by-rep')->name('reports.sales-by-rep');
+        Route::livewire('reports/sales-by-rep/{rep}', 'pages::reports.sales-by-rep-detail')->name('reports.sales-by-rep-detail');
         Route::livewire('reports/purchases-by-vendor', 'pages::reports.purchases-by-vendor')->name('reports.purchases-by-vendor');
         Route::livewire('reports/purchases-by-item', 'pages::reports.purchases-by-item')->name('reports.purchases-by-item');
         Route::livewire('reports/open-purchase-orders', 'pages::reports.open-purchase-orders')->name('reports.open-purchase-orders');

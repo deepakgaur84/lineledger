@@ -8,6 +8,7 @@ use App\Models\Contact;
 use App\Models\Item;
 use App\Models\PurchaseOrder;
 use App\Support\Reporting\ComparisonRow;
+use App\Support\Reporting\RepSalesRow;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -50,6 +51,48 @@ class SalesPurchaseReportBuilder
         $credits = $this->aggregate('credit_memos', 'credit_memo_lines', 'credit_memo_id', 'credit_memo_date', $expr, $company, $start, $end, $classId, $locationId, $contactId);
 
         return $this->mergeSigned($sales, $credits, $groupBy);
+    }
+
+    /**
+     * One sales rep's period, broken out by revenue account and then by document
+     * — the drill-down behind a row on Sales by Rep.
+     *
+     * Deliberately mirrors {@see salesByDimension()}'s filters so the two can't
+     * disagree: pay-now sales receipts are skipped (they carry no sales_rep_id),
+     * amounts are pre-tax line subtotals, and draft/void documents are excluded.
+     * The sum of the rows returned here equals that rep's amount on the summary.
+     *
+     * One document appears once per revenue account it touches, so an invoice
+     * split across two income accounts contributes a row to each.
+     *
+     * @return Collection<int, RepSalesRow>
+     */
+    public function salesByRepDetail(Company $company, CarbonInterface $start, CarbonInterface $end, int $repId, ?int $classId = null, ?int $locationId = null): Collection
+    {
+        $raw = [];
+
+        $sources = [
+            ['invoices', 'invoice_lines', 'invoice_id', 'invoice_date', 'invoice_no', __('Invoice'), 'invoices.show', 'invoice', 1],
+            ['credit_memos', 'credit_memo_lines', 'credit_memo_id', 'credit_memo_date', 'credit_memo_no', __('Credit memo'), 'credit-memos.show', 'credit_memo', -1],
+        ];
+
+        foreach ($sources as [$docTable, $lineTable, $docFk, $dateCol, $numberCol, $label, $route, $param, $sign]) {
+            foreach ($this->repDocumentLines($docTable, $lineTable, $docFk, $dateCol, $numberCol, $company, $start, $end, $repId, $classId, $locationId) as $r) {
+                $raw[] = [
+                    'account_id' => $r->account_id === null ? null : (int) $r->account_id,
+                    'doc_type' => (string) $label,
+                    'doc_id' => (int) $r->doc_id,
+                    'doc_no' => (string) $r->doc_no,
+                    'doc_date' => (string) $r->doc_date,
+                    'contact_id' => $r->contact_id === null ? null : (int) $r->contact_id,
+                    'amount_cents' => (int) $sign * (int) round((float) $r->amount),
+                    'route_name' => (string) $route,
+                    'route_param' => (string) $param,
+                ];
+            }
+        }
+
+        return $this->withAccountAndContactLabels($raw, $company);
     }
 
     /**
@@ -250,5 +293,91 @@ class SalesPurchaseReportBuilder
 
             return $row;
         });
+    }
+
+    /**
+     * Per revenue account, per document line-subtotal sums for one sales rep.
+     * Every non-aggregated column is in the GROUP BY so MySQL's ONLY_FULL_GROUP_BY
+     * is satisfied; dates compare as Y-m-d strings to stay correct on SQLite too.
+     *
+     * @return Collection<int, \stdClass>
+     */
+    private function repDocumentLines(
+        string $docTable,
+        string $lineTable,
+        string $docFk,
+        string $dateCol,
+        string $numberCol,
+        Company $company,
+        CarbonInterface $start,
+        CarbonInterface $end,
+        int $repId,
+        ?int $classId,
+        ?int $locationId,
+    ): Collection {
+        return DB::table("{$lineTable} as line")
+            ->join("{$docTable} as doc", "line.{$docFk}", '=', 'doc.id')
+            ->where('doc.company_id', $company->id)
+            ->whereNotIn('doc.status', self::LIVE_STATUSES_EXCLUDED)
+            ->where('doc.sales_rep_id', $repId)
+            ->whereBetween("doc.{$dateCol}", [$start->toDateString(), $end->toDateString()])
+            ->when($classId !== null, fn ($q) => $q->where('line.class_id', $classId))
+            ->when($locationId !== null, fn ($q) => $q->where('line.location_id', $locationId))
+            ->groupBy('line.account_id', 'doc.id', "doc.{$numberCol}", "doc.{$dateCol}", 'doc.contact_id')
+            ->selectRaw("line.account_id as account_id, doc.id as doc_id, doc.{$numberCol} as doc_no, doc.{$dateCol} as doc_date, doc.contact_id as contact_id, SUM(line.line_subtotal_cents) as amount")
+            ->get();
+    }
+
+    /**
+     * Attach account code/name and customer name in two batched lookups, then
+     * order by account then date. Accounts are read with an explicit company
+     * filter, matching how the rest of this class scopes its query-builder reads.
+     *
+     * @param  list<array{account_id: int|null, doc_type: string, doc_id: int, doc_no: string, doc_date: string, contact_id: int|null, amount_cents: int, route_name: string, route_param: string}>  $rows
+     * @return Collection<int, RepSalesRow>
+     */
+    private function withAccountAndContactLabels(array $rows, Company $company): Collection
+    {
+        $accountIds = array_values(array_unique(array_filter(array_column($rows, 'account_id'))));
+        $contactIds = array_values(array_unique(array_filter(array_column($rows, 'contact_id'))));
+
+        $accounts = DB::table('accounts')
+            ->where('company_id', $company->id)
+            ->whereIn('id', $accountIds)
+            ->get(['id', 'code', 'name'])
+            ->keyBy('id');
+
+        $contacts = DB::table('contacts')
+            ->where('company_id', $company->id)
+            ->whereIn('id', $contactIds)
+            ->pluck('display_name', 'id');
+
+        $mapped = [];
+
+        foreach ($rows as $row) {
+            $account = $row['account_id'] !== null ? $accounts->get($row['account_id']) : null;
+
+            $mapped[] = new RepSalesRow(
+                accountId: $row['account_id'],
+                accountCode: (string) ($account->code ?? ''),
+                accountName: (string) ($account->name ?? __('Unassigned')),
+                docType: $row['doc_type'],
+                docId: $row['doc_id'],
+                docNo: $row['doc_no'],
+                docDate: $row['doc_date'],
+                contactId: $row['contact_id'],
+                contact: (string) ($row['contact_id'] !== null
+                    ? ($contacts[$row['contact_id']] ?? __('No contact'))
+                    : __('No contact')),
+                amountCents: $row['amount_cents'],
+                routeName: $row['route_name'],
+                routeParam: $row['route_param'],
+            );
+        }
+
+        usort($mapped, fn (RepSalesRow $a, RepSalesRow $b): int => [$a->accountCode, $a->accountName, $a->docDate, $a->docNo]
+            <=> [$b->accountCode, $b->accountName, $b->docDate, $b->docNo]);
+
+        return collect($mapped);
     }
 }

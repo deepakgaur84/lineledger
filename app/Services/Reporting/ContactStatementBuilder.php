@@ -50,7 +50,7 @@ class ContactStatementBuilder
     /**
      * @return array{
      *     opening: int,
-     *     lines: array<int, array{date: string, doc_no: string, type: string, memo: string, debit: int, credit: int, running: int, route_name: string, route_param: string, route_value: int}>,
+     *     lines: array<int, array{date: string, doc_no: string, type: string, memo: string, sales_rep: string, debit: int, credit: int, running: int, route_name: string, route_param: string, route_value: int}>,
      *     period_debit: int,
      *     period_credit: int,
      *     closing: int,
@@ -93,6 +93,7 @@ class ContactStatementBuilder
             ]);
 
         $numbers = $this->resolveDocumentNumbers($rows);
+        $reps = $this->resolveSalesReps($rows, $company);
 
         $events = [];
 
@@ -114,6 +115,7 @@ class ContactStatementBuilder
                     'doc_no' => $numbers[$r->source_type][$r->source_id] ?? $r->entry_no,
                     'type' => $meta['label'],
                     'memo' => $r->entry_memo ?? $r->line_memo ?? '',
+                    'sales_rep' => $reps[$r->source_type][$r->source_id] ?? '',
                     'debit' => $debit,
                     'credit' => $credit,
                     'route_name' => $meta['route'],
@@ -130,6 +132,7 @@ class ContactStatementBuilder
                 'doc_no' => $r->entry_no,
                 'type' => __('Journal'),
                 'memo' => $r->entry_memo ?? $r->line_memo ?? '',
+                'sales_rep' => '',
                 'debit' => $debit,
                 'credit' => $credit,
                 'route_name' => 'journal.show',
@@ -169,6 +172,60 @@ class ContactStatementBuilder
     }
 
     /**
+     * Bulk-resolve the sales rep credited on each source document, keyed as
+     * [source_type][source_id] => rep display name.
+     *
+     * Only invoices and credit memos carry sales_rep_id — receipts, cheques,
+     * deposits, bills and bill payments have no such column, so they resolve to
+     * an empty string. Two document lookups plus one name lookup, never N+1.
+     *
+     * @param  Collection<int, \stdClass>  $rows
+     * @return array<class-string, array<int, string>>
+     */
+    private function resolveSalesReps(Collection $rows, Company $company): array
+    {
+        $tables = [Invoice::class => 'invoices', CreditMemo::class => 'credit_memos'];
+
+        $repIds = [];
+        $byType = [];
+
+        foreach ($tables as $type => $table) {
+            $ids = $rows->where('source_type', $type)->pluck('source_id')->filter()->unique()->all();
+
+            if ($ids === []) {
+                continue;
+            }
+
+            $byType[$type] = DB::table($table)
+                ->whereIn('id', $ids)
+                ->whereNotNull('sales_rep_id')
+                ->pluck('sales_rep_id', 'id')
+                ->all();
+
+            $repIds = array_merge($repIds, array_values($byType[$type]));
+        }
+
+        if ($repIds === []) {
+            return [];
+        }
+
+        $names = DB::table('contacts')
+            ->where('company_id', $company->id)
+            ->whereIn('id', array_unique($repIds))
+            ->pluck('display_name', 'id');
+
+        $reps = [];
+
+        foreach ($byType as $type => $map) {
+            foreach ($map as $sourceId => $repId) {
+                $reps[$type][(int) $sourceId] = (string) ($names[$repId] ?? '');
+            }
+        }
+
+        return $reps;
+    }
+
+    /**
      * @param  array<int, array<string, mixed>>  $events
      * @return array{opening: int, lines: array<int, array<string, mixed>>, period_debit: int, period_credit: int, closing: int}
      */
@@ -191,6 +248,7 @@ class ContactStatementBuilder
                 'doc_no' => $e['doc_no'],
                 'type' => $e['type'],
                 'memo' => $e['memo'],
+                'sales_rep' => $e['sales_rep'],
                 'debit' => $e['debit'],
                 'credit' => $e['credit'],
                 'running' => $running,

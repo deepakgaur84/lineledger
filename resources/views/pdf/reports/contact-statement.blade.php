@@ -5,12 +5,17 @@
 ])
 
 @section('content')
+@php($showRep = $showRep ?? false)
+@php($cols = $showRep ? 8 : 7)
 <table class="data">
     <thead>
         <tr>
             <th>Date</th>
             <th>Type</th>
             <th>Doc #</th>
+            @if ($showRep)
+                <th>Rep</th>
+            @endif
             <th>Memo</th>
             <th class="num">Debit</th>
             <th class="num">Credit</th>
@@ -19,7 +24,7 @@
     </thead>
     <tbody>
         <tr class="italic">
-            <td colspan="6">Opening balance</td>
+            <td colspan="{{ $cols - 1 }}">Opening balance</td>
             <td class="num">{{ number_format($report['opening'] / 100, 2) }}</td>
         </tr>
         @forelse ($report['lines'] as $line)
@@ -27,17 +32,20 @@
                 <td>{{ $line['date'] }}</td>
                 <td>{{ $line['type'] }}</td>
                 <td>{{ $line['doc_no'] }}</td>
+                @if ($showRep)
+                    <td>{{ $line['sales_rep'] ?? '' }}</td>
+                @endif
                 <td>{{ $line['memo'] }}</td>
                 <td class="num">{{ $line['debit'] ? number_format($line['debit'] / 100, 2) : '' }}</td>
                 <td class="num">{{ $line['credit'] ? number_format($line['credit'] / 100, 2) : '' }}</td>
                 <td class="num">{{ number_format($line['running'] / 100, 2) }}</td>
             </tr>
         @empty
-            <tr><td colspan="7" style="text-align:center; color:#6b7280;">No transactions in this range.</td></tr>
+            <tr><td colspan="{{ $cols }}" style="text-align:center; color:#6b7280;">No transactions in this range.</td></tr>
         @endforelse
         @if (! empty($report['lines']))
             <tr class="subtotal">
-                <td colspan="4" style="text-align:right;">Period totals</td>
+                <td colspan="{{ $cols - 3 }}" style="text-align:right;">Period totals</td>
                 <td class="num">{{ number_format($report['period_debit'] / 100, 2) }}</td>
                 <td class="num">{{ number_format($report['period_credit'] / 100, 2) }}</td>
                 <td></td>
@@ -46,7 +54,7 @@
     </tbody>
     <tfoot>
         <tr>
-            <td colspan="6" style="text-align:right;">Closing balance</td>
+            <td colspan="{{ $cols - 1 }}" style="text-align:right;">Closing balance</td>
             <td class="num">{{ number_format($report['closing'] / 100, 2) }}</td>
         </tr>
     </tfoot>
