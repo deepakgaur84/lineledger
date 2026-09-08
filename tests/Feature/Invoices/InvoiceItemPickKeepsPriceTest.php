@@ -12,10 +12,12 @@ use Livewire\Livewire;
 
 /*
  * Picking a catalog item on an invoice line fills the blanks but never
- * rewrites a description or unit price the line already carries. Invoices
- * posted over the API by external systems arrive with their own wording and
- * prices; re-tagging such a line with an item afterwards must not change what
- * was billed. The account and tax codes still follow the item.
+ * rewrites a description or unit price the line already carries, and leaves
+ * the tax codes of a priced line alone. Invoices posted over the API by
+ * external systems arrive with their own wording, prices and tax treatment
+ * (tax as its own lines, no tax code); re-tagging such a line with an item
+ * afterwards must not change what was billed or start taxing it. The account
+ * still follows the item, and a fresh line still gets the item's defaults.
  */
 
 beforeEach(function () {
@@ -62,13 +64,34 @@ it('keeps an existing unit price and description when the item changes', functio
         ->assertSet('lines.0.account_id', $this->income->id);
 });
 
-it('still applies the item tax codes to a line that already has a price', function () {
+it('leaves the tax codes of a priced line alone when the item changes', function () {
+    // A line with a price and no tax code (tax was posted as its own lines)
+    // must not start being taxed because it was tagged with an item.
     Livewire::test('pages::invoices.form', ['company' => $this->company])
         ->set('lines.0.unit_price', '3495.00')
         ->set('lines.0.item_id', $this->item->id)
+        ->assertSet('lines.0.tax_code_id', null)
+        ->assertSet('lines.0.secondary_tax_code_id', null)
+        ->assertSet('lines.0.unit_price', '3495.00');
+
+    // …and one that already has a tax code keeps exactly that one.
+    Livewire::test('pages::invoices.form', ['company' => $this->company])
+        ->set('lines.0.unit_price', '3495.00')
+        ->set('lines.0.tax_code_ids', [$this->pst->id])
+        ->set('lines.0.item_id', $this->item->id)
+        ->assertSet('lines.0.tax_code_id', $this->pst->id)
+        ->assertSet('lines.0.secondary_tax_code_id', null);
+});
+
+it('applies the item tax codes to a line that has no price yet', function () {
+    Livewire::test('pages::invoices.form', ['company' => $this->company])
+        ->set('lines.0.description', 'Cremation')
+        ->set('lines.0.item_id', $this->item->id)
         ->assertSet('lines.0.tax_code_id', $this->gst->id)
         ->assertSet('lines.0.secondary_tax_code_id', $this->pst->id)
-        ->assertSet('lines.0.unit_price', '3495.00');
+        ->assertSet('lines.0.unit_price', '993.00')
+        // a description typed first is kept
+        ->assertSet('lines.0.description', 'Cremation');
 });
 
 it('treats a zero price as blank and fills it from the item', function () {

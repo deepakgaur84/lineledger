@@ -265,11 +265,15 @@ new #[Title('Invoice')] class extends Component
     /**
      * Triggered when an item is picked — prefill the line.
      *
-     * The account and both tax codes always follow the item. The description
-     * and unit price are filled only when the line has none yet: invoices
-     * posted over the API by external systems arrive with their own wording
-     * and prices, and re-tagging such a line with a catalog item afterwards
-     * must not rewrite what was actually billed.
+     * The account always follows the item. The description and unit price are
+     * filled only when the line has none yet, and the tax codes follow the item
+     * only while the line has no price yet: invoices posted over the API by
+     * external systems arrive with their own wording, prices and tax treatment
+     * (often tax as its own lines and no tax code at all), and re-tagging such
+     * a line with a catalog item afterwards must not rewrite what was billed
+     * or start taxing it. A fresh line — no price typed yet — still gets the
+     * item's defaults, so item pricing and default taxes keep working when an
+     * invoice is built by hand.
      */
     public function updatedLines(mixed $value, ?string $key = null): void
     {
@@ -326,15 +330,17 @@ new #[Title('Invoice')] class extends Component
             }
 
             if ($item) {
+                $hadPrice = $this->lineHasPrice($i);
+
                 $this->lines[$i]['account_id'] = $item->income_account_id;
                 if (trim((string) ($this->lines[$i]['description'] ?? '')) === '') {
                     $this->lines[$i]['description'] = $item->description ?? $item->name;
                 }
-                if (! $this->lineHasPrice($i)) {
+                if (! $hadPrice) {
                     $this->lines[$i]['unit_price'] = Money::fromCents((int) $item->default_price_cents)->toDecimalString();
+                    $this->lines[$i]['tax_code_id'] = $item->default_tax_code_id;
+                    $this->lines[$i]['secondary_tax_code_id'] = $item->default_secondary_tax_code_id;
                 }
-                $this->lines[$i]['tax_code_id'] = $item->default_tax_code_id;
-                $this->lines[$i]['secondary_tax_code_id'] = $item->default_secondary_tax_code_id;
             }
         }
 
