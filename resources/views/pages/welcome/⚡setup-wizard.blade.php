@@ -14,6 +14,7 @@ use App\Models\Company;
 use App\Models\TaxAgency;
 use App\Rules\CompanyName;
 use App\Services\Migration\QuickBooksMigrationService;
+use App\Support\Currency;
 use App\Support\Defaults\ChartTemplateBuilder;
 use App\Support\SiteSettings;
 use App\Support\Tax\ProvincialSalesTax;
@@ -1032,8 +1033,9 @@ new #[Layout('layouts.onboarding'), Title('Setup your organization')] class exte
 
                         <flux:select wire:model="currency" :label="__('Base currency')" data-test="wizard-currency">
                             <flux:select.option value="">{{ __('Select…') }}</flux:select.option>
-                            <flux:select.option value="CAD">CAD &mdash; Canadian Dollar</flux:select.option>
-                            <flux:select.option value="USD">USD &mdash; United States Dollar</flux:select.option>
+                            @foreach (Currency::selectable() as $code => $displayName)
+                                <flux:select.option value="{{ $code }}">{{ $displayName }}</flux:select.option>
+                            @endforeach
                         </flux:select>
 
                         <flux:select wire:model="timezone" :label="__('Timezone')" data-test="wizard-timezone">
