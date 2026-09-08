@@ -264,6 +264,12 @@ new #[Title('Invoice')] class extends Component
 
     /**
      * Triggered when an item is picked — prefill the line.
+     *
+     * The account and both tax codes always follow the item. The description
+     * and unit price are filled only when the line has none yet: invoices
+     * posted over the API by external systems arrive with their own wording
+     * and prices, and re-tagging such a line with a catalog item afterwards
+     * must not rewrite what was actually billed.
      */
     public function updatedLines(mixed $value, ?string $key = null): void
     {
@@ -321,14 +327,36 @@ new #[Title('Invoice')] class extends Component
 
             if ($item) {
                 $this->lines[$i]['account_id'] = $item->income_account_id;
-                $this->lines[$i]['description'] = $item->description ?? $item->name;
-                $this->lines[$i]['unit_price'] = Money::fromCents((int) $item->default_price_cents)->toDecimalString();
+                if (trim((string) ($this->lines[$i]['description'] ?? '')) === '') {
+                    $this->lines[$i]['description'] = $item->description ?? $item->name;
+                }
+                if (! $this->lineHasPrice($i)) {
+                    $this->lines[$i]['unit_price'] = Money::fromCents((int) $item->default_price_cents)->toDecimalString();
+                }
                 $this->lines[$i]['tax_code_id'] = $item->default_tax_code_id;
                 $this->lines[$i]['secondary_tax_code_id'] = $item->default_secondary_tax_code_id;
             }
         }
 
         $this->recalcLine($i);
+    }
+
+    /**
+     * Whether the line already carries a non-zero unit price. Parses the way
+     * recalcLine() does, so a blank or unparseable value counts as "no price".
+     */
+    protected function lineHasPrice(int $i): bool
+    {
+        $price = (string) ($this->lines[$i]['unit_price'] ?? '');
+        if ($price === '') {
+            return false;
+        }
+
+        try {
+            return Money::fromString($price)->cents !== 0;
+        } catch (Throwable) {
+            return false;
+        }
     }
 
     /**
