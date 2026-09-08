@@ -216,3 +216,68 @@ it('renders the detail page grouped by account with a grand total', function () 
         ->assertSeeHtml('data-test="rep-detail-total"')
         ->assertSee('42.00');
 });
+
+it('offers an income-statement view of the rep, one row per revenue account', function () {
+    $inv = repInvoice($this->company, $this->customer, $this->rep, 'INV-1');
+    repSalesLine($inv, $this->income, 10000);
+    repSalesLine($inv, $this->income2, 4000);
+
+    Livewire::test('pages::reports.sales-by-rep-detail', ['company' => $this->company, 'rep' => $this->rep])
+        ->set('startDate', $this->start->toDateString())
+        ->set('endDate', $this->end->toDateString())
+        ->set('view', 'accounts')
+        ->assertOk()
+        ->assertSeeHtml('data-test="rep-account-row"')
+        ->assertSee('4950 — Consulting Revenue')
+        ->assertSee('140.00')            // grand total, both accounts
+        // The per-document table is not rendered in this view.
+        ->assertDontSeeHtml('data-test="rep-detail-row"');
+});
+
+it('compares the rep\'s accounts against the prior period', function () {
+    // Prior month — the period 'prior_period' compares against.
+    $old = repInvoice($this->company, $this->customer, $this->rep, 'INV-OLD');
+    $old->forceFill(['invoice_date' => CarbonImmutable::now()->subMonth()->startOfMonth()->addDays(3)->toDateString()])->save();
+    repSalesLine($old, $this->income2, 5000);
+
+    // Current month.
+    $now = repInvoice($this->company, $this->customer, $this->rep, 'INV-NOW');
+    repSalesLine($now, $this->income2, 8000);
+
+    $start = CarbonImmutable::now()->startOfMonth();
+    $end = CarbonImmutable::now()->endOfMonth();
+
+    $component = Livewire::test('pages::reports.sales-by-rep-detail', ['company' => $this->company, 'rep' => $this->rep])
+        ->set('view', 'accounts')
+        ->set('startDate', $start->toDateString())
+        ->set('endDate', $end->toDateString())
+        ->set('comparisonBasis', 'prior_period');
+
+    $row = $component->instance()->accountRows->firstWhere('key', $this->income2->id);
+
+    expect($row->amountCents)->toBe(8000)
+        ->and($row->priorAmountCents)->toBe(5000)
+        ->and($row->changeCents())->toBe(3000);
+
+    $component->assertSee('Prior')->assertSee('80.00')->assertSee('50.00');
+});
+
+it('does not compute a prior period while the documents view is showing', function () {
+    $inv = repInvoice($this->company, $this->customer, $this->rep, 'INV-1');
+    repSalesLine($inv, $this->income, 1000);
+
+    $component = Livewire::test('pages::reports.sales-by-rep-detail', ['company' => $this->company, 'rep' => $this->rep])
+        ->set('startDate', $this->start->toDateString())
+        ->set('endDate', $this->end->toDateString())
+        ->set('view', 'documents')
+        ->set('comparisonBasis', 'prior_period');
+
+    expect($component->instance()->priorRows)->toBeEmpty();
+});
+
+it('falls back to the documents view for an unknown view parameter', function () {
+    Livewire::withQueryParams(['view' => 'bogus'])
+        ->test('pages::reports.sales-by-rep-detail', ['company' => $this->company, 'rep' => $this->rep])
+        ->assertOk()
+        ->assertSet('view', 'documents');
+});
