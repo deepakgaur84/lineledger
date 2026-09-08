@@ -49,6 +49,13 @@ new #[Title('Make deposit')] class extends Component
      */
     public array $availableReceipts = [];
 
+    /** Column the receipt picker is sorted by; one of self::SORT_FIELDS. */
+    public string $sortField = 'date';
+
+    public string $sortDir = 'asc';
+
+    private const SORT_FIELDS = ['included', 'date', 'receipt_no', 'contact', 'payment_method', 'reference', 'amount'];
+
     /**
      * "Other" deposit lines (e.g. owner contribution, refund)
      *
@@ -176,7 +183,7 @@ new #[Title('Make deposit')] class extends Component
                 'payment_method' => $r->paymentMethod?->name,
                 'reference' => $r->reference,
                 'amount' => (int) $r->amount_cents,
-                'included' => $this->deposit ? in_array($r->id, $currentCustomerIds, true) : true,
+                'included' => $this->deposit !== null && in_array($r->id, $currentCustomerIds, true),
             ]));
 
         // --- Pay-now Sales Receipts ---
@@ -200,10 +207,69 @@ new #[Title('Make deposit')] class extends Component
                 'payment_method' => $r->paymentMethod?->name,
                 'reference' => $r->reference,
                 'amount' => (int) $r->total_cents,
-                'included' => $this->deposit ? in_array($r->id, $currentSalesIds, true) : true,
+                'included' => $this->deposit !== null && in_array($r->id, $currentSalesIds, true),
             ]));
 
-        $this->availableReceipts = $rows->sortBy('date')->values()->all();
+        $this->availableReceipts = $rows->values()->all();
+
+        $this->applySort();
+    }
+
+    /**
+     * Re-order the picker by the clicked column, flipping direction when the
+     * same column is clicked twice. The rows are sorted in place (rather than in
+     * the view) so each row's `included` binding keeps pointing at its own row.
+     */
+    public function sortBy(string $field): void
+    {
+        if (! in_array($field, self::SORT_FIELDS, true)) {
+            return;
+        }
+
+        if ($this->sortField === $field) {
+            $this->sortDir = $this->sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+            $this->sortField = $field;
+            $this->sortDir = 'asc';
+        }
+
+        $this->applySort();
+    }
+
+    protected function applySort(): void
+    {
+        $this->availableReceipts = collect($this->availableReceipts)
+            ->sortBy(fn (array $r) => match ($this->sortField) {
+                'included' => (int) $r['included'],
+                'amount' => (int) $r['amount'],
+                'receipt_no' => mb_strtolower((string) ($r['receipt_no'] ?? '')),
+                'contact' => mb_strtolower((string) ($r['contact'] ?? '')),
+                'payment_method' => mb_strtolower((string) ($r['payment_method'] ?? '')),
+                'reference' => mb_strtolower((string) ($r['reference'] ?? '')),
+                default => (string) $r['date'],
+            }, SORT_REGULAR, $this->sortDir === 'desc')
+            ->values()
+            ->all();
+    }
+
+    /** True only when there is at least one receipt and every one is ticked. */
+    #[Computed]
+    public function allReceiptsSelected(): bool
+    {
+        return $this->availableReceipts !== []
+            && collect($this->availableReceipts)->every(fn (array $r) => (bool) $r['included']);
+    }
+
+    /** Header checkbox: tick every receipt, or clear them all when all are ticked. */
+    public function toggleAllReceipts(): void
+    {
+        $include = ! $this->allReceiptsSelected;
+
+        foreach (array_keys($this->availableReceipts) as $i) {
+            $this->availableReceipts[$i]['included'] = $include;
+        }
+
+        unset($this->allReceiptsSelected);
     }
 
     public function addOtherLine(): void
@@ -482,13 +548,20 @@ new #[Title('Make deposit')] class extends Component
                     <table class="w-full text-sm">
                         <thead class="bg-muted">
                             <tr>
-                                <th class="px-3 py-2"></th>
-                                <th class="px-3 py-2 text-left">{{ __('Date') }}</th>
-                                <th class="px-3 py-2 text-left">{{ __('Receipt #') }}</th>
-                                <th class="px-3 py-2 text-left">{{ __('From') }}</th>
-                                <th class="px-3 py-2 text-left">{{ __('Payment type') }}</th>
-                                <th class="px-3 py-2 text-left">{{ __('Ref') }}</th>
-                                <th class="px-3 py-2 text-right">{{ __('Amount') }}</th>
+                                <th class="px-3 py-2">
+                                    <flux:checkbox
+                                        wire:click="toggleAllReceipts"
+                                        :checked="$this->allReceiptsSelected"
+                                        :aria-label="__('Select all receipts')"
+                                        data-test="select-all-receipts"
+                                    />
+                                </th>
+                                <th class="px-3 py-2 text-left"><x-sort-header field="date" :current-field="$sortField" :current-dir="$sortDir" :label="__('Date')" /></th>
+                                <th class="px-3 py-2 text-left"><x-sort-header field="receipt_no" :current-field="$sortField" :current-dir="$sortDir" :label="__('Receipt #')" /></th>
+                                <th class="px-3 py-2 text-left"><x-sort-header field="contact" :current-field="$sortField" :current-dir="$sortDir" :label="__('From')" /></th>
+                                <th class="px-3 py-2 text-left"><x-sort-header field="payment_method" :current-field="$sortField" :current-dir="$sortDir" :label="__('Payment type')" /></th>
+                                <th class="px-3 py-2 text-left"><x-sort-header field="reference" :current-field="$sortField" :current-dir="$sortDir" :label="__('Ref')" /></th>
+                                <th class="px-3 py-2 text-right"><x-sort-header field="amount" :current-field="$sortField" :current-dir="$sortDir" :label="__('Amount')" align="right" /></th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-border">

@@ -53,9 +53,10 @@ it('lists a UF-parked sales receipt in the deposit picker and batches it into th
     $row = collect($component->get('availableReceipts'))->firstWhere('receipt_id', $sr->id);
     expect($row)->not->toBeNull()
         ->and($row['source'])->toBe('sales')
-        ->and($row['amount'])->toBe($total);
+        ->and($row['amount'])->toBe($total)
+        ->and($row['included'])->toBeFalse();
 
-    $component->call('save')->assertHasNoErrors();
+    $component->call('toggleAllReceipts')->call('save')->assertHasNoErrors();
 
     $deposit = Deposit::query()->firstOrFail();
     expect($deposit->status->value)->toBe('posted');
@@ -70,6 +71,7 @@ it('drops a deposited sales receipt from a later deposit picker', function () {
 
     Livewire::test('pages::deposits.form', ['company' => $this->company])
         ->set('bank_account_id', $this->bank->id)
+        ->call('toggleAllReceipts')
         ->call('save')
         ->assertHasNoErrors();
 
