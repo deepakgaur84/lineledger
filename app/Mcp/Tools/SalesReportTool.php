@@ -18,7 +18,7 @@ class SalesReportTool extends Tool
 
     protected string $title = 'Sales report';
 
-    protected string $description = 'Read-only sales report for a period: sales grouped by customer or by item, with the top results ranked by revenue. Use the "period" argument (this_month, last_month, this_quarter, last_quarter, this_year, last_year, ytd) or explicit "start"/"end" ISO dates. All figures are in the company\'s home currency. This tool never modifies any data.';
+    protected string $description = 'Read-only sales report for a period: sales grouped by customer, by item, or by sales rep, with the top results ranked by revenue. Use the "period" argument (this_month, last_month, this_quarter, last_quarter, this_year, last_year, ytd) or explicit "start"/"end" ISO dates. All figures are in the company\'s home currency. This tool never modifies any data.';
 
     /**
      * Map the friendly group_by argument to the builder's dimension key.
@@ -26,6 +26,14 @@ class SalesReportTool extends Tool
     private const GROUP_BY_MAP = [
         'customer' => 'contact',
         'item' => 'item',
+        'rep' => 'sales_rep',
+    ];
+
+    /** Fallback label for the null bucket of each dimension. */
+    private const UNASSIGNED_LABEL = [
+        'customer' => 'No contact',
+        'item' => 'No item',
+        'rep' => 'No sales rep',
     ];
 
     public function handle(Request $request): Response
@@ -64,7 +72,11 @@ class SalesReportTool extends Tool
         $totalCents = (int) $rows->sum('amount_cents');
         $topRows = $rows->take($limit);
 
-        $dimensionLabel = $groupBy === 'item' ? 'item' : 'customer';
+        $dimensionLabel = match ($groupBy) {
+            'item' => 'item',
+            'rep' => 'sales rep',
+            default => 'customer',
+        };
 
         $lines = [];
         $lines[] = "Sales by {$dimensionLabel} for {$period['label']}.";
@@ -78,7 +90,7 @@ class SalesReportTool extends Tool
 
             $rank = 1;
             foreach ($topRows as $row) {
-                $label = $row['label'] ?? ($dimensionLabel === 'item' ? 'No item' : 'No contact');
+                $label = $row['label'] ?? self::UNASSIGNED_LABEL[$groupBy];
                 $lines[] = "{$rank}. {$label}: {$this->money((int) $row['amount_cents'])} (qty ".rtrim(rtrim(number_format((float) $row['qty'], 2), '0'), '.').')';
                 $rank++;
             }
@@ -100,7 +112,7 @@ class SalesReportTool extends Tool
             'end' => $schema->string()
                 ->description('Optional end date (ISO YYYY-MM-DD). Use with "start" for an explicit custom range.'),
             'group_by' => $schema->string()
-                ->description('How to group sales: "customer" (default) or "item".'),
+                ->description('How to group sales: "customer" (default), "item", or "rep" (the sales rep credited on the invoice or credit memo). Note that "rep" covers invoices and credit memos only — pay-now sales receipts carry no rep.'),
             'limit' => $schema->integer()
                 ->description('Maximum number of rows to return, ranked by revenue. Defaults to 10.'),
         ];

@@ -17,7 +17,7 @@ class ListInvoicesTool extends Tool
 
     protected string $title = 'List invoices';
 
-    protected string $description = 'Search and list invoices, optionally filtered by status, customer name, and issue-date range. Returns the most recent invoices first with invoice number, customer, issue date, status, and total. All figures are in the company\'s home currency. This tool is read-only and never modifies any data.';
+    protected string $description = 'Search and list invoices, optionally filtered by status, customer name, and issue-date range. Returns the most recent invoices first with invoice number, customer, issue date, status, total, and the sales rep credited on the invoice (shown as "no rep" when none is set). All figures are in the company\'s home currency. This tool is read-only and never modifies any data.';
 
     public function handle(Request $request): Response
     {
@@ -40,13 +40,15 @@ class ListInvoicesTool extends Tool
         }
 
         $customer = $request->get('customer');
+        $rep = $request->get('rep');
         $start = $request->get('start');
         $end = $request->get('end');
 
         $invoices = Invoice::query()
-            ->with('contact')
+            ->with(['contact', 'salesRep'])
             ->when($status, fn ($q) => $q->where('status', $status))
             ->when($customer, fn ($q) => $q->whereHas('contact', fn ($c) => $c->where('display_name', 'like', "%{$customer}%")))
+            ->when($rep, fn ($q) => $q->whereHas('salesRep', fn ($c) => $c->where('display_name', 'like', "%{$rep}%")))
             ->when($start, fn ($q) => $q->where('invoice_date', '>=', $start))
             ->when($end, fn ($q) => $q->where('invoice_date', '<=', $end))
             ->orderByDesc('invoice_date')
@@ -63,12 +65,13 @@ class ListInvoicesTool extends Tool
             $date = $invoice->invoice_date?->toDateString() ?? '';
 
             return sprintf(
-                '- %s | %s | %s | %s | %s',
+                '- %s | %s | %s | %s | %s | rep: %s',
                 $invoice->invoice_no,
                 $name,
                 $date,
                 $invoice->status->label(),
                 $this->money($invoice->total_cents),
+                $invoice->salesRep?->display_name ?? 'no rep',
             );
         })->implode("\n");
 
@@ -91,6 +94,8 @@ class ListInvoicesTool extends Tool
                 ->description('Optional invoice status filter. One of: draft, posted, partial, paid, void.'),
             'customer' => $schema->string()
                 ->description('Optional customer name to match (partial, case-insensitive).'),
+            'rep' => $schema->string()
+                ->description('Optional sales rep name to match (partial, case-insensitive). The rep is an employee contact credited with the sale.'),
             'start' => $schema->string()
                 ->description('Optional start of the issue-date range (ISO date, e.g. 2026-01-01).'),
             'end' => $schema->string()

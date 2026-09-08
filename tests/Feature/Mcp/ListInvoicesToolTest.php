@@ -119,3 +119,35 @@ it('ListInvoices: denies access without the sales read ability', function () {
 
     expect($response->isError())->toBeTrue();
 });
+
+it('ListInvoices: shows the sales rep and can filter by it', function () {
+    $company = Company::factory()->create();
+    app()->instance('current_company', $company);
+
+    $customer = Contact::factory()->create(['company_id' => $company->id, 'is_customer' => true, 'display_name' => 'Acme Co']);
+    $rep = Contact::create(['company_id' => $company->id, 'display_name' => 'Jane Rep', 'is_employee' => true]);
+
+    Invoice::create([
+        'company_id' => $company->id, 'contact_id' => $customer->id, 'sales_rep_id' => $rep->id,
+        'invoice_no' => 'INV-WITH-REP', 'invoice_date' => '2026-05-01', 'due_date' => '2026-05-31',
+        'status' => 'posted', 'total_cents' => 150000,
+    ]);
+
+    Invoice::create([
+        'company_id' => $company->id, 'contact_id' => $customer->id,
+        'invoice_no' => 'INV-NO-REP', 'invoice_date' => '2026-05-02', 'due_date' => '2026-06-01',
+        'status' => 'posted', 'total_cents' => 100000,
+    ]);
+
+    bindMcpTenant($company);
+
+    $all = (string) (new ListInvoicesTool)->handle(new Request([]))->content();
+
+    expect($all)->toContain('rep: Jane Rep')
+        ->and($all)->toContain('rep: no rep');
+
+    $filtered = (string) (new ListInvoicesTool)->handle(new Request(['rep' => 'jane']))->content();
+
+    expect($filtered)->toContain('INV-WITH-REP')
+        ->and($filtered)->not->toContain('INV-NO-REP');
+});
