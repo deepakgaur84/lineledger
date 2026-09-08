@@ -6,10 +6,13 @@ use App\Models\Account;
 use App\Models\Company;
 use App\Models\Contact;
 use App\Models\CustomerReceipt;
+use App\Models\Deposit;
 use App\Models\Invoice;
 use App\Models\User;
 use App\Services\Posting\InvoicePoster;
 use App\Services\Posting\ReceiptPoster;
+use Illuminate\Support\Collection;
+use Livewire\Features\SupportTesting\Testable;
 use Livewire\Livewire;
 
 beforeEach(function () {
@@ -91,6 +94,14 @@ it('ticks every receipt and then clears them all from the header checkbox', func
     expect(collect($component->get('availableReceipts'))->pluck('included')->all())->toBe([false, false]);
 });
 
+/** The picker rows in display order: $receiptOrder resolved against $availableReceipts. */
+function pickerRows(Testable $component): Collection
+{
+    $rows = $component->get('availableReceipts');
+
+    return collect($component->get('receiptOrder'))->map(fn (int $i) => $rows[$i]);
+}
+
 it('sorts the picker by a clicked column and flips direction on a second click', function () {
     ($this->makeReceipt)('Zed Co', '2026-01-05', 5000, '1');
     ($this->makeReceipt)('Ada Co', '2026-01-02', 9000, '2');
@@ -98,20 +109,31 @@ it('sorts the picker by a clicked column and flips direction on a second click',
     $component = Livewire::test('pages::deposits.form', ['company' => $this->company]);
 
     // Defaults to date ascending.
-    expect(collect($component->get('availableReceipts'))->pluck('date')->all())
-        ->toBe(['2026-01-02', '2026-01-05']);
+    expect(pickerRows($component)->pluck('date')->all())->toBe(['2026-01-02', '2026-01-05']);
 
     $component->call('sortBy', 'contact');
-    expect(collect($component->get('availableReceipts'))->pluck('contact')->all())
-        ->toBe(['Ada Co', 'Zed Co']);
+    expect(pickerRows($component)->pluck('contact')->all())->toBe(['Ada Co', 'Zed Co']);
 
     $component->call('sortBy', 'contact')->assertSet('sortDir', 'desc');
-    expect(collect($component->get('availableReceipts'))->pluck('contact')->all())
-        ->toBe(['Zed Co', 'Ada Co']);
+    expect(pickerRows($component)->pluck('contact')->all())->toBe(['Zed Co', 'Ada Co']);
 
     $component->call('sortBy', 'amount')->assertSet('sortDir', 'asc');
-    expect(collect($component->get('availableReceipts'))->pluck('amount')->all())
-        ->toBe([5000, 9000]);
+    expect(pickerRows($component)->pluck('amount')->all())->toBe([5000, 9000]);
+});
+
+it('sorts by reordering the display order, never the rows a checkbox is bound to', function () {
+    $zed = ($this->makeReceipt)('Zed Co', '2026-01-05', 5000, '1');
+    $ada = ($this->makeReceipt)('Ada Co', '2026-01-02', 9000, '2');
+
+    $component = Livewire::test('pages::deposits.form', ['company' => $this->company]);
+
+    $before = collect($component->get('availableReceipts'))->pluck('receipt_id')->all();
+
+    $component->call('sortBy', 'date');   // flip to date-desc
+
+    // The bound array keeps every receipt at the same index — only the order changed.
+    expect(collect($component->get('availableReceipts'))->pluck('receipt_id')->all())->toBe($before)
+        ->and(pickerRows($component)->pluck('receipt_id')->all())->toBe([$zed->id, $ada->id]);
 });
 
 it('ignores a sort on an unknown column', function () {
@@ -123,16 +145,34 @@ it('ignores a sort on an unknown column', function () {
         ->assertSet('sortDir', 'asc');
 });
 
-it('keeps a receipt ticked against its own row after the picker is re-sorted', function () {
+it('banks only the receipt that was ticked after the picker was re-sorted', function () {
     ($this->makeReceipt)('Zed Co', '2026-01-05', 5000, '1');
     $ada = ($this->makeReceipt)('Ada Co', '2026-01-02', 9000, '2');
 
     $component = Livewire::test('pages::deposits.form', ['company' => $this->company])
-        ->set('availableReceipts.0.included', true)   // Ada, first under date-asc
-        ->call('sortBy', 'date');                     // flip to date-desc
+        ->call('sortBy', 'contact');
 
-    $rows = collect($component->get('availableReceipts'));
+    // Tick the first row as rendered — the view binds it by its ORIGINAL index.
+    $adaIndex = collect($component->get('availableReceipts'))->search(fn (array $r) => $r['receipt_id'] === $ada->id);
 
-    expect($rows->firstWhere('receipt_id', $ada->id)['included'])->toBeTrue()
-        ->and($rows->first()['receipt_id'])->not->toBe($ada->id);
+    // The rendered rows must bind by original index, in display order — a checkbox
+    // pointing at the row above/below it is what mis-ticked receipts.
+    preg_match_all('/availableReceipts\.(\d+)\.included/', $component->html(), $m);
+    expect(array_map('intval', $m[1]))->toBe($component->get('receiptOrder'));
+
+    $component->set("availableReceipts.{$adaIndex}.included", true)->call('save')->assertHasNoErrors();
+
+    $deposit = Deposit::query()->with('lines')->firstOrFail();
+
+    expect($deposit->lines)->toHaveCount(1)
+        ->and((int) $deposit->lines->first()->customer_receipt_id)->toBe($ada->id)
+        ->and((int) $deposit->lines->first()->amount_cents)->toBe(9000);
+});
+
+it('links each receipt number to its own edit page', function () {
+    $ada = ($this->makeReceipt)('Ada Co', '2026-01-02', 9000, '1');
+
+    Livewire::test('pages::deposits.form', ['company' => $this->company])
+        ->assertSeeHtml('data-test="receipt-pick-link"')
+        ->assertSeeHtml(route('receipts.edit', ['company' => $this->company->slug, 'receipt' => $ada->id]));
 });

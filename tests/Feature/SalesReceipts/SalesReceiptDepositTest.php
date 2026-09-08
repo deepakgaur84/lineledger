@@ -56,6 +56,9 @@ it('lists a UF-parked sales receipt in the deposit picker and batches it into th
         ->and($row['amount'])->toBe($total)
         ->and($row['included'])->toBeFalse();
 
+    // The receipt number links to the sales-receipt editor, not the payment one.
+    $component->assertSeeHtml(route('sales-receipts.edit', ['company' => $this->company->slug, 'receipt' => $sr->id]));
+
     $component->call('toggleAllReceipts')->call('save')->assertHasNoErrors();
 
     $deposit = Deposit::query()->firstOrFail();

@@ -54,6 +54,17 @@ new #[Title('Make deposit')] class extends Component
 
     public string $sortDir = 'asc';
 
+    /**
+     * $availableReceipts keys in display order. Sorting reorders THIS, never the
+     * bound array: each checkbox's wire:model carries its row's array index, and
+     * that expression is compiled once when the row's DOM node is created — so
+     * re-indexing the array under a moved row would point its checkbox at a
+     * different receipt.
+     *
+     * @var array<int, int>
+     */
+    public array $receiptOrder = [];
+
     private const SORT_FIELDS = ['included', 'date', 'receipt_no', 'contact', 'payment_method', 'reference', 'amount'];
 
     /**
@@ -238,7 +249,7 @@ new #[Title('Make deposit')] class extends Component
 
     protected function applySort(): void
     {
-        $this->availableReceipts = collect($this->availableReceipts)
+        $this->receiptOrder = collect($this->availableReceipts)
             ->sortBy(fn (array $r) => match ($this->sortField) {
                 'included' => (int) $r['included'],
                 'amount' => (int) $r['amount'],
@@ -248,7 +259,8 @@ new #[Title('Make deposit')] class extends Component
                 'reference' => mb_strtolower((string) ($r['reference'] ?? '')),
                 default => (string) $r['date'],
             }, SORT_REGULAR, $this->sortDir === 'desc')
-            ->values()
+            ->keys()
+            ->map(fn ($i) => (int) $i)
             ->all();
     }
 
@@ -565,11 +577,21 @@ new #[Title('Make deposit')] class extends Component
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-border">
-                            @foreach ($availableReceipts as $i => $r)
+                            @foreach ($receiptOrder as $i)
+                                @php($r = $availableReceipts[$i] ?? null)
+                                @continue($r === null)
                                 <tr wire:key="receipt-{{ $r['source'] }}-{{ $r['receipt_id'] }}" data-test="receipt-pick-row">
                                     <td class="px-3 py-2"><flux:checkbox wire:model.live="availableReceipts.{{ $i }}.included" data-test="receipt-pick-check" /></td>
                                     <td class="px-3 py-2 whitespace-nowrap">{{ $r['date'] }}</td>
-                                    <td class="px-3 py-2 font-mono">{{ $r['receipt_no'] }}</td>
+                                    <td class="px-3 py-2 font-mono">
+                                        <a
+                                            href="{{ route($r['source'] === 'sales' ? 'sales-receipts.edit' : 'receipts.edit', ['company' => $company->slug, 'receipt' => $r['receipt_id']]) }}"
+                                            target="_blank"
+                                            class="underline decoration-dotted underline-offset-2 hover:decoration-solid"
+                                            title="{{ __('Edit this receipt in a new tab') }}"
+                                            data-test="receipt-pick-link"
+                                        >{{ $r['receipt_no'] }}</a>
+                                    </td>
                                     <td class="px-3 py-2">{{ $r['contact'] }}</td>
                                     <td class="px-3 py-2 text-muted-foreground" data-test="receipt-pick-method">{{ $r['payment_method'] ?? '—' }}</td>
                                     <td class="px-3 py-2 text-muted-foreground">{{ $r['reference'] }}</td>
