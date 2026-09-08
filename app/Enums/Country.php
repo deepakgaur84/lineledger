@@ -29,7 +29,7 @@ enum Country: string
 {
     case Canada = 'CA';
     case UnitedStates = 'US';
-    case Global = 'GLOBAL';
+    case Global = 'ZZ';
 
     public function label(): string
     {
@@ -59,7 +59,7 @@ enum Country: string
      *
      * Global is never inferred from host — it's only reachable by explicitly
      * picking it in the company wizard's country dropdown, or by an operator
-     * setting APP_REGION=GLOBAL for a self-hosted, non-CA/US deployment.
+     * setting APP_REGION=ZZ for a self-hosted, non-CA/US deployment.
      */
     public static function fromHost(?string $host): self
     {
