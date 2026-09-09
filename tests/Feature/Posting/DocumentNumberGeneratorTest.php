@@ -87,6 +87,48 @@ it('keeps BILL and REIM as separate sequences', function () {
         ->toBe('REIM-000001');
 });
 
+it('skips a number the last-by-id row would have collided with', function () {
+    // The Pacific Crematorium shape: an imported back catalogue whose newest
+    // row by id is NOT the highest number. Naively incrementing it lands on a
+    // number that already exists and trips the unique index.
+    dngMakeInvoice('INV 27/10052');
+    dngMakeInvoice('INV 27/10020');
+    dngMakeInvoice('INV 27/10019');
+
+    expect(dngNextInvoiceNo())->toBe('INV 27/10053');
+});
+
+it('never hands back a number that is already taken', function () {
+    dngMakeInvoice('27/001');
+    dngMakeInvoice('27/002');
+    dngMakeInvoice('27/003');
+
+    // The newest row by id is 27/003, but 27/002 and 27/001 exist too.
+    expect(dngNextInvoiceNo())->toBe('27/004');
+});
+
+it('only continues numbers of the same shape', function () {
+    dngMakeInvoice('INV 27/10052');
+    dngMakeInvoice('REF-9000');
+    dngMakeInvoice('INV 27/10019');
+
+    // 'REF-9000' shares no stem with 'INV 27/…', so it must not raise the run.
+    expect(dngNextInvoiceNo())->toBe('INV 27/10053');
+});
+
+it('ignores another company\'s numbers when continuing a sequence', function () {
+    // BelongsToCompany forces company_id from the bound company on create, so
+    // the other tenant's row has to be written under its own binding.
+    $other = Company::factory()->create();
+    app()->instance('current_company', $other);
+    dngMakeInvoice('27/900');
+    app()->instance('current_company', $this->company);
+
+    dngMakeInvoice('27/001');
+
+    expect(dngNextInvoiceNo())->toBe('27/002');
+});
+
 it('increments the trailing digit run while preserving format', function (string $value, ?string $expected) {
     expect(DocumentNumberGenerator::incrementFormat($value))->toBe($expected);
 })->with([
