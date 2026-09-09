@@ -11,9 +11,11 @@ use App\Services\Accounting\OpeningBalanceAccountResolver;
 use App\Services\Migration\Importers\OpenBillsImporter;
 use App\Services\Posting\BillPoster;
 use App\Services\Posting\DocumentNumberGenerator;
+use App\Support\OpeningBalances\OpeningDocumentNumber;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
+use RuntimeException;
 
 /**
  * Posts a vendor's opening Accounts-Payable balance as a synthetic
@@ -29,6 +31,9 @@ use InvalidArgumentException;
  * No expense or tax is recognised — the purchase happened in the previous
  * system. The bill ages from $asOf so it lands in the correct AP-Aging bucket
  * and ties to the AP control account to the penny.
+ *
+ * $billNo lets the operator carry the number the balance had in the old system
+ * across; leave it null to have one generated.
  */
 final class PostVendorOpeningBalance
 {
@@ -38,22 +43,32 @@ final class PostVendorOpeningBalance
         protected OpeningBalanceAccountResolver $openingBalanceAccounts,
     ) {}
 
-    public function handle(Contact $contact, int $amountCents, CarbonImmutable $asOf): Bill
+    public function handle(Contact $contact, int $amountCents, CarbonImmutable $asOf, ?string $billNo = null): Bill
     {
         if ($amountCents <= 0) {
             throw new InvalidArgumentException('Opening balance must be greater than zero.');
         }
 
-        return DB::transaction(function () use ($contact, $amountCents, $asOf): Bill {
+        return DB::transaction(function () use ($contact, $amountCents, $asOf, $billNo): Bill {
             $company = $contact->company;
 
             $obe = $this->openingBalanceAccounts->resolveOrFail((int) $company->id);
+
+            $billNo = OpeningDocumentNumber::normalize($billNo);
+
+            if (OpeningDocumentNumber::isTooLong($billNo)) {
+                throw new RuntimeException('Bill number is too long — '.OpeningDocumentNumber::MAX_LENGTH.' characters maximum.');
+            }
+
+            if ($billNo !== null && $this->numbers->isTaken($company, Bill::class, 'bill_no', $billNo)) {
+                throw new RuntimeException("Bill number {$billNo} is already in use.");
+            }
 
             $bill = Bill::create([
                 'company_id' => $company->id,
                 'contact_id' => $contact->id,
                 'bill_type' => BillType::Vendor,
-                'bill_no' => $this->numbers->next($company, Bill::class, 'bill_no', 'OB'),
+                'bill_no' => $billNo ?? $this->numbers->next($company, Bill::class, 'bill_no', 'OB'),
                 'bill_date' => $asOf,
                 'due_date' => $asOf,
                 'status' => BillStatus::Draft,

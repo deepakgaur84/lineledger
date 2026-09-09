@@ -4,6 +4,7 @@ namespace App\Http\Controllers\OpeningBalances;
 
 use App\Models\Company;
 use App\Services\Migration\Importers\CompanyCsvImporter;
+use App\Services\Migration\Importers\HasOptionalCsvHeaders;
 use App\Services\OpeningBalances\Importers\DepositsInTransitCsvImporter;
 use App\Services\OpeningBalances\Importers\FixedAssetsCompanyImporter;
 use App\Services\OpeningBalances\Importers\InventoryOpeningBalanceCompanyImporter;
@@ -23,7 +24,11 @@ class OpeningBalanceTemplateController
     {
         $importer = $this->resolveImporter($step);
 
-        $headers = $importer->templateHeaders();
+        // Optional columns ride along in the template so operators can discover
+        // them, even though a CSV that leaves them out still validates.
+        $headers = $importer instanceof HasOptionalCsvHeaders
+            ? array_values(array_unique([...$importer->templateHeaders(), ...$importer->optionalHeaders()]))
+            : $importer->templateHeaders();
 
         $rows = array_map(
             fn (array $row) => array_map(

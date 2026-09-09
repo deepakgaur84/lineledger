@@ -11,6 +11,7 @@ use App\Services\OpeningBalances\CustomerOpeningBalanceSync;
 use App\Services\OpeningBalances\Importers\OpeningCustomerBalancesCsvImporter;
 use App\Services\OpeningBalances\OpeningBalanceStatusBuilder;
 use App\Support\Money;
+use App\Support\OpeningBalances\OpeningDocumentNumber;
 use Flux\Flux;
 use Illuminate\Support\Collection;
 use Livewire\Attributes\Computed;
@@ -34,6 +35,14 @@ new #[Title('Opening customer balances')] class extends Component {
     /** @var array<int|string, string> Balance inputs keyed by contact id (contact currency, signed). */
     public array $bal = [];
 
+    /**
+     * Document-number inputs keyed by contact id. A row whose document does not
+     * exist yet holds the typed number here until the balance creates it.
+     *
+     * @var array<int|string, string>
+     */
+    public array $doc = [];
+
     public function mount(Company $company): void
     {
         abort_unless(auth()->user()?->ownsCompany($company), 403);
@@ -45,6 +54,13 @@ new #[Title('Opening customer balances')] class extends Component {
     public function updatedSearch(): void
     {
         $this->bal = [];
+        $this->doc = [];
+    }
+
+    /** Contact ids whose typed document number has nowhere to live yet. */
+    protected function pendingDocFor(int $contactId): ?string
+    {
+        return OpeningDocumentNumber::normalize($this->doc[$contactId] ?? null);
     }
 
     /** @return Collection<int, array<string, mixed>> */
@@ -81,6 +97,11 @@ new #[Title('Opening customer balances')] class extends Component {
 
             $this->bal[$contact->id] ??= $net === 0 ? '' : Money::fromCents($net)->toDecimalString();
 
+            // One live document: the cell edits its number. None (or several
+            // pending consolidation): the cell holds the name for the document
+            // the next balance will create.
+            $this->doc[$contact->id] ??= $docs->count() === 1 ? (string) $docs->first()['label'] : '';
+
             return [
                 'contact' => $contact,
                 'net' => $net,
@@ -116,12 +137,69 @@ new #[Title('Opening customer balances')] class extends Component {
         }
 
         try {
-            app(CustomerOpeningBalanceSync::class)->set($this->obState, $contact, $money->cents);
+            app(CustomerOpeningBalanceSync::class)->set(
+                $this->obState,
+                $contact,
+                $money->cents,
+                $this->pendingDocFor((int) $key),
+            );
         } catch (RuntimeException $e) {
             Flux::toast(variant: 'danger', text: $e->getMessage());
         }
 
         $this->bal = [];
+        unset($this->doc[(int) $key]);
+        unset($this->customers, $this->footer);
+    }
+
+    /**
+     * Renumber the customer's opening document. With no document yet the typed
+     * number simply stays in the cell — the balance save picks it up — which is
+     * what lets an operator name the document *before* entering the figure.
+     */
+    public function updatedDoc($value, $key): void
+    {
+        if (! $this->obEditable()) {
+            $this->doc = [];
+            unset($this->customers);
+
+            return;
+        }
+
+        $contact = Contact::query()->where('is_customer', true)->findOrFail((int) $key);
+        $number = OpeningDocumentNumber::normalize((string) $value);
+
+        if ($number === null) {
+            unset($this->doc[(int) $key]);
+            unset($this->customers);
+
+            return;
+        }
+
+        if (OpeningDocumentNumber::isTooLong($number)) {
+            Flux::toast(variant: 'danger', text: __('Document number is too long — :max characters maximum.', ['max' => OpeningDocumentNumber::MAX_LENGTH]));
+            unset($this->doc[(int) $key]);
+            unset($this->customers);
+
+            return;
+        }
+
+        try {
+            $renamed = app(CustomerOpeningBalanceSync::class)->renameDocument($contact, $number);
+        } catch (RuntimeException $e) {
+            Flux::toast(variant: 'danger', text: $e->getMessage());
+            unset($this->doc[(int) $key]);
+            unset($this->customers);
+
+            return;
+        }
+
+        if ($renamed) {
+            unset($this->doc[(int) $key]);
+        } else {
+            $this->doc[(int) $key] = $number;
+        }
+
         unset($this->customers, $this->footer);
     }
 
@@ -129,6 +207,7 @@ new #[Title('Opening customer balances')] class extends Component {
     {
         $this->baseRunImport();
         $this->bal = [];
+        $this->doc = [];
         unset($this->customers, $this->footer);
     }
 
@@ -176,7 +255,7 @@ new #[Title('Opening customer balances')] class extends Component {
                 <thead class="text-left text-muted-foreground">
                     <tr>
                         <th class="py-2 pr-3 font-medium">{{ __('Customer') }}</th>
-                        <th class="py-2 pr-3 font-medium">{{ __('Opening documents') }}</th>
+                        <th class="w-56 py-2 pr-3 font-medium">{{ __('Opening document no.') }}</th>
                         <th class="w-44 py-2 text-right font-medium">{{ __('Opening balance') }}</th>
                     </tr>
                 </thead>
@@ -189,10 +268,18 @@ new #[Title('Opening customer balances')] class extends Component {
                                     <flux:badge size="sm" class="ms-1">{{ strtoupper($row['contact']->currency_code) }}</flux:badge>
                                 @endif
                             </td>
-                            <td class="py-1.5 pr-3 text-muted-foreground">
-                                {{ $row['docs']->map(fn ($d) => $d['label'])->join(', ') ?: '—' }}
+                            <td class="py-1.5 pr-3">
+                                <flux:input
+                                    wire:model.live.blur="doc.{{ $row['contact']->id }}"
+                                    :placeholder="__('Auto')"
+                                    :disabled="$obState->isFinalized() || $row['docs']->count() > 1"
+                                    data-test="ob-ar-doc-{{ $row['contact']->id }}"
+                                />
                                 @if ($row['docs']->count() > 1)
-                                    <flux:badge size="sm" color="amber" class="ms-1">{{ __('saving consolidates') }}</flux:badge>
+                                    <div class="mt-1 text-xs text-muted-foreground">
+                                        {{ $row['docs']->map(fn ($d) => $d['label'])->join(', ') }}
+                                        <flux:badge size="sm" color="amber" class="ms-1">{{ __('saving consolidates') }}</flux:badge>
+                                    </div>
                                 @endif
                             </td>
                             <td class="py-1.5">
@@ -234,7 +321,7 @@ new #[Title('Opening customer balances')] class extends Component {
     <x-csv-import-modal
         name="ob-ar-import"
         :template-url="route('opening-balances.template', ['company' => $company->slug, 'step' => 'customer_balances'])"
-        :subtitle="__('Net opening balance per customer — use a minus sign for a customer credit. Re-importing corrected figures updates the same opening documents.')"
+        :subtitle="__('Net opening balance per customer — use a minus sign for a customer credit. The optional document_no column names the opening document; leave it blank for an auto-generated number. Re-importing corrected figures updates the same opening documents.')"
         :preview-rows="$importPreviewRows"
         :row-errors="$importErrors"
         :summary="$importSummary"

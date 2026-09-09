@@ -7,8 +7,10 @@ use App\Models\Contact;
 use App\Models\OpeningBalanceState;
 use App\Services\Migration\Csv\CsvParser;
 use App\Services\Migration\Importers\CompanyCsvImporter;
+use App\Services\Migration\Importers\HasOptionalCsvHeaders;
 use App\Services\Migration\ImportResult;
 use App\Services\OpeningBalances\VendorOpeningBalanceSync;
+use App\Support\OpeningBalances\OpeningDocumentNumber;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -17,7 +19,7 @@ use Throwable;
  * vendor's net opening AP balance (signed; negative = vendor credit) through
  * {@see VendorOpeningBalanceSync::set()}.
  */
-class OpeningVendorBalancesCsvImporter implements CompanyCsvImporter
+class OpeningVendorBalancesCsvImporter implements CompanyCsvImporter, HasOptionalCsvHeaders
 {
     public function __construct(
         protected CsvParser $parser,
@@ -29,11 +31,17 @@ class OpeningVendorBalancesCsvImporter implements CompanyCsvImporter
         return ['vendor_display_name', 'balance'];
     }
 
+    /** @return list<string> */
+    public function optionalHeaders(): array
+    {
+        return ['document_no'];
+    }
+
     public function templateExampleRows(): array
     {
         return [
-            ['vendor_display_name' => 'Office Supply Co.', 'balance' => '425.00'],
-            ['vendor_display_name' => 'Fraser Fuel', 'balance' => '-30.00'],
+            ['vendor_display_name' => 'Office Supply Co.', 'document_no' => 'BILL-88213', 'balance' => '425.00'],
+            ['vendor_display_name' => 'Fraser Fuel', 'document_no' => 'VC-2027-009', 'balance' => '-30.00'],
         ];
     }
 
@@ -56,7 +64,7 @@ class OpeningVendorBalancesCsvImporter implements CompanyCsvImporter
         }
 
         try {
-            $rows = $this->parser->parse($csvPath, $this->templateHeaders());
+            $rows = $this->parser->parse($csvPath, $this->templateHeaders(), $this->optionalHeaders());
         } catch (Throwable $e) {
             return new ImportResult($dryRun, [], [['row' => 0, 'message' => $e->getMessage()]]);
         }
@@ -96,8 +104,16 @@ class OpeningVendorBalancesCsvImporter implements CompanyCsvImporter
                 continue;
             }
 
+            $documentNo = OpeningDocumentNumber::normalize($row['document_no'] ?? null);
+
+            if (OpeningDocumentNumber::isTooLong($documentNo)) {
+                $errors[] = ['row' => $rowNum, 'message' => 'document_no is longer than '.OpeningDocumentNumber::MAX_LENGTH.' characters.'];
+
+                continue;
+            }
+
             $current = $this->sync->currentFor($contact)['net'];
-            $accepted[$contact->id] = ['contact' => $contact, 'balance' => $balance];
+            $accepted[$contact->id] = ['contact' => $contact, 'balance' => $balance, 'document_no' => $documentNo];
 
             $preview[] = [
                 'row' => $rowNum,
@@ -121,7 +137,7 @@ class OpeningVendorBalancesCsvImporter implements CompanyCsvImporter
         try {
             DB::transaction(function () use ($state, $accepted): void {
                 foreach ($accepted as $entry) {
-                    $this->sync->set($state, $entry['contact'], $entry['balance']);
+                    $this->sync->set($state, $entry['contact'], $entry['balance'], $entry['document_no']);
                 }
             });
         } catch (Throwable $e) {
