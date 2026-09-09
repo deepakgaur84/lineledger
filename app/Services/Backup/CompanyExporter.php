@@ -186,7 +186,13 @@ final class CompanyExporter
                 'app_version' => (string) config('version.app'),
                 'schema_version' => (int) config('version.schema'),
                 'error_message' => null,
-                'expires_at' => CarbonImmutable::now()->addDays(7),
+                // Deliberately null, not addDays(7): this fork disables the
+                // upstream 7-day auto-expiry for self-hosted use, where the
+                // owner wants backups retained until they delete them
+                // manually. PruneExpiredBackupsCommand explicitly requires
+                // expires_at to be non-null before it'll touch a Ready
+                // backup, so this alone fully and safely opts a backup out.
+                'expires_at' => null,
             ])->save();
 
             return $backup->fresh() ?? $backup;
