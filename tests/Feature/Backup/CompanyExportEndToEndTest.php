@@ -162,7 +162,10 @@ it('exports a company into a verifiable ZIP with manifest, jsonl, users, and fil
         ->and($backup->file_path)->not->toBeNull()
         ->and($backup->sha256)->not->toBeNull()
         ->and($backup->file_size_bytes)->toBeGreaterThan(0)
-        ->and($backup->expires_at)->not->toBeNull();
+        // This fork disables the upstream 7-day auto-expiry (self-hosted
+        // backups are retained until manually deleted), so a real export
+        // leaves expires_at null rather than 7 days out.
+        ->and($backup->expires_at)->toBeNull();
 
     $zipAbsolute = Storage::disk('local')->path($backup->file_path);
     expect(file_exists($zipAbsolute))->toBeTrue();
