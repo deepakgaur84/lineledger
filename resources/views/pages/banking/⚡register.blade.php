@@ -5,20 +5,14 @@ use App\Models\Account;
 use App\Models\Company;
 use App\Models\JournalLine;
 use App\Support\Banking\LastBankAccount;
-use App\Support\Money;
-use Flux\Flux;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
-use Livewire\Attributes\Url;
 use Livewire\Component;
 
 new #[Title('Bank register')] class extends Component {
     public Company $company;
 
     public ?int $account_id = null;
-
-    #[Url(as: 'statement')]
-    public string $statementBalance = '';
 
     public bool $showCleared = true;
 
@@ -45,33 +39,6 @@ new #[Title('Bank register')] class extends Component {
     public function updatedAccountId(): void
     {
         LastBankAccount::remember($this->company, $this->account_id);
-    }
-
-    public function toggleClear(int $lineId): void
-    {
-        $line = JournalLine::query()
-            ->whereHas('account', fn ($q) => $q->where('company_id', $this->company->id))
-            ->findOrFail($lineId);
-
-        $line->update(['cleared_at' => $line->cleared_at ? null : now()]);
-    }
-
-    public function clearAll(): void
-    {
-        $this->linesQuery()
-            ->whereNull('cleared_at')
-            ->update(['cleared_at' => now()]);
-
-        Flux::toast(variant: 'success', text: __('All visible lines marked cleared.'));
-    }
-
-    public function uncleared(): void
-    {
-        $this->linesQuery()
-            ->whereNotNull('cleared_at')
-            ->update(['cleared_at' => null]);
-
-        Flux::toast(variant: 'success', text: __('All lines marked uncleared.'));
     }
 
     protected function linesQuery()
@@ -116,31 +83,13 @@ new #[Title('Bank register')] class extends Component {
             ->selectRaw('COALESCE(SUM(debit_cents - credit_cents), 0) AS bal')
             ->value('bal');
     }
-
-    public function statementBalanceCents(): int
-    {
-        if ($this->statementBalance === '') {
-            return 0;
-        }
-
-        try {
-            return Money::fromString($this->statementBalance)->cents;
-        } catch (\Throwable) {
-            return 0;
-        }
-    }
-
-    public function differenceCents(): int
-    {
-        return $this->statementBalanceCents() - $this->clearedBalanceCents();
-    }
 }; ?>
 
 <section class="w-full">
     <div class="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
             <flux:heading size="xl" level="1">{{ __('Bank register') }}</flux:heading>
-            <flux:subheading>{{ __(':label. Click a row to mark cleared/uncleared against your statement.', ['label' => $company->jurisdiction->chequeLabel('checkbook')]) }}</flux:subheading>
+            <flux:subheading>{{ __(':label. Cleared rows are ticked off during reconciliation.', ['label' => $company->jurisdiction->chequeLabel('checkbook')]) }}</flux:subheading>
         </div>
 
         <div class="flex items-end gap-3">
@@ -167,7 +116,7 @@ new #[Title('Bank register')] class extends Component {
         </div>
     </div>
 
-    <div class="mb-4 grid grid-cols-2 gap-4 md:grid-cols-4">
+    <div class="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div class="rounded-lg border border-border p-3">
             <flux:text class="text-muted-foreground">{{ __('Ledger balance') }}</flux:text>
             <div class="text-lg font-mono">{{ number_format($this->ledgerBalanceCents() / 100, 2) }}</div>
@@ -176,21 +125,10 @@ new #[Title('Bank register')] class extends Component {
             <flux:text class="text-muted-foreground">{{ __('Cleared balance') }}</flux:text>
             <div class="text-lg font-mono" data-test="cleared-balance">{{ number_format($this->clearedBalanceCents() / 100, 2) }}</div>
         </div>
-        <div class="rounded-lg border border-border p-3">
-            <flux:input wire:model.live="statementBalance" :label="__('Statement balance')" placeholder="0.00" />
-        </div>
-        <div class="rounded-lg border border-border p-3">
-            <flux:text class="text-muted-foreground">{{ __('Difference') }}</flux:text>
-            <div class="text-lg font-mono @if ($this->differenceCents() === 0) text-green-600 @else text-amber-600 @endif" data-test="reconciliation-difference">
-                {{ number_format($this->differenceCents() / 100, 2) }}
-            </div>
-        </div>
     </div>
 
     <div class="mb-4 flex items-center gap-4">
         <flux:switch wire:model.live="showCleared" :label="__('Show cleared')" />
-        <flux:button variant="filled" size="sm" wire:click="clearAll" wire:confirm="{{ __('Mark all visible lines cleared?') }}">{{ __('Clear all') }}</flux:button>
-        <flux:button variant="filled" size="sm" wire:click="uncleared" wire:confirm="{{ __('Mark all lines uncleared?') }}">{{ __('Unclear all') }}</flux:button>
     </div>
 
     <div class="overflow-x-auto rounded-lg border border-border">
@@ -211,13 +149,11 @@ new #[Title('Bank register')] class extends Component {
                     @php $running += (int) $line->debit_cents - (int) $line->credit_cents; @endphp
                     <tr data-test="register-row" class="@if ($line->cleared_at) bg-green-50 dark:bg-green-900/10 @endif">
                         <td class="px-3 py-2 text-center">
-                            <button type="button" wire:click="toggleClear({{ $line->id }})" class="cursor-pointer" data-test="toggle-clear" title="{{ $line->cleared_at ? __('Cleared') : __('Click to mark cleared') }}">
-                                @if ($line->cleared_at)
-                                    <flux:icon name="check" variant="micro" class="size-4 text-green-600" />
-                                @else
-                                    <span class="inline-block size-4 rounded border border-border"></span>
-                                @endif
-                            </button>
+                            @if ($line->cleared_at)
+                                <flux:icon name="check" variant="micro" class="size-4 text-green-600" title="{{ __('Cleared') }}" data-test="register-cleared-mark" />
+                            @else
+                                <span class="inline-block size-4 rounded border border-border" title="{{ __('Not cleared') }}"></span>
+                            @endif
                         </td>
                         <td class="px-3 py-2 whitespace-nowrap">{{ $line->journalEntry->entry_date->toDateString() }}</td>
                         <td class="px-3 py-2 font-mono">

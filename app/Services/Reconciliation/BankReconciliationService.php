@@ -156,11 +156,13 @@ class BankReconciliationService
 
     /**
      * Edit the starting figures of an in-progress reconciliation in place,
-     * preserving the lines the user has already marked. Service-charge / interest
-     * changes are applied by reversing any existing aux entry and re-posting the
-     * new one, so the GL and the rec's marked set stay consistent. Reversals of
-     * these aux entries are hidden from the reconcile screen (see the reconcile
-     * view's availableLines() query) so editing never leaves phantom lines behind.
+     * preserving the lines the user has already marked. A *changed* service
+     * charge or interest amount is applied by reversing the existing aux entry
+     * and re-posting the new one, so the GL and the rec's marked set stay
+     * consistent; an *unchanged* one is left strictly alone — see
+     * {@see self::adjustmentUnchanged()}. Both halves of a replaced aux entry
+     * are hidden from the reconcile screen (see the reconcile view's
+     * availableLines() query) so editing never leaves phantom lines behind.
      *
      * @param  array{cents:int,date:CarbonInterface,account_id:int}|null  $serviceCharge
      * @param  array{cents:int,date:CarbonInterface,account_id:int}|null  $interestEarned
@@ -439,6 +441,20 @@ class BankReconciliationService
      */
     protected function resetServiceCharge(BankReconciliation $rec, Account $account, ?array $sc, array &$marked): void
     {
+        // Saving the edit form without touching the service charge must not
+        // touch the ledger: reversing a live entry and re-posting an identical
+        // one churns the GL, the audit trail and the rec's marked set for no
+        // change at all.
+        if ($this->adjustmentUnchanged(
+            $rec->serviceChargeEntry()->first(),
+            $sc,
+            (int) $rec->service_charge_cents,
+            $rec->service_charge_date,
+            $rec->service_charge_account_id,
+        )) {
+            return;
+        }
+
         if ($rec->service_charge_entry_id) {
             $existing = $rec->serviceChargeEntry()->first();
 
@@ -482,6 +498,16 @@ class BankReconciliationService
      */
     protected function resetInterest(BankReconciliation $rec, Account $account, ?array $int, array &$marked): void
     {
+        if ($this->adjustmentUnchanged(
+            $rec->interestEarnedEntry()->first(),
+            $int,
+            (int) $rec->interest_earned_cents,
+            $rec->interest_earned_date,
+            $rec->interest_earned_account_id,
+        )) {
+            return;
+        }
+
         if ($rec->interest_earned_entry_id) {
             $existing = $rec->interestEarnedEntry()->first();
 
@@ -514,6 +540,40 @@ class BankReconciliationService
 
             $marked[] = (int) $bankLineId;
         }
+    }
+
+    /**
+     * True when the edited form asks for exactly what the reconciliation
+     * already carries, so the adjustment can be left alone.
+     *
+     * Two cases count as unchanged: nothing recorded and nothing asked for, or
+     * a still-live entry whose amount, date and account all match the form. A
+     * recorded adjustment whose entry has since been voided elsewhere is NOT
+     * unchanged — it has to be re-posted.
+     *
+     * @param  array{cents?:int,date?:CarbonInterface,account_id?:int}|null  $incoming
+     */
+    protected function adjustmentUnchanged(
+        ?JournalEntry $entry,
+        ?array $incoming,
+        int $recordedCents,
+        mixed $recordedDate,
+        ?int $recordedAccountId,
+    ): bool {
+        $cents = (int) ($incoming['cents'] ?? 0);
+
+        if ($entry === null) {
+            return $cents <= 0;
+        }
+
+        if ($entry->isVoided() || $cents <= 0) {
+            return false;
+        }
+
+        return $cents === $recordedCents
+            && (int) ($incoming['account_id'] ?? 0) === (int) $recordedAccountId
+            && $recordedDate !== null
+            && Carbon::parse($incoming['date'])->toDateString() === Carbon::parse($recordedDate)->toDateString();
     }
 
     /**

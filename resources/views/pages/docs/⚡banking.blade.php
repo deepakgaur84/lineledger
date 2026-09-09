@@ -23,11 +23,11 @@ new #[Title('Documentation — Banking')] class extends Component {}; ?>
         <x-docs.figure
             src="{{ asset('docs/screenshots/banking/register.png') }}"
             alt="{{ __('The bank register for the Chequing account showing payments, deposits, and a ledger balance') }}"
-            caption="{{ __('The bank register. Each row links to the journal entry behind it, and the tiles up top show your ledger, cleared, and statement balances.') }}"
+            caption="{{ __('The bank register. Each row links to the journal entry behind it, and the tiles up top show your ledger and cleared balances.') }}"
         />
 
         <flux:text>
-            {{ __('Tick the checkbox on a row to mark it cleared against your statement — the Cleared balance tile updates as you go. Use Clear all or Unclear all to mark the whole list at once, and toggle Show cleared to hide rows you have already accounted for. When you are ready to formally close the period, choose Reconcile from the Actions menu.') }}
+            {{ __('The register is read-only: a green tick means the row has been cleared, and rows are ticked off during reconciliation rather than here, so there is nothing to keep in step by hand. Toggle Show cleared to hide the rows you have already accounted for. When you are ready to work through the statement, choose Reconcile from the Actions menu.') }}
         </flux:text>
 
         {{-- ───────────────────────── Import a statement ───────────────────────── --}}

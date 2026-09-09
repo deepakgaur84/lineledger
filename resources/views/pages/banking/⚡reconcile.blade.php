@@ -735,11 +735,19 @@ new #[Title('Reconcile')] class extends Component {
             ->with('journalEntry')
             ->where('account_id', $rec->account_id)
             ->where(fn ($q) => $q->whereNull('bank_reconciliation_id')->orWhere('bank_reconciliation_id', $rec->id))
+            // Everything the bank register shows is reconcilable, a voided
+            // document and its reversal included: both hit the statement, so
+            // the operator has to be able to tick them off (they net to zero).
+            // The one exception is a service-charge / interest entry this
+            // reconciliation replaced mid-edit — that pair is the rec's own
+            // internal bookkeeping, so both halves stay hidden.
             ->whereHas('journalEntry', fn ($q) => $q->where('is_posted', true)
-                ->whereNull('voided_at')
-                // Hide the reversal half of a replaced/removed service-charge or
-                // interest entry so editing a reconciliation never leaves a
-                // phantom line behind.
+                // Phrased positively on purpose: `NOT (voided AND source_type =
+                // …)` is NULL — and so drops the row — for the ordinary entries
+                // whose source_type is NULL.
+                ->where(fn ($q) => $q->whereNull('voided_at')
+                    ->orWhereNull('source_type')
+                    ->orWhere('source_type', '!=', BankReconciliation::class))
                 ->where(fn ($q) => $q->whereNull('reverses_entry_id')
                     ->orWhereDoesntHave('reverses', fn ($q) => $q->where('source_type', BankReconciliation::class))))
             ->when($side === 'payments', fn ($q) => $q->where('credit_cents', '>', 0))

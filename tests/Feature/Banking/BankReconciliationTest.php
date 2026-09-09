@@ -12,6 +12,7 @@ use App\Models\JournalLine;
 use App\Models\User;
 use App\Services\Posting\JournalPoster;
 use App\Services\Reconciliation\BankReconciliationService;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Carbon;
 
@@ -245,6 +246,92 @@ it('edits the statement figures of an in-progress reconciliation in place, keepi
     expect($updated->markedLineIds())->toContain($depositLineId);
 });
 
+it('leaves an unchanged service charge and interest entirely alone on re-save', function () {
+    $rec = $this->service->begin(
+        $this->bank,
+        Carbon::parse('2026-04-30'),
+        endingBalanceCents: -1000,
+        serviceCharge: ['cents' => 1500, 'date' => Carbon::parse('2026-04-30'), 'account_id' => $this->expense->id],
+        interestEarned: ['cents' => 500, 'date' => Carbon::parse('2026-04-30'), 'account_id' => $this->income->id],
+    );
+
+    $scEntryId = $rec->service_charge_entry_id;
+    $intEntryId = $rec->interest_earned_entry_id;
+    $entryCountBefore = JournalEntry::query()->count();
+
+    // Re-save the edit form with the same figures — only the ending balance moves.
+    $updated = $this->service->updateDetails(
+        $rec,
+        Carbon::parse('2026-04-30'),
+        endingBalanceCents: -2500,
+        beginningBalanceCents: 0,
+        serviceCharge: ['cents' => 1500, 'date' => Carbon::parse('2026-04-30'), 'account_id' => $this->expense->id],
+        interestEarned: ['cents' => 500, 'date' => Carbon::parse('2026-04-30'), 'account_id' => $this->income->id],
+    );
+
+    // Same entries, still live, and no reversals were written.
+    expect($updated->service_charge_entry_id)->toBe($scEntryId)
+        ->and($updated->interest_earned_entry_id)->toBe($intEntryId)
+        ->and(JournalEntry::find($scEntryId)->isVoided())->toBeFalse()
+        ->and(JournalEntry::find($intEntryId)->isVoided())->toBeFalse()
+        ->and(JournalEntry::query()->count())->toBe($entryCountBefore)
+        ->and($updated->ending_balance_cents)->toBe(-2500);
+
+    // The marked bank lines are untouched too.
+    $scBankLine = JournalEntry::with('lines')->find($scEntryId)->lines->firstWhere('account_id', $this->bank->id);
+    $intBankLine = JournalEntry::with('lines')->find($intEntryId)->lines->firstWhere('account_id', $this->bank->id);
+
+    expect($updated->markedLineIds())->toContain($scBankLine->id)
+        ->and($updated->markedLineIds())->toContain($intBankLine->id);
+});
+
+it('re-posts a service charge when only its date moves', function () {
+    $rec = $this->service->begin(
+        $this->bank,
+        Carbon::parse('2026-04-30'),
+        endingBalanceCents: -1500,
+        serviceCharge: ['cents' => 1500, 'date' => Carbon::parse('2026-04-30'), 'account_id' => $this->expense->id],
+    );
+
+    $oldEntryId = $rec->service_charge_entry_id;
+
+    $updated = $this->service->updateDetails(
+        $rec,
+        Carbon::parse('2026-04-30'),
+        endingBalanceCents: -1500,
+        beginningBalanceCents: 0,
+        serviceCharge: ['cents' => 1500, 'date' => Carbon::parse('2026-04-28'), 'account_id' => $this->expense->id],
+    );
+
+    expect(JournalEntry::find($oldEntryId)->isVoided())->toBeTrue()
+        ->and($updated->service_charge_entry_id)->not->toBe($oldEntryId)
+        ->and($updated->service_charge_date->toDateString())->toBe('2026-04-28');
+});
+
+it('re-posts a service charge when only its account moves', function () {
+    $otherExpense = Account::query()->where('subtype', AccountSubtype::Expense->value)->where('id', '!=', $this->expense->id)->orderBy('code')->firstOrFail();
+
+    $rec = $this->service->begin(
+        $this->bank,
+        Carbon::parse('2026-04-30'),
+        endingBalanceCents: -1500,
+        serviceCharge: ['cents' => 1500, 'date' => Carbon::parse('2026-04-30'), 'account_id' => $this->expense->id],
+    );
+
+    $oldEntryId = $rec->service_charge_entry_id;
+
+    $updated = $this->service->updateDetails(
+        $rec,
+        Carbon::parse('2026-04-30'),
+        endingBalanceCents: -1500,
+        beginningBalanceCents: 0,
+        serviceCharge: ['cents' => 1500, 'date' => Carbon::parse('2026-04-30'), 'account_id' => $otherExpense->id],
+    );
+
+    expect(JournalEntry::find($oldEntryId)->isVoided())->toBeTrue()
+        ->and((int) $updated->service_charge_account_id)->toBe((int) $otherExpense->id);
+});
+
 it('replaces a service charge when edited, voiding the old entry and re-marking the new bank line', function () {
     $rec = $this->service->begin(
         $this->bank,
@@ -349,6 +436,38 @@ it('hides the reversal of a replaced service charge from the reconcile screen', 
     $payments = $component->instance()->availableLines('payments');
     expect($payments)->toHaveCount(1);
     expect((int) $payments->first()->credit_cents)->toBe(2000);
+});
+
+it('offers a voided transaction and its reversal for ticking, so the register can be reconciled in full', function () {
+    $user = User::factory()->create();
+    $this->company->members()->attach($user, ['role' => CompanyRole::Owner->value]);
+    $this->actingAs($user);
+
+    // A cheque that was written and later voided: both halves hit the bank and
+    // both show in the register, so both must be reconcilable.
+    $payment = makeBankEntry($this->bank, $this->expense, debitOnBankCents: 0, creditOnBankCents: 4000, date: '2026-04-10');
+    app(JournalPoster::class)->void($payment->fresh(), CarbonImmutable::parse('2026-04-20'));
+
+    $this->service->begin($this->bank, Carbon::parse('2026-04-30'), 0);
+
+    $component = Livewire\Livewire::test('pages::banking.reconcile', ['company' => $this->company])
+        ->set('account_id', $this->bank->id);
+
+    $payments = $component->instance()->availableLines('payments');
+    $deposits = $component->instance()->availableLines('deposits');
+
+    // The original credit is still offered...
+    expect($payments->pluck('credit_cents')->map(fn ($c) => (int) $c))->toContain(4000)
+        // ...and so is the reversing debit.
+        ->and($deposits->pluck('debit_cents')->map(fn ($c) => (int) $c))->toContain(4000);
+
+    // Ticking both nets to zero, so the reconciliation still balances.
+    $rec = $this->service->markLines(
+        BankReconciliation::query()->forAccount($this->bank->id)->inProgress()->firstOrFail(),
+        [...$payments->pluck('id')->all(), ...$deposits->pluck('id')->all()],
+    );
+
+    expect($this->service->differenceCents($rec))->toBe(0);
 });
 
 it('refuses a second in-progress reconciliation on the same account', function () {
