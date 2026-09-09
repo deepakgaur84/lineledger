@@ -49,8 +49,8 @@ X-Api-Key: YOUR_API_KEY</code></pre>
         <flux:heading size="lg" class="mt-8">{{ __('Document lifecycle') }}</flux:heading>
         <ul class="list-disc ps-6 space-y-1">
             <li>{{ __('POST creates and posts a document by default; send "post": false to create a draft.') }}</li>
-            <li>{{ __('PATCH edits a draft, or reposts a posted document in place where supported (invoices, credit memos, receipts, bills, bill payments, journal entries, deposits).') }}</li>
-            <li>{{ __('Documents without in-place repost (cheques, stock adjustments, tax-return payments) return 409 if edited after posting — void and recreate.') }}</li>
+            <li>{{ __('PATCH edits a draft, or reposts a posted document in place where supported (invoices, credit memos, receipts, bills, bill payments, journal entries, deposits, cheques).') }}</li>
+            <li>{{ __('Documents without in-place repost (stock adjustments, transfers, tax-return payments) return 409 if edited after posting — void and recreate.') }}</li>
             <li>{{ __('DELETE hard-deletes a draft, or voids a posted document with a reversing journal entry.') }}</li>
             <li>{{ __('Amounts are integer cents; dates are YYYY-MM-DD.') }}</li>
         </ul>

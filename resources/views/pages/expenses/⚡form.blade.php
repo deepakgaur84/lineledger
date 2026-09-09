@@ -18,6 +18,7 @@ use App\Models\TaxCode;
 use App\Rules\MoneyString;
 use App\Services\AttachmentService;
 use App\Services\Posting\ExpensePoster;
+use App\Support\Banking\LastBankAccount;
 use App\Support\Money;
 use Flux\Flux;
 use Illuminate\Support\Facades\Auth;
@@ -96,10 +97,17 @@ new #[Title('Expense')] class extends Component
             }
         } else {
             $this->expense_date = $this->company->currentDateTime()->toDateString();
+            // Reopen on the account this operator last worked in anywhere in
+            // Banking; fall back to the lowest-numbered active bank account.
             $account = Account::query()->where('subtype', AccountSubtype::Bank->value)->where('is_active', true)->orderBy('code')->first();
-            $this->payment_account_id = $account?->id;
+            $this->payment_account_id = LastBankAccount::recall($company, $this->paymentAccounts) ?? $account?->id;
             $this->lines = [$this->emptyLine()];
         }
+    }
+
+    public function updatedPaymentAccountId(): void
+    {
+        LastBankAccount::remember($this->company, $this->payment_account_id);
     }
 
     /**

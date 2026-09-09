@@ -18,10 +18,12 @@ use App\Rules\MoneyString;
 use App\Services\AttachmentService;
 use App\Services\Posting\ChequePoster;
 use App\Services\Posting\DocumentNumberGenerator;
+use App\Support\Banking\LastBankAccount;
 use App\Support\Money;
 use Flux\Flux;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
@@ -62,8 +64,9 @@ new #[Title('Cheque')] class extends Component
         $this->company = $company;
 
         if ($cheque && $cheque->exists) {
+            // A posted cheque is editable — saving reposts its GL entry in
+            // place (see save()). Only a voided one is frozen.
             abort_if($cheque->status === ChequeStatus::Void, 403);
-            abort_if($cheque->journal_entry_id, 403, 'Posted cheques cannot be edited. Void and re-create.');
 
             $this->cheque = $cheque->load('lines');
             $this->bank_account_id = $cheque->bank_account_id;
@@ -94,8 +97,12 @@ new #[Title('Cheque')] class extends Component
             }
         } else {
             $this->cheque_date = $this->company->currentDateTime()->toDateString();
+
+            // Reopen on the account this operator last worked in; fall back to
+            // the lowest-numbered active bank on the very first cheque.
             $bank = Account::query()->where('subtype', AccountSubtype::Bank->value)->where('is_active', true)->orderBy('code')->first();
-            $this->bank_account_id = $bank?->id;
+            $this->bank_account_id = LastBankAccount::recall($company, $this->bankAccounts) ?? $bank?->id;
+
             $this->cheque_no = $this->nextChequeNumber();
             $this->lines = [$this->emptyLine()];
         }
@@ -122,6 +129,8 @@ new #[Title('Cheque')] class extends Component
 
     public function updatedBankAccountId(): void
     {
+        LastBankAccount::remember($this->company, $this->bank_account_id);
+
         if (! $this->cheque?->exists) {
             $this->cheque_no = $this->nextChequeNumber();
         }
@@ -225,28 +234,60 @@ new #[Title('Cheque')] class extends Component
 
     public function saveDraft(): void
     {
-        $this->persist();
+        if ($this->cheque?->journal_entry_id) {
+            $this->addError('lines', __('This :label is already posted. Use Save changes to update it.', [
+                'label' => mb_strtolower($this->company->jurisdiction->cheque('singular')),
+            ]));
+
+            return;
+        }
+
+        $this->cheque = app(SaveCheque::class)->handle($this->validatedChequeData(), $this->cheque);
+        $this->storePendingAttachments();
+
         Flux::toast(variant: 'success', text: __('Draft saved.'));
         $this->redirectRoute('cheques.edit', ['company' => $this->company->slug, 'cheque' => $this->cheque->id], navigate: true);
     }
 
+    /**
+     * Save and (re)post as ONE unit of work, as the API does: editing a posted
+     * cheque rebuilds its existing journal entry in place, so a period, tax or
+     * reconciliation lock failure must roll the line rewrite back with it
+     * rather than leave the cheque out of step with the ledger.
+     */
     public function postCheque(ChequePoster $poster): void
     {
-        $this->persist();
+        $data = $this->validatedChequeData();
+        $wasPosted = $this->cheque?->journal_entry_id !== null;
 
         try {
-            $poster->post($this->cheque);
+            DB::transaction(function () use ($data, $poster, $wasPosted): void {
+                $this->cheque = app(SaveCheque::class)->handle($data, $this->cheque);
+
+                $wasPosted ? $poster->repost($this->cheque) : $poster->post($this->cheque);
+            });
         } catch (PeriodLockedException|RuntimeException $e) {
             $this->addError('lines', $e->getMessage());
 
             return;
         }
 
-        Flux::toast(variant: 'success', text: $this->company->jurisdiction->cheque('singular').' posted.');
+        $this->storePendingAttachments();
+
+        $label = $this->company->jurisdiction->cheque('singular');
+
+        Flux::toast(variant: 'success', text: $wasPosted ? $label.' updated.' : $label.' posted.');
         $this->redirectRoute('cheques.show', ['company' => $this->company->slug, 'cheque' => $this->cheque->id], navigate: true);
     }
 
-    protected function persist(): void
+    /**
+     * Validate the form and shape it into the cents-based payload
+     * {@see SaveCheque} takes. Runs outside the save transaction so a
+     * validation failure never opens one.
+     *
+     * @return array<string, mixed>
+     */
+    protected function validatedChequeData(): array
     {
         $companyId = $this->company->id;
 
@@ -272,7 +313,7 @@ new #[Title('Cheque')] class extends Component
             'payee_name.required' => __('Choose a payee, or add the name as an Other name.'),
         ]);
 
-        $this->cheque = app(SaveCheque::class)->handle([
+        return [
             'bank_account_id' => $validated['bank_account_id'],
             'cheque_no' => $validated['cheque_no'],
             'cheque_date' => $validated['cheque_date'],
@@ -291,13 +332,23 @@ new #[Title('Cheque')] class extends Component
                 'class_id' => $line['class_id'] ?? null,
                 'location_id' => $line['location_id'] ?? null,
             ], $validated['lines']),
-        ], $this->cheque);
+        ];
+    }
 
-        if ($this->newAttachments !== []) {
-            app(AttachmentService::class)->upload($this->cheque, $this->newAttachments, Auth::id());
-            $this->newAttachments = [];
-            unset($this->attachments);
+    /**
+     * Flush files dropped on the form before the cheque existed onto the saved
+     * cheque. Deliberately after the save transaction commits — an upload is
+     * not something a rolled-back post should have to undo.
+     */
+    protected function storePendingAttachments(): void
+    {
+        if ($this->newAttachments === []) {
+            return;
         }
+
+        app(AttachmentService::class)->upload($this->cheque, $this->newAttachments, Auth::id());
+        $this->newAttachments = [];
+        unset($this->attachments);
     }
 
     /**
@@ -681,8 +732,12 @@ new #[Title('Cheque')] class extends Component
             <flux:button variant="filled" type="button" icon="plus" wire:click="addLine">{{ __('Add line') }}</flux:button>
 
             <div class="flex gap-2">
-                <flux:button variant="filled" type="button" wire:click="saveDraft" data-test="save-draft-button">{{ __('Save draft') }}</flux:button>
-                <flux:button variant="primary" type="submit" data-test="post-cheque-button">{{ $j->chequeLabel('post') }}</flux:button>
+                @if ($cheque?->journal_entry_id)
+                    <flux:button variant="primary" type="submit" data-test="post-cheque-button">{{ __('Save changes') }}</flux:button>
+                @else
+                    <flux:button variant="filled" type="button" wire:click="saveDraft" data-test="save-draft-button">{{ __('Save draft') }}</flux:button>
+                    <flux:button variant="primary" type="submit" data-test="post-cheque-button">{{ $j->chequeLabel('post') }}</flux:button>
+                @endif
             </div>
         </div>
     </form>

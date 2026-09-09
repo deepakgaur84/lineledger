@@ -122,7 +122,7 @@ new #[Title('Cheque')] class extends Component {
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
-            @if ($cheque->status === ChequeStatus::Draft)
+            @if ($cheque->status !== ChequeStatus::Void)
                 <flux:button variant="primary" class="!hidden lg:!inline-flex" :href="route('cheques.edit', ['company' => $company->slug, 'cheque' => $cheque->id])" wire:navigate data-test="edit-cheque-button">
                     {{ __('Edit') }}
                 </flux:button>
@@ -131,7 +131,7 @@ new #[Title('Cheque')] class extends Component {
             <flux:dropdown align="end">
                 <flux:button icon:trailing="chevron-down" data-test="cheque-actions-menu">{{ __('Actions') }}</flux:button>
                 <flux:menu>
-                    @if ($cheque->status === ChequeStatus::Draft)
+                    @if ($cheque->status !== ChequeStatus::Void)
                         <flux:menu.item class="lg:hidden" icon="pencil" :href="route('cheques.edit', ['company' => $company->slug, 'cheque' => $cheque->id])" wire:navigate data-test="edit-cheque-menu-item">
                             {{ __('Edit') }}
                         </flux:menu.item>

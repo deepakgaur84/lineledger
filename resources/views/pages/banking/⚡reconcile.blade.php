@@ -15,6 +15,7 @@ use App\Models\CustomerReceipt;
 use App\Models\JournalLine;
 use App\Services\AttachmentService;
 use App\Services\Reconciliation\BankReconciliationService;
+use App\Support\Banking\LastBankAccount;
 use App\Support\Money;
 use Flux\Flux;
 use Illuminate\Support\Collection;
@@ -77,13 +78,17 @@ new #[Title('Reconcile')] class extends Component {
         if ($requested) {
             $this->account_id = (int) $requested;
         } else {
+            // Reopen on the account this operator last worked in anywhere in
+            // Banking; fall back to the lowest-numbered active account.
             $first = Account::query()
                 ->whereIn('subtype', [AccountSubtype::Bank->value, AccountSubtype::CreditCard->value])
                 ->where('is_active', true)
                 ->orderBy('code')
                 ->first();
-            $this->account_id = $first?->id;
+            $this->account_id = LastBankAccount::recall($company, $this->bankAccounts) ?? $first?->id;
         }
+
+        LastBankAccount::remember($company, $this->account_id);
 
         $this->statementDate = $this->defaultStatementDate();
         $this->serviceChargeDate = $this->statementDate;
@@ -98,6 +103,8 @@ new #[Title('Reconcile')] class extends Component {
      */
     public function updatedAccountId(): void
     {
+        LastBankAccount::remember($this->company, $this->account_id);
+
         $this->statementDate = $this->defaultStatementDate();
         $this->serviceChargeDate = $this->statementDate;
         $this->interestDate = $this->statementDate;

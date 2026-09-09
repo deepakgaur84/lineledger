@@ -259,6 +259,7 @@ new #[Title('Documentation — Banking')] class extends Component {}; ?>
             <li>{{ __('On each line, choose the Account, type a Description, and enter the Amount (add a Tax code if needed).') }}</li>
             <li>{{ __('Select Add line for more than one expense, and check the Total.') }}</li>
             <li>{{ __('Select Post cheque to finalize it, or Save draft to keep working on it later.') }}</li>
+            <li>{{ __('The bank account you pick is remembered — the next cheque, deposit, register or reconciliation you open starts on that same account.') }}</li>
             <li>{{ __('To print, open the posted cheque and use the Print action — it renders a cheque-formatted PDF for pre-printed stock.') }}</li>
         </ol>
 
@@ -272,8 +273,16 @@ new #[Title('Documentation — Banking')] class extends Component {}; ?>
             {{ __('Posting a cheque credits the bank account it is drawn on and debits the expense (or other) accounts on its lines, so the payment reaches your books right away.') }}
         </x-docs.callout>
 
-        <x-docs.callout type="warning" heading="{{ __('Editing a posted cheque') }}">
-            {{ __('A posted cheque can’t be edited. To correct one, open it and choose Actions → Void — a reversing entry is posted — then write a replacement. Only drafts can be changed on the form.') }}
+        <p class="mt-4"><strong>{{ __('To correct a posted cheque:') }}</strong></p>
+        <ol class="list-decimal ps-6 space-y-1">
+            <li>{{ __('Open Banking → Cheques and select the cheque you want to change.') }}</li>
+            <li>{{ __('Select Edit. The original lines load into the cheque form.') }}</li>
+            <li>{{ __('Adjust the bank account, cheque number, date, payee, memo, or expense lines as needed.') }}</li>
+            <li>{{ __('Select Save changes to repost the cheque.') }}</li>
+        </ol>
+
+        <x-docs.callout type="note" heading="{{ __('What a repost does to your books') }}">
+            {{ __('Reposting an edited cheque rebuilds the lines on the same journal entry it originally created — no new entry, no void-and-replace, and the audit trail records the before and after. If either the old or the new date falls inside a closed period, a filed sales-tax period, or a completed reconciliation, the app blocks the change until you undo that lock. To retire a cheque altogether rather than correct it, open it and choose Actions → Void, which posts a reversing entry.') }}
         </x-docs.callout>
 
         <x-docs.callout type="note" heading="{{ __('What shows in the cheque list') }}">

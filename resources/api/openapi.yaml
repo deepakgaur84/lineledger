@@ -30,9 +30,9 @@ info:
     send `"post": false` to leave it as a draft. `PATCH` edits a draft, or
     reposts a posted document in place where the document type supports it
     (invoices, credit memos, receipts, bills, bill payments, journal entries,
-    deposits). Document types without an in-place repost (cheques, stock
-    adjustments, tax-return payments) return **409** if edited after posting —
-    void and recreate instead. `DELETE` hard-deletes a draft or **voids** a
+    deposits, cheques). Document types without an in-place repost (stock
+    adjustments, transfers, tax-return payments) return **409** if edited after
+    posting — void and recreate instead. `DELETE` hard-deletes a draft or **voids** a
     posted document with a reversing journal entry.
 
 servers:
@@ -214,7 +214,7 @@ paths:
   /cheques/{cheque}:
     parameters: [{ $ref: '#/components/parameters/cheque' }]
     get: { tags: [Banking], summary: Get a cheque, responses: { '200': {$ref: '#/components/responses/Document'}, '404': {$ref: '#/components/responses/NotFound'}, '500': {$ref: '#/components/responses/InternalError'} } }
-    patch: { tags: [Banking], summary: "Update a draft cheque (posted: 409 — no repost)", requestBody: {$ref: '#/components/requestBodies/Document'}, responses: { '200': {$ref: '#/components/responses/Document'}, '409': {$ref: '#/components/responses/Conflict'}, '500': {$ref: '#/components/responses/InternalError'} } }
+    patch: { tags: [Banking], summary: "Update a cheque (a posted one is reposted in place)", requestBody: {$ref: '#/components/requestBodies/Document'}, responses: { '200': {$ref: '#/components/responses/Document'}, '409': {$ref: '#/components/responses/Conflict'}, '500': {$ref: '#/components/responses/InternalError'} } }
     delete: { $ref: '#/components/x-ops/documentDelete', tags: [Banking] }
   /cheques/{cheque}/post:
     parameters: [{ $ref: '#/components/parameters/cheque' }]
@@ -226,7 +226,7 @@ paths:
   /deposits/{deposit}:
     parameters: [{ $ref: '#/components/parameters/deposit' }]
     get: { tags: [Banking], summary: Get a deposit, responses: { '200': {$ref: '#/components/responses/Document'}, '404': {$ref: '#/components/responses/NotFound'}, '500': {$ref: '#/components/responses/InternalError'} } }
-    patch: { tags: [Banking], summary: "Update a draft deposit (posted: 409 — no repost)", requestBody: {$ref: '#/components/requestBodies/Document'}, responses: { '200': {$ref: '#/components/responses/Document'}, '409': {$ref: '#/components/responses/Conflict'}, '500': {$ref: '#/components/responses/InternalError'} } }
+    patch: { tags: [Banking], summary: "Update a deposit (a posted one is reposted in place)", requestBody: {$ref: '#/components/requestBodies/Document'}, responses: { '200': {$ref: '#/components/responses/Document'}, '409': {$ref: '#/components/responses/Conflict'}, '500': {$ref: '#/components/responses/InternalError'} } }
     delete: { $ref: '#/components/x-ops/documentDelete', tags: [Banking] }
   /deposits/{deposit}/post:
     parameters: [{ $ref: '#/components/parameters/deposit' }]

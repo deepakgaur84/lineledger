@@ -4,6 +4,7 @@ use App\Enums\AccountSubtype;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\JournalLine;
+use App\Support\Banking\LastBankAccount;
 use App\Support\Money;
 use Flux\Flux;
 use Livewire\Attributes\Computed;
@@ -28,13 +29,22 @@ new #[Title('Bank register')] class extends Component {
         if (request('account')) {
             $this->account_id = (int) request('account');
         } else {
+            // Reopen on the account this operator last worked in anywhere in
+            // Banking; fall back to the lowest-numbered active account.
             $first = Account::query()
                 ->whereIn('subtype', [AccountSubtype::Bank->value, AccountSubtype::CreditCard->value])
                 ->where('is_active', true)
                 ->orderBy('code')
                 ->first();
-            $this->account_id = $first?->id;
+            $this->account_id = LastBankAccount::recall($company, $this->bankAccounts) ?? $first?->id;
         }
+
+        LastBankAccount::remember($company, $this->account_id);
+    }
+
+    public function updatedAccountId(): void
+    {
+        LastBankAccount::remember($this->company, $this->account_id);
     }
 
     public function toggleClear(int $lineId): void

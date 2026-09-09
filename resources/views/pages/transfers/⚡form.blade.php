@@ -10,6 +10,7 @@ use App\Models\Company;
 use App\Models\Transfer;
 use App\Rules\MoneyString;
 use App\Services\Posting\TransferPoster;
+use App\Support\Banking\LastBankAccount;
 use App\Support\Money;
 use Flux\Flux;
 use Illuminate\Validation\Rule;
@@ -55,9 +56,17 @@ new #[Title('Transfer')] class extends Component
             $this->memo = $transfer->memo ?? '';
         } else {
             $this->transfer_date = $this->company->currentDateTime()->toDateString();
+            // "Transfer from" opens on the account this operator last worked
+            // in anywhere in Banking; the lowest-numbered active bank account
+            // is the first-visit fallback.
             $bank = Account::query()->where('subtype', AccountSubtype::Bank->value)->where('is_active', true)->orderBy('code')->first();
-            $this->from_account_id = $bank?->id;
+            $this->from_account_id = LastBankAccount::recall($company, $this->bankAccounts) ?? $bank?->id;
         }
+    }
+
+    public function updatedFromAccountId(): void
+    {
+        LastBankAccount::remember($this->company, $this->from_account_id);
     }
 
     #[Computed]
