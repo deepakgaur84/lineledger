@@ -328,11 +328,14 @@ Not scheduled — run these by hand when you need them:
 | `rates:fetch [--date=]` / `rates:health [--no-alert]` | Fetch FX rates for a specific date, or check freshness without emailing. |
 | `payroll:verify-slip-templates {year?}` | Verify the official T4 / T4A / RL-1 PDF templates still import, map, and render. Run it alongside the two `payroll:verify-*` commands after a year-end update. |
 
-A couple of one-off data backfills also ship for upgrading existing data and are
+A few one-off data backfills also ship for upgrading existing data and are
 **not** part of normal operation — run once if/when relevant:
 `migration:backfill-contact-links` (backfill `contact_id` onto AR/AP journal lines
-so GL-driven statements match aging) and `payroll:backfill-accounts` (create the
-system payroll GL accounts on existing Canadian organizations).
+so GL-driven statements match aging), `payroll:backfill-accounts` (create the
+system payroll GL accounts on existing Canadian organizations), and
+`banking:backfill-line-memos` (append each posted document's own memo to its bank
+journal line, so the bank register reads "Deposit: August rent" instead of a bare
+"Deposit"; wording only, amounts untouched).
 
 ## Operating & maintenance
 

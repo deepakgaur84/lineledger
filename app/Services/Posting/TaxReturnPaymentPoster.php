@@ -12,6 +12,7 @@ use App\Models\JournalEntry;
 use App\Models\TaxReturnPayment;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
+use App\Support\Banking\BankLineMemo;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -118,7 +119,7 @@ class TaxReturnPaymentPoster
                     'account_id' => $payment->bank_account_id,
                     'debit_cents' => 0,
                     'credit_cents' => (int) $payment->total_cents,
-                    'memo' => 'Tax payment',
+                    'memo' => BankLineMemo::forSource($payment),
                     'line_order' => $order++,
                 ]);
             } else {
@@ -127,7 +128,7 @@ class TaxReturnPaymentPoster
                     'account_id' => $payment->bank_account_id,
                     'debit_cents' => (int) $payment->total_cents,
                     'credit_cents' => 0,
-                    'memo' => 'Tax refund',
+                    'memo' => BankLineMemo::forSource($payment),
                     'line_order' => $order++,
                 ]);
 

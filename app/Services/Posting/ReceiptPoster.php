@@ -17,6 +17,7 @@ use App\Models\JournalEntry;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
 use App\Services\Currency\ExchangeRateService;
+use App\Support\Banking\BankLineMemo;
 use App\Support\Currency;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Query\Builder;
@@ -513,7 +514,7 @@ class ReceiptPoster
             'account_id' => $receipt->deposit_to_account_id,
             'debit_cents' => max($amount, 0),
             'credit_cents' => max(-$amount, 0),
-            'memo' => $amount < 0 ? 'Refund' : 'Deposit',
+            'memo' => BankLineMemo::forSource($receipt),
             'line_order' => 0,
         ]);
 
@@ -544,7 +545,7 @@ class ReceiptPoster
             'account_id' => $receipt->deposit_to_account_id,
             'debit_cents' => max($depositHome, 0),
             'credit_cents' => max(-$depositHome, 0),
-            'memo' => $amount < 0 ? 'Refund' : 'Deposit',
+            'memo' => BankLineMemo::forSource($receipt),
             'line_order' => 0,
         ]);
 

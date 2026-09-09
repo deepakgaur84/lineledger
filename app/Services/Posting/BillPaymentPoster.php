@@ -18,6 +18,7 @@ use App\Models\JournalEntry;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
 use App\Services\Currency\ExchangeRateService;
+use App\Support\Banking\BankLineMemo;
 use App\Support\Currency;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Query\Builder;
@@ -410,7 +411,7 @@ class BillPaymentPoster
                 'account_id' => $payment->paid_from_account_id,
                 'debit_cents' => 0,
                 'credit_cents' => $payment->amount_cents,
-                'memo' => 'Payment',
+                'memo' => BankLineMemo::forSource($payment),
                 'line_order' => 1,
             ]);
 
@@ -465,7 +466,7 @@ class BillPaymentPoster
             'account_id' => $payment->paid_from_account_id,
             'debit_cents' => 0,
             'credit_cents' => $bankHome,
-            'memo' => 'Payment',
+            'memo' => BankLineMemo::forSource($payment),
             'line_order' => $order++,
         ]);
 

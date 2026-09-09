@@ -11,6 +11,7 @@ use App\Models\Transfer;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
 use App\Services\Currency\ExchangeRateService;
+use App\Support\Banking\BankLineMemo;
 use App\Support\Currency;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Auth;
@@ -174,7 +175,7 @@ class TransferPoster
             'account_id' => $transfer->to_account_id,
             'debit_cents' => $toHome,
             'credit_cents' => 0,
-            'memo' => 'Transfer '.$transfer->transfer_no,
+            'memo' => BankLineMemo::forSource($transfer),
             'line_order' => $order++,
             ...Currency::lineMemo($toCurrency, $toRate, $toForeign, 0),
         ]);
@@ -183,7 +184,7 @@ class TransferPoster
             'account_id' => $transfer->from_account_id,
             'debit_cents' => 0,
             'credit_cents' => $fromHome,
-            'memo' => 'Transfer '.$transfer->transfer_no,
+            'memo' => BankLineMemo::forSource($transfer),
             'line_order' => $order++,
             ...Currency::lineMemo($fromCurrency, $fromRate, 0, $fromForeign),
         ]);

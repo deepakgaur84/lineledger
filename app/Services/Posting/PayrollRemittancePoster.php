@@ -11,6 +11,7 @@ use App\Models\JournalEntry;
 use App\Models\PayrollRemittance;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
+use App\Support\Banking\BankLineMemo;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -92,7 +93,7 @@ class PayrollRemittancePoster
                 'account_id' => $remittance->bank_account_id,
                 'debit_cents' => 0,
                 'credit_cents' => (int) $remittance->total_cents,
-                'memo' => 'Remittance payment',
+                'memo' => BankLineMemo::forSource($remittance),
                 'line_order' => $order++,
             ]);
 
