@@ -161,8 +161,8 @@ class BankReconciliationService
      * and re-posting the new one, so the GL and the rec's marked set stay
      * consistent; an *unchanged* one is left strictly alone — see
      * {@see self::adjustmentUnchanged()}. Both halves of a replaced aux entry
-     * are hidden from the reconcile screen (see the reconcile view's
-     * availableLines() query) so editing never leaves phantom lines behind.
+     * stay visible on the reconcile screen and net to zero, because they are
+     * real postings on the bank and the register shows them.
      *
      * @param  array{cents:int,date:CarbonInterface,account_id:int}|null  $serviceCharge
      * @param  array{cents:int,date:CarbonInterface,account_id:int}|null  $interestEarned

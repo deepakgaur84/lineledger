@@ -406,7 +406,7 @@ it('removes a service charge when edited to zero, voiding the entry and unmarkin
     expect($updated->markedLineIds())->not->toContain($oldBankLineId);
 });
 
-it('hides the reversal of a replaced service charge from the reconcile screen', function () {
+it('offers both halves of a replaced service charge on the reconcile screen', function () {
     $user = User::factory()->create();
     $this->company->members()->attach($user, ['role' => CompanyRole::Owner->value]);
     $this->actingAs($user);
@@ -429,13 +429,22 @@ it('hides the reversal of a replaced service charge from the reconcile screen', 
     $component = Livewire\Livewire::test('pages::banking.reconcile', ['company' => $this->company])
         ->set('account_id', $this->bank->id);
 
-    // The reversal (a bank debit) is hidden, so nothing shows on the deposit side.
-    expect($component->instance()->availableLines('deposits'))->toHaveCount(0);
-
-    // Only the live 2000 service charge remains on the payments side.
+    // The replaced charge and its reversal are real postings on the bank, so
+    // both are offered alongside the live one — exactly as the register shows.
     $payments = $component->instance()->availableLines('payments');
-    expect($payments)->toHaveCount(1);
-    expect((int) $payments->first()->credit_cents)->toBe(2000);
+    $deposits = $component->instance()->availableLines('deposits');
+
+    expect($payments->pluck('credit_cents')->map(fn ($c) => (int) $c)->all())
+        ->toEqualCanonicalizing([1500, 2000])
+        // The reversal of the replaced 1500 charge lands on the deposit side.
+        ->and($deposits->pluck('debit_cents')->map(fn ($c) => (int) $c)->all())
+        ->toEqualCanonicalizing([1500]);
+
+    // The replaced pair nets to zero, so leaving it untouched still balances:
+    // only the live 2000 charge is marked.
+    $rec = $rec->fresh();
+    expect($this->service->clearedBalanceCents($rec))->toBe(-2000)
+        ->and($this->service->differenceCents($rec))->toBe(0);
 });
 
 it('offers a voided transaction and its reversal for ticking, so the register can be reconciled in full', function () {

@@ -735,21 +735,15 @@ new #[Title('Reconcile')] class extends Component {
             ->with('journalEntry')
             ->where('account_id', $rec->account_id)
             ->where(fn ($q) => $q->whereNull('bank_reconciliation_id')->orWhere('bank_reconciliation_id', $rec->id))
-            // Everything the bank register shows is reconcilable, a voided
-            // document and its reversal included: both hit the statement, so
-            // the operator has to be able to tick them off (they net to zero).
-            // The one exception is a service-charge / interest entry this
-            // reconciliation replaced mid-edit — that pair is the rec's own
-            // internal bookkeeping, so both halves stay hidden.
-            ->whereHas('journalEntry', fn ($q) => $q->where('is_posted', true)
-                // Phrased positively on purpose: `NOT (voided AND source_type =
-                // …)` is NULL — and so drops the row — for the ordinary entries
-                // whose source_type is NULL.
-                ->where(fn ($q) => $q->whereNull('voided_at')
-                    ->orWhereNull('source_type')
-                    ->orWhere('source_type', '!=', BankReconciliation::class))
-                ->where(fn ($q) => $q->whereNull('reverses_entry_id')
-                    ->orWhereDoesntHave('reverses', fn ($q) => $q->where('source_type', BankReconciliation::class))))
+            // Everything the bank register shows is reconcilable — no
+            // exceptions. A voided transaction and its reversal both hit the
+            // statement, and so does a service charge this reconciliation
+            // later replaced, so all of them have to be tickable; each pair
+            // nets to zero, which is exactly what the bank shows. The only
+            // rows held back are the ones a *different* completed
+            // reconciliation already claimed (the clause above); undo that
+            // reconciliation to get them back.
+            ->whereHas('journalEntry', fn ($q) => $q->where('is_posted', true))
             ->when($side === 'payments', fn ($q) => $q->where('credit_cents', '>', 0))
             ->when($side === 'deposits', fn ($q) => $q->where('debit_cents', '>', 0))
             ->orderBy('id')

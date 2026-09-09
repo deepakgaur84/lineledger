@@ -194,7 +194,7 @@ new #[Title('Documentation — Banking')] class extends Component {}; ?>
         </x-docs.callout>
 
         <x-docs.callout type="tip" heading="{{ __('Edit the starting figures mid-reconciliation') }}">
-            {{ __('Caught a typo in the statement date or opening balance after you have already ticked off twenty transactions? Select Edit details on the reconciliation panel and change the statement date, opening balance, service charge, or interest in place — your cleared ticks are kept. If the service charge or interest amount changes, the app voids the old adjustment entry and reposts a new one so the books stay correct. Only the date wrong? You can also open the adjustment’s journal entry from the bank register and edit its date, number, or memo there — the accounts and amounts stay locked to the reconciliation.') }}
+            {{ __('Caught a typo in the statement date or opening balance after you have already ticked off twenty transactions? Select Edit details on the reconciliation panel and change the statement date, opening balance, service charge, or interest in place — your cleared ticks are kept. Saving without touching the service charge or interest leaves those entries exactly as they are — no reversal, no re-post. Change an amount, date or account and the app voids the old adjustment entry and posts a new one so the books stay correct; the voided entry and its reversal both stay on the reconcile list, where they cancel each other out. Only the date wrong? You can also open the adjustment’s journal entry from the bank register and edit its date, number, or memo there — the accounts and amounts stay locked to the reconciliation.') }}
         </x-docs.callout>
 
         <x-docs.figure
