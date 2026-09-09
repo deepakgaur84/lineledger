@@ -11,6 +11,19 @@
     display: none !important;
 }
 
+/* Tailwind v4's Preflight reset deliberately sets buttons to cursor: default,
+ * matching native browser behaviour. Most users still expect a pointer/hand
+ * on anything clickable, so restore it globally here rather than adding
+ * cursor-pointer to every button/Flux component individually. */
+@layer base {
+    button:not(:disabled),
+    [role='button']:not(:disabled),
+    [type='button']:not(:disabled),
+    [type='submit']:not(:disabled) {
+        cursor: pointer;
+    }
+}
+
 /* Tidewater — Line Ledger palette. Values live in :root/.dark below; this
  * block exposes them as Tailwind color utilities (bg-background, text-foreground,
  * bg-primary, border-border, text-positive, …). */
