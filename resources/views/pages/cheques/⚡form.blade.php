@@ -13,6 +13,7 @@ use App\Models\Classification;
 use App\Models\Company;
 use App\Models\Contact;
 use App\Models\Location;
+use App\Models\PayrollCheque;
 use App\Models\TaxCode;
 use App\Rules\MoneyString;
 use App\Services\AttachmentService;
@@ -27,6 +28,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
+use Livewire\Attributes\Url;
 use Livewire\Component;
 use Livewire\WithFileUploads;
 
@@ -59,6 +61,9 @@ new #[Title('Cheque')] class extends Component
     /** @var array<int, mixed> */
     public array $newAttachments = [];
 
+    #[Url(as: 'from')]
+    public ?int $duplicateFromId = null;
+
     public function mount(Company $company, ?Cheque $cheque = null): void
     {
         $this->company = $company;
@@ -76,25 +81,7 @@ new #[Title('Cheque')] class extends Component
             $this->payee_name = $cheque->payee_name;
             $this->memo = $cheque->memo ?? '';
 
-            $this->lines = $cheque->lines->map(fn ($l) => [
-                'account_id' => $l->account_id,
-                'description' => $l->description ?? '',
-                'amount' => Money::fromCents((int) $l->amount_cents)->toDecimalString(),
-                'tax_code_id' => $l->tax_code_id,
-                'secondary_tax_code_id' => $l->secondary_tax_code_id,
-                'tax_code_ids' => array_values(array_filter([$l->tax_code_id, $l->secondary_tax_code_id])),
-                'tax_override' => $l->tax_override_cents !== null ? Money::fromCents((int) $l->tax_override_cents)->toDecimalString() : '',
-                'class_id' => $l->class_id,
-                'location_id' => $l->location_id,
-                'auto_tax_cents' => 0,
-                'tax_cents' => (int) $l->tax_cents,
-                'secondary_tax_cents' => (int) $l->secondary_tax_cents,
-                'total' => (int) $l->amount_cents + (int) $l->tax_cents + (int) $l->secondary_tax_cents,
-            ])->all();
-
-            foreach (array_keys($this->lines) as $i) {
-                $this->recalcLine($i);
-            }
+            $this->loadLinesFrom($cheque);
         } else {
             $this->cheque_date = $this->company->currentDateTime()->toDateString();
 
@@ -104,6 +91,65 @@ new #[Title('Cheque')] class extends Component
             $this->bank_account_id = LastBankAccount::recall($company, $this->bankAccounts) ?? $bank?->id;
 
             $this->cheque_no = $this->nextChequeNumber();
+            $this->lines = [$this->emptyLine()];
+
+            if ($this->duplicateFromId) {
+                $this->prefillFrom($this->duplicateFromId);
+            }
+        }
+    }
+
+    /**
+     * Copy a cheque's editable lines onto the form, then recalculate each so
+     * the tax columns and totals match what the pickers would produce.
+     */
+    protected function loadLinesFrom(Cheque $cheque): void
+    {
+        $this->lines = $cheque->lines->map(fn ($l) => [
+            'account_id' => $l->account_id,
+            'description' => $l->description ?? '',
+            'amount' => Money::fromCents((int) $l->amount_cents)->toDecimalString(),
+            'tax_code_id' => $l->tax_code_id,
+            'secondary_tax_code_id' => $l->secondary_tax_code_id,
+            'tax_code_ids' => array_values(array_filter([$l->tax_code_id, $l->secondary_tax_code_id])),
+            'tax_override' => $l->tax_override_cents !== null ? Money::fromCents((int) $l->tax_override_cents)->toDecimalString() : '',
+            'class_id' => $l->class_id,
+            'location_id' => $l->location_id,
+            'auto_tax_cents' => 0,
+            'tax_cents' => (int) $l->tax_cents,
+            'secondary_tax_cents' => (int) $l->secondary_tax_cents,
+            'total' => (int) $l->amount_cents + (int) $l->tax_cents + (int) $l->secondary_tax_cents,
+        ])->all();
+
+        foreach (array_keys($this->lines) as $i) {
+            $this->recalcLine($i);
+        }
+    }
+
+    /**
+     * Copy a source cheque's bank, payee, memo and lines into a fresh, unsaved
+     * draft. The new cheque keeps today's date and gets its own number from the
+     * source's bank — never the source's, which is already spent. A void source
+     * is fair game: re-issuing a voided cheque is the usual reason to copy one.
+     * Ignores a source from another company (CompanyScope) or one that is gone.
+     */
+    protected function prefillFrom(int $sourceId): void
+    {
+        $source = Cheque::query()->with('lines')->find($sourceId);
+
+        if (! $source) {
+            return;
+        }
+
+        $this->bank_account_id = $source->bank_account_id;
+        $this->cheque_no = $this->nextChequeNumber();
+        $this->payee_contact_id = $source->payee_contact_id;
+        $this->payee_name = $source->payee_name;
+        $this->memo = $source->memo ?? '';
+
+        $this->loadLinesFrom($source);
+
+        if ($this->lines === []) {
             $this->lines = [$this->emptyLine()];
         }
     }
@@ -125,6 +171,43 @@ new #[Title('Cheque')] class extends Component
         }
 
         return '1001';
+    }
+
+    /**
+     * Soft warning when this number is already used on the same bank account.
+     * Repeats are legitimate — "DD", "EFT" and "e-transfer" stand in for a
+     * number on payments that never involved a chequebook, and an operator uses
+     * the same label every time — so this never blocks a save; it only catches
+     * a genuinely mis-keyed number. Payroll cheques count, because they draw on
+     * the same chequebook, and so do voided and deleted ones: the paper is
+     * spent either way.
+     */
+    #[Computed]
+    public function duplicateChequeNoWarning(): ?string
+    {
+        $number = trim($this->cheque_no);
+
+        if ($number === '' || ! $this->bank_account_id) {
+            return null;
+        }
+
+        $taken = Cheque::query()->withTrashed()
+            ->where('bank_account_id', $this->bank_account_id)
+            ->where('cheque_no', $number)
+            ->when($this->cheque?->exists, fn ($q) => $q->whereKeyNot($this->cheque->id))
+            ->exists();
+
+        $taken = $taken || PayrollCheque::query()->withTrashed()
+            ->where('bank_account_id', $this->bank_account_id)
+            ->where('cheque_no', $number)
+            ->exists();
+
+        return $taken
+            ? __('Already used on this account. Fine for :label — check it if this is a paper :singular.', [
+                'label' => 'DD / EFT / e-transfer',
+                'singular' => mb_strtolower($this->company->jurisdiction->cheque('singular')),
+            ])
+            : null;
     }
 
     public function updatedBankAccountId(): void
@@ -533,7 +616,16 @@ new #[Title('Cheque')] class extends Component
                 @endforeach
             </flux:select>
 
-            <flux:input wire:model="cheque_no" :label="$j->chequeLabel('number')" required data-test="cheque-no-input" />
+            <div>
+                <flux:input wire:model.blur="cheque_no" :label="$j->chequeLabel('number')" required data-test="cheque-no-input" />
+                @if ($this->duplicateChequeNoWarning)
+                    <flux:text class="mt-1 flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400" data-test="duplicate-cheque-no-warning">
+                        <flux:icon name="exclamation-triangle" class="size-4 shrink-0" />
+                        {{ $this->duplicateChequeNoWarning }}
+                    </flux:text>
+                @endif
+            </div>
+
             <flux:input type="date" wire:model="cheque_date" :label="__('Date')" required />
 
             <div class="md:col-span-2">

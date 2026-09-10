@@ -141,6 +141,9 @@ new #[Title('Cheque')] class extends Component {
                             {{ $j->chequeLabel('print') }}
                         </flux:menu.item>
                     @endif
+                    <flux:menu.item icon="document-duplicate" :href="route('cheques.create', ['company' => $company->slug, 'from' => $cheque->id])" wire:navigate data-test="duplicate-cheque-button">
+                        {{ __('Duplicate') }}
+                    </flux:menu.item>
                     @if ($cheque->status === ChequeStatus::Posted)
                         <flux:menu.separator />
                         <flux:menu.item icon="x-circle" variant="danger" wire:click="void" wire:confirm="{{ __('Void this :label? A reversing GL entry will be posted.', ['label' => mb_strtolower($j->cheque('singular'))]) }}" data-test="void-cheque-button">

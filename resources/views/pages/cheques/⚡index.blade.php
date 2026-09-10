@@ -49,6 +49,9 @@ new #[Title('Cheques')] class extends Component {
                 'amount_cents' => $c->amount_cents,
                 'status' => $c->status->value,
                 'href' => route('cheques.show', ['company' => $this->company->slug, 'cheque' => $c->id]),
+                // Only hand-written cheques can be copied; a payroll cheque is
+                // produced by its pay run, so there is nothing to re-issue here.
+                'duplicate_href' => route('cheques.create', ['company' => $this->company->slug, 'from' => $c->id]),
                 'pay_run_no' => null,
                 'pay_run_href' => null,
             ]);
@@ -73,6 +76,7 @@ new #[Title('Cheques')] class extends Component {
                     'amount_cents' => $c->amount_cents,
                     'status' => $c->status->value,
                     'href' => route('pay-runs.show', ['company' => $this->company->slug, 'payRun' => $c->pay_run_id]),
+                    'duplicate_href' => null,
                     'pay_run_no' => $c->payRun?->run_no,
                     'pay_run_href' => route('pay-runs.show', ['company' => $this->company->slug, 'payRun' => $c->pay_run_id]),
                 ])
@@ -156,6 +160,7 @@ new #[Title('Cheques')] class extends Component {
                     <th class="px-4 py-2 text-left">{{ __('Bank') }}</th>
                     <th class="px-4 py-2 text-right">{{ __('Amount') }}</th>
                     <th class="px-4 py-2">{{ __('Status') }}</th>
+                    <th class="px-4 py-2 w-10"><span class="sr-only">{{ __('Actions') }}</span></th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-border">
@@ -188,9 +193,23 @@ new #[Title('Cheques')] class extends Component {
                                 @case('void') <flux:badge color="zinc">{{ __('Void') }}</flux:badge> @break
                             @endswitch
                         </td>
+                        <td class="px-4 py-2 text-right">
+                            @if ($cheque['duplicate_href'])
+                                <flux:button
+                                    variant="ghost"
+                                    size="sm"
+                                    icon="document-duplicate"
+                                    :href="$cheque['duplicate_href']"
+                                    wire:navigate
+                                    :tooltip="__('Duplicate')"
+                                    :aria-label="__('Duplicate')"
+                                    data-test="duplicate-cheque-link"
+                                />
+                            @endif
+                        </td>
                     </tr>
                 @empty
-                    <tr><td colspan="{{ $company->usesPayroll() ? 7 : 6 }}" class="px-4 py-8 text-center text-muted-foreground">{{ __('No :plural yet.', ['plural' => mb_strtolower($j->cheque('plural'))]) }}</td></tr>
+                    <tr><td colspan="{{ $company->usesPayroll() ? 8 : 7 }}" class="px-4 py-8 text-center text-muted-foreground">{{ __('No :plural yet.', ['plural' => mb_strtolower($j->cheque('plural'))]) }}</td></tr>
                 @endforelse
             </tbody>
         </table>
