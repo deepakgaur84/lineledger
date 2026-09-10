@@ -1,0 +1,56 @@
+name: reapply-fork-patches
+
+# Runs automatically on every push to main — including a "Sync fork" merge,
+# which is just a fast-forward push as far as GitHub Actions can tell (there's
+# no separate "sync" event to hook). Also keeps workflow_dispatch so it can
+# still be run by hand if ever needed.
+#
+# Guard: this job's own commit is itself a push to main, which would
+# otherwise trigger this same workflow again, forever. Skipping whenever the
+# triggering actor is github-actions[bot] breaks that loop — our own commits
+# never re-trigger a second run.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  reapply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Copy patch files over their real paths
+        run: |
+          set -euo pipefail
+          if [ ! -d .fork-patches ]; then
+            echo "No .fork-patches directory found — nothing to reapply."
+            exit 0
+          fi
+          # Mirror .fork-patches/<path> -> <path> for every file in the staging
+          # folder, creating destination directories as needed.
+          find .fork-patches -type f | while read -r src; do
+            dest="${src#.fork-patches/}"
+            mkdir -p "$(dirname "$dest")"
+            cp "$src" "$dest"
+            echo "Reapplied: $dest"
+          done
+
+      - name: Commit and push if anything changed
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "No changes — sync didn't touch any patched file, or patches already applied."
+            exit 0
+          fi
+          git add -A
+          git commit -m "Reapply fork patches after upstream sync"
+          git push origin main
