@@ -3,6 +3,7 @@
 use App\Actions\Fundraising\EnsureFundraisingAccounts;
 use App\Actions\Inventory\EnsureInventoryAccounts;
 use App\Actions\MasterData\EnsureDefaultFund;
+use App\Actions\Payroll\EnsureEmployeeReimbursementAccount;
 use App\Actions\Payroll\EnsurePayrollAccounts;
 use App\Enums\AuditAction;
 use App\Enums\CompanyRole;
@@ -395,6 +396,13 @@ new class extends Component
         // company created before payroll existed.
         if ($company->usesPayroll()) {
             app(EnsurePayrollAccounts::class)->handle($company);
+        }
+
+        // Backfill the Employee Reimbursements Payable control account when
+        // employees is enabled on a company that was created without it (the
+        // wizard only seeds this account when employees is checked at setup).
+        if ($company->usesEmployees()) {
+            app(EnsureEmployeeReimbursementAccount::class)->handle($company);
         }
 
         // Backfill the Inventory Asset + COGS accounts (and wire the company
