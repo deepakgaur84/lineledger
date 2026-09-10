@@ -670,6 +670,19 @@ class Company extends Model
     }
 
     /**
+     * Whether this company has the employees module enabled. Opt-in per company
+     * via the features_employees flag (defaults true for new companies, but can
+     * be turned off during setup and back on later — see
+     * {@see \App\Actions\Payroll\EnsureEmployeeReimbursementAccount}, which
+     * backfills the Employee Reimbursements Payable control account when this
+     * flips back on for a company that lacks it).
+     */
+    public function usesEmployees(): bool
+    {
+        return (bool) $this->features_employees;
+    }
+
+    /**
      * Whether a document line can carry a second sales tax. Always true: any
      * company may apply two taxes to a line (e.g. federal GST plus a provincial
      * PST/RST/QST), each computed on the line subtotal independently and remitted
