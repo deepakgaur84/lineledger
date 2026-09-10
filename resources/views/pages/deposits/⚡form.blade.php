@@ -16,6 +16,7 @@ use App\Models\SalesReceipt;
 use App\Rules\MoneyString;
 use App\Services\Posting\DepositPoster;
 use App\Services\Posting\DocumentNumberGenerator;
+use App\Support\Banking\LastBankAccount;
 use App\Support\Money;
 use Flux\Flux;
 use Illuminate\Support\Facades\DB;
@@ -448,14 +449,17 @@ new #[Title('Make deposit')] class extends Component
     }
 
     /**
-     * Default "Deposit to" for a new deposit: reuse the bank account from the
-     * most recent deposit so the last-used account is remembered between
-     * deposits. Falls back to the lowest-code active bank account when there is
-     * no prior deposit, or its account is no longer an active bank.
+     * Default "Deposit to" for a new deposit: the account this operator last
+     * worked in anywhere in Banking, else the bank account from the most recent
+     * deposit, else the lowest-code active bank account.
      */
     protected function defaultBankAccountId(): ?int
     {
         $activeBankIds = $this->bankAccounts->pluck('id');
+
+        if ($remembered = LastBankAccount::recall($this->company, $activeBankIds)) {
+            return $remembered;
+        }
 
         $lastUsed = Deposit::query()
             ->whereNotNull('bank_account_id')
@@ -463,6 +467,11 @@ new #[Title('Make deposit')] class extends Component
             ->value('bank_account_id');
 
         return $activeBankIds->contains($lastUsed) ? (int) $lastUsed : $activeBankIds->first();
+    }
+
+    public function updatedBankAccountId(): void
+    {
+        LastBankAccount::remember($this->company, $this->bank_account_id);
     }
 
     #[Computed]

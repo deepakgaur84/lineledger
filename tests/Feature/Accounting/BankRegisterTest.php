@@ -27,7 +27,7 @@ it('offers Reconcile, Import statement and Bank rules under the Actions menu', f
         ->assertSeeHtml(route('banking.rules', ['company' => $company->slug]));
 });
 
-it('toggles cleared_at on a journal line via the register', function () {
+it('shows cleared state read-only — the register cannot clear or unclear a line', function () {
     $company = Company::factory()->create();
     $user = User::factory()->create();
     $company->members()->attach($user, ['role' => CompanyRole::Owner->value]);
@@ -65,17 +65,30 @@ it('toggles cleared_at on a journal line via the register', function () {
     $response = $this->get(route('banking.register', ['company' => $company->slug, 'account' => $bank->id]));
     $response->assertOk();
 
-    Livewire::test('pages::banking.register', ['company' => $company])
-        ->set('account_id', $bank->id)
-        ->call('toggleClear', $bankLine->id);
+    // Clearing belongs to the reconciliation, so the register offers no way to
+    // do it: no per-row toggle, no bulk actions, and no statement-balance field
+    // to keep in step by hand.
+    $register = Livewire::test('pages::banking.register', ['company' => $company])
+        ->set('account_id', $bank->id);
 
-    expect($bankLine->fresh()->cleared_at)->not->toBeNull();
+    foreach (['toggleClear', 'clearAll', 'uncleared'] as $method) {
+        expect(method_exists($register->instance(), $method))->toBeFalse();
+    }
 
-    Livewire::test('pages::banking.register', ['company' => $company])
-        ->set('account_id', $bank->id)
-        ->call('toggleClear', $bankLine->id);
+    $register->assertDontSee('Statement balance')
+        ->assertDontSee('Clear all')
+        ->assertDontSee('Unclear all')
+        // The Show cleared filter stays — it is how you hide accounted-for rows.
+        ->assertSee('Show cleared');
 
     expect($bankLine->fresh()->cleared_at)->toBeNull();
+
+    // A line cleared by a reconciliation still reads as cleared here.
+    $bankLine->forceFill(['cleared_at' => now()])->save();
+
+    Livewire::test('pages::banking.register', ['company' => $company])
+        ->set('account_id', $bank->id)
+        ->assertSeeHtml('data-test="register-cleared-mark"');
 
     app()->forgetInstance('current_company');
 });

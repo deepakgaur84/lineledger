@@ -10,9 +10,11 @@ use App\Services\Accounting\OpeningBalanceAccountResolver;
 use App\Services\Migration\Importers\OpenInvoicesImporter;
 use App\Services\Posting\DocumentNumberGenerator;
 use App\Services\Posting\InvoicePoster;
+use App\Support\OpeningBalances\OpeningDocumentNumber;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
+use RuntimeException;
 
 /**
  * Posts a customer's opening Accounts-Receivable balance as a synthetic
@@ -29,6 +31,9 @@ use InvalidArgumentException;
  * the correct AR-Aging bucket and ties to the AR control account to the penny.
  * The amount is denominated in the customer's own currency; the poster locks the
  * FX rate and routes to the matching AR control account for foreign customers.
+ *
+ * $invoiceNo lets the operator carry the number the balance had in the old
+ * system across; leave it null to have one generated.
  */
 final class PostCustomerOpeningBalance
 {
@@ -37,21 +42,31 @@ final class PostCustomerOpeningBalance
         protected InvoicePoster $poster,
     ) {}
 
-    public function handle(Contact $contact, int $amountCents, CarbonImmutable $asOf): Invoice
+    public function handle(Contact $contact, int $amountCents, CarbonImmutable $asOf, ?string $invoiceNo = null): Invoice
     {
         if ($amountCents <= 0) {
             throw new InvalidArgumentException('Opening balance must be greater than zero.');
         }
 
-        return DB::transaction(function () use ($contact, $amountCents, $asOf): Invoice {
+        return DB::transaction(function () use ($contact, $amountCents, $asOf, $invoiceNo): Invoice {
             $company = $contact->company;
 
             $obe = app(OpeningBalanceAccountResolver::class)->resolveOrFail((int) $company->id);
 
+            $invoiceNo = OpeningDocumentNumber::normalize($invoiceNo);
+
+            if (OpeningDocumentNumber::isTooLong($invoiceNo)) {
+                throw new RuntimeException('Invoice number is too long — '.OpeningDocumentNumber::MAX_LENGTH.' characters maximum.');
+            }
+
+            if ($invoiceNo !== null && $this->numbers->isTaken($company, Invoice::class, 'invoice_no', $invoiceNo)) {
+                throw new RuntimeException("Invoice number {$invoiceNo} is already in use.");
+            }
+
             $invoice = Invoice::create([
                 'company_id' => $company->id,
                 'contact_id' => $contact->id,
-                'invoice_no' => $this->numbers->next($company, Invoice::class, 'invoice_no', 'OB'),
+                'invoice_no' => $invoiceNo ?? $this->numbers->next($company, Invoice::class, 'invoice_no', 'OB'),
                 'invoice_date' => $asOf,
                 'due_date' => $asOf,
                 'status' => InvoiceStatus::Draft,

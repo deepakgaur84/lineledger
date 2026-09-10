@@ -6,6 +6,7 @@ use App\Models\Account;
 use App\Models\Cheque;
 use App\Models\Company;
 use App\Models\CompanyApiKey;
+use App\Models\JournalLine;
 
 beforeEach(function () {
     $this->company = Company::factory()->create();
@@ -94,8 +95,30 @@ it('edits a draft via update', function () {
         ->assertJsonPath('data.status', 'draft');
 });
 
-it('returns 409 when updating a posted cheque', function () {
+it('reposts a posted cheque in place on update', function () {
     $id = $this->postJson('/api/v1/cheques', chequePayload(), chequeAuthHeader())->json('data.id');
+    $entryId = Cheque::withoutGlobalScopes()->find($id)->journal_entry_id;
+
+    $this->patchJson("/api/v1/cheques/{$id}", chequePayload([
+        'memo' => 'Corrected',
+        'lines' => [['account_id' => $this->expense->id, 'amount_cents' => 12500]],
+    ]), chequeAuthHeader())
+        ->assertStatus(200)
+        ->assertJsonPath('data.status', 'posted')
+        ->assertJsonPath('data.amount_cents', 12500)
+        ->assertJsonPath('data.journal_entry_id', $entryId);
+
+    // The same journal entry was rebuilt — no reversal, no second entry.
+    $lines = JournalLine::withoutGlobalScopes()->where('journal_entry_id', $entryId)->get();
+
+    expect($lines->sum('debit_cents'))->toBe(12500)
+        ->and($lines->sum('credit_cents'))->toBe(12500);
+});
+
+it('returns 409 when updating a voided cheque', function () {
+    $id = $this->postJson('/api/v1/cheques', chequePayload(), chequeAuthHeader())->json('data.id');
+
+    $this->deleteJson("/api/v1/cheques/{$id}", [], chequeAuthHeader())->assertStatus(200);
 
     $this->patchJson("/api/v1/cheques/{$id}", chequePayload([
         'lines' => [['account_id' => $this->expense->id, 'amount_cents' => 100]],

@@ -15,6 +15,7 @@ use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
 use App\Services\Currency\ExchangeRateService;
 use App\Services\Reconciliation\BankReconciliationLockGuard;
+use App\Support\Banking\BankLineMemo;
 use App\Support\Currency;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Auth;
@@ -294,7 +295,7 @@ class DepositPoster
             'account_id' => $deposit->bank_account_id,
             'debit_cents' => $bankHome,
             'credit_cents' => 0,
-            'memo' => 'Deposit',
+            'memo' => BankLineMemo::forSource($deposit),
             'line_order' => $order++,
             ...Currency::lineMemo($currency, $rate, $totalForeign, 0),
         ]);

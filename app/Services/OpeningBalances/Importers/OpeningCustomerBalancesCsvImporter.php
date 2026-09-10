@@ -7,8 +7,10 @@ use App\Models\Contact;
 use App\Models\OpeningBalanceState;
 use App\Services\Migration\Csv\CsvParser;
 use App\Services\Migration\Importers\CompanyCsvImporter;
+use App\Services\Migration\Importers\HasOptionalCsvHeaders;
 use App\Services\Migration\ImportResult;
 use App\Services\OpeningBalances\CustomerOpeningBalanceSync;
+use App\Support\OpeningBalances\OpeningDocumentNumber;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -18,7 +20,7 @@ use Throwable;
  * {@see CustomerOpeningBalanceSync::set()}, so re-importing corrected figures
  * reposts the same opening documents instead of stacking new ones.
  */
-class OpeningCustomerBalancesCsvImporter implements CompanyCsvImporter
+class OpeningCustomerBalancesCsvImporter implements CompanyCsvImporter, HasOptionalCsvHeaders
 {
     public function __construct(
         protected CsvParser $parser,
@@ -30,11 +32,17 @@ class OpeningCustomerBalancesCsvImporter implements CompanyCsvImporter
         return ['customer_display_name', 'balance'];
     }
 
+    /** @return list<string> */
+    public function optionalHeaders(): array
+    {
+        return ['document_no'];
+    }
+
     public function templateExampleRows(): array
     {
         return [
-            ['customer_display_name' => 'Acme Landscaping', 'balance' => '1250.00'],
-            ['customer_display_name' => 'Beeline Couriers', 'balance' => '-75.00'],
+            ['customer_display_name' => 'Acme Landscaping', 'document_no' => 'INV 27/10020', 'balance' => '1250.00'],
+            ['customer_display_name' => 'Beeline Couriers', 'document_no' => 'CM-2027-004', 'balance' => '-75.00'],
         ];
     }
 
@@ -57,7 +65,7 @@ class OpeningCustomerBalancesCsvImporter implements CompanyCsvImporter
         }
 
         try {
-            $rows = $this->parser->parse($csvPath, $this->templateHeaders());
+            $rows = $this->parser->parse($csvPath, $this->templateHeaders(), $this->optionalHeaders());
         } catch (Throwable $e) {
             return new ImportResult($dryRun, [], [['row' => 0, 'message' => $e->getMessage()]]);
         }
@@ -97,8 +105,16 @@ class OpeningCustomerBalancesCsvImporter implements CompanyCsvImporter
                 continue;
             }
 
+            $documentNo = OpeningDocumentNumber::normalize($row['document_no'] ?? null);
+
+            if (OpeningDocumentNumber::isTooLong($documentNo)) {
+                $errors[] = ['row' => $rowNum, 'message' => 'document_no is longer than '.OpeningDocumentNumber::MAX_LENGTH.' characters.'];
+
+                continue;
+            }
+
             $current = $this->sync->currentFor($contact)['net'];
-            $accepted[$contact->id] = ['contact' => $contact, 'balance' => $balance];
+            $accepted[$contact->id] = ['contact' => $contact, 'balance' => $balance, 'document_no' => $documentNo];
 
             $preview[] = [
                 'row' => $rowNum,
@@ -122,7 +138,7 @@ class OpeningCustomerBalancesCsvImporter implements CompanyCsvImporter
         try {
             DB::transaction(function () use ($state, $accepted): void {
                 foreach ($accepted as $entry) {
-                    $this->sync->set($state, $entry['contact'], $entry['balance']);
+                    $this->sync->set($state, $entry['contact'], $entry['balance'], $entry['document_no']);
                 }
             });
         } catch (Throwable $e) {

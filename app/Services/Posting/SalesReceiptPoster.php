@@ -18,6 +18,7 @@ use App\Services\Currency\ExchangeRateService;
 use App\Services\Inventory\InventoryCostingFactory;
 use App\Services\Inventory\MovementContext;
 use App\Services\Tax\TaxPeriodLockGuard;
+use App\Support\Banking\BankLineMemo;
 use App\Support\Currency;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Auth;
@@ -290,7 +291,7 @@ class SalesReceiptPoster
             'account_id' => $receipt->deposit_to_account_id,
             'debit_cents' => $cashHome,
             'credit_cents' => 0,
-            'memo' => 'Deposit',
+            'memo' => BankLineMemo::forSource($receipt),
             'line_order' => $order++,
             ...Currency::lineMemo($currency, $rate, $totalForeign, 0),
         ]);

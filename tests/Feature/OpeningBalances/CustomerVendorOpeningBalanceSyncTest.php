@@ -166,3 +166,95 @@ it('refuses to rewrite an opening invoice that already has payments applied', fu
     expect(fn () => arSync()->set($this->state, $customer, 20000))
         ->toThrow(RuntimeException::class, 'payments applied');
 });
+
+it('names the opening invoice with the number the operator supplies', function () {
+    $customer = Contact::factory()->customer()->create(['company_id' => $this->company->id]);
+
+    arSync()->set($this->state, $customer, 125000, 'INV 27/10020');
+
+    $invoice = Invoice::query()->where('contact_id', $customer->id)->firstOrFail();
+    expect($invoice->invoice_no)->toBe('INV 27/10020');
+    expect($invoice->journalEntry->memo)->toContain('INV 27/10020');
+});
+
+it('renumbers an existing opening invoice and reposts its journal memo', function () {
+    $customer = Contact::factory()->customer()->create(['company_id' => $this->company->id]);
+
+    arSync()->set($this->state, $customer, 125000);
+    $invoice = Invoice::query()->where('contact_id', $customer->id)->firstOrFail();
+    $entryId = $invoice->journal_entry_id;
+
+    expect(arSync()->renameDocument($customer, 'INV 27/10020'))->toBeTrue();
+
+    $renamed = $invoice->fresh();
+    expect($renamed->invoice_no)->toBe('INV 27/10020');
+    expect($renamed->journal_entry_id)->toBe($entryId);
+    expect($renamed->journalEntry->memo)->toContain('INV 27/10020');
+    expect(arSync()->documentNumberFor($customer))->toBe('INV 27/10020');
+});
+
+it('reports the number back through documentNumberFor for a credit memo', function () {
+    $customer = Contact::factory()->customer()->create(['company_id' => $this->company->id]);
+
+    arSync()->set($this->state, $customer, -2550, 'CM-2027-004');
+
+    expect(arSync()->documentNumberFor($customer))->toBe('CM-2027-004');
+    expect(CreditMemo::query()->where('contact_id', $customer->id)->value('credit_memo_no'))->toBe('CM-2027-004');
+});
+
+it('refuses a document number another document already owns', function () {
+    $first = Contact::factory()->customer()->create(['company_id' => $this->company->id]);
+    $second = Contact::factory()->customer()->create(['company_id' => $this->company->id]);
+
+    arSync()->set($this->state, $first, 10000, 'INV 27/10020');
+
+    expect(fn () => arSync()->set($this->state, $second, 20000, 'INV 27/10020'))
+        ->toThrow(RuntimeException::class, 'already in use');
+
+    // …and a rename onto a taken number is refused just as loudly.
+    arSync()->set($this->state, $second, 20000, 'INV 27/10021');
+
+    expect(fn () => arSync()->renameDocument($second, 'INV 27/10020'))
+        ->toThrow(RuntimeException::class, 'already in use');
+
+    expect(Invoice::query()->where('contact_id', $second->id)->value('invoice_no'))->toBe('INV 27/10021');
+});
+
+it('keeps the supplied number when the balance is edited afterwards', function () {
+    $customer = Contact::factory()->customer()->create(['company_id' => $this->company->id]);
+
+    arSync()->set($this->state, $customer, 125000, 'INV 27/10020');
+    arSync()->set($this->state, $customer, 110000, 'INV 27/10020');
+
+    $invoice = Invoice::query()->where('contact_id', $customer->id)->firstOrFail();
+    expect($invoice->invoice_no)->toBe('INV 27/10020');
+    expect((int) $invoice->total_cents)->toBe(110000);
+});
+
+it('renames a vendor opening bill and honours a supplied bill number', function () {
+    $vendor = Contact::factory()->vendor()->create(['company_id' => $this->company->id]);
+
+    apSync()->set($this->state, $vendor, 42500, 'BILL-88213');
+
+    $bill = Bill::query()->where('contact_id', $vendor->id)->firstOrFail();
+    expect($bill->bill_no)->toBe('BILL-88213');
+    expect(apSync()->documentNumberFor($vendor))->toBe('BILL-88213');
+
+    expect(apSync()->renameDocument($vendor, 'BILL-88999'))->toBeTrue();
+    expect($bill->fresh()->bill_no)->toBe('BILL-88999');
+    expect($bill->fresh()->journalEntry->memo)->toContain('BILL-88999');
+});
+
+it('holds off renaming when the customer has no opening document yet', function () {
+    $customer = Contact::factory()->customer()->create(['company_id' => $this->company->id]);
+
+    expect(arSync()->renameDocument($customer, 'INV 27/10020'))->toBeFalse();
+    expect(arSync()->documentNumberFor($customer))->toBeNull();
+});
+
+it('rejects a document number longer than the column allows', function () {
+    $customer = Contact::factory()->customer()->create(['company_id' => $this->company->id]);
+
+    expect(fn () => arSync()->set($this->state, $customer, 10000, str_repeat('X', 41)))
+        ->toThrow(RuntimeException::class, 'too long');
+});

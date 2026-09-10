@@ -13,8 +13,9 @@ use Illuminate\Support\Facades\DB;
  * the cheque amount. Shared by the Livewire form and the API. Does NOT post —
  * the caller decides whether to hand the result to ChequePoster.
  *
- * Only draft cheques may be edited; ChequePoster has no repost path, so a
- * posted cheque must be voided and recreated.
+ * Drafts are rebuilt in place; a posted cheque is rebuilt here too and its GL
+ * entry brought back into step by ChequePoster::repost(). Only a voided cheque
+ * is frozen.
  *
  * Expected $data shape (cents-based, framework-agnostic):
  *   bank_account_id:  int

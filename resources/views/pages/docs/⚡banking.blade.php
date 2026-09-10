@@ -23,11 +23,11 @@ new #[Title('Documentation — Banking')] class extends Component {}; ?>
         <x-docs.figure
             src="{{ asset('docs/screenshots/banking/register.png') }}"
             alt="{{ __('The bank register for the Chequing account showing payments, deposits, and a ledger balance') }}"
-            caption="{{ __('The bank register. Each row links to the journal entry behind it, and the tiles up top show your ledger, cleared, and statement balances.') }}"
+            caption="{{ __('The bank register. Each row links to the journal entry behind it, and the tiles up top show your ledger and cleared balances.') }}"
         />
 
         <flux:text>
-            {{ __('Tick the checkbox on a row to mark it cleared against your statement — the Cleared balance tile updates as you go. Use Clear all or Unclear all to mark the whole list at once, and toggle Show cleared to hide rows you have already accounted for. When you are ready to formally close the period, choose Reconcile from the Actions menu.') }}
+            {{ __('The register is read-only: a green tick means the row has been cleared, and rows are ticked off during reconciliation rather than here, so there is nothing to keep in step by hand. Toggle Show cleared to hide the rows you have already accounted for. When you are ready to work through the statement, choose Reconcile from the Actions menu.') }}
         </flux:text>
 
         {{-- ───────────────────────── Import a statement ───────────────────────── --}}
@@ -194,7 +194,7 @@ new #[Title('Documentation — Banking')] class extends Component {}; ?>
         </x-docs.callout>
 
         <x-docs.callout type="tip" heading="{{ __('Edit the starting figures mid-reconciliation') }}">
-            {{ __('Caught a typo in the statement date or opening balance after you have already ticked off twenty transactions? Select Edit details on the reconciliation panel and change the statement date, opening balance, service charge, or interest in place — your cleared ticks are kept. If the service charge or interest amount changes, the app voids the old adjustment entry and reposts a new one so the books stay correct. Only the date wrong? You can also open the adjustment’s journal entry from the bank register and edit its date, number, or memo there — the accounts and amounts stay locked to the reconciliation.') }}
+            {{ __('Caught a typo in the statement date or opening balance after you have already ticked off twenty transactions? Select Edit details on the reconciliation panel and change the statement date, opening balance, service charge, or interest in place — your cleared ticks are kept. Saving without touching the service charge or interest leaves those entries exactly as they are — no reversal, no re-post. Change an amount, date or account and the app voids the old adjustment entry and posts a new one so the books stay correct; the voided entry and its reversal both stay on the reconcile list, where they cancel each other out. Only the date wrong? You can also open the adjustment’s journal entry from the bank register and edit its date, number, or memo there — the accounts and amounts stay locked to the reconciliation.') }}
         </x-docs.callout>
 
         <x-docs.figure
@@ -259,6 +259,7 @@ new #[Title('Documentation — Banking')] class extends Component {}; ?>
             <li>{{ __('On each line, choose the Account, type a Description, and enter the Amount (add a Tax code if needed).') }}</li>
             <li>{{ __('Select Add line for more than one expense, and check the Total.') }}</li>
             <li>{{ __('Select Post cheque to finalize it, or Save draft to keep working on it later.') }}</li>
+            <li>{{ __('The bank account you pick is remembered — the next cheque, deposit, register or reconciliation you open starts on that same account.') }}</li>
             <li>{{ __('To print, open the posted cheque and use the Print action — it renders a cheque-formatted PDF for pre-printed stock.') }}</li>
         </ol>
 
@@ -272,8 +273,16 @@ new #[Title('Documentation — Banking')] class extends Component {}; ?>
             {{ __('Posting a cheque credits the bank account it is drawn on and debits the expense (or other) accounts on its lines, so the payment reaches your books right away.') }}
         </x-docs.callout>
 
-        <x-docs.callout type="warning" heading="{{ __('Editing a posted cheque') }}">
-            {{ __('A posted cheque can’t be edited. To correct one, open it and choose Actions → Void — a reversing entry is posted — then write a replacement. Only drafts can be changed on the form.') }}
+        <p class="mt-4"><strong>{{ __('To correct a posted cheque:') }}</strong></p>
+        <ol class="list-decimal ps-6 space-y-1">
+            <li>{{ __('Open Banking → Cheques and select the cheque you want to change.') }}</li>
+            <li>{{ __('Select Edit. The original lines load into the cheque form.') }}</li>
+            <li>{{ __('Adjust the bank account, cheque number, date, payee, memo, or expense lines as needed.') }}</li>
+            <li>{{ __('Select Save changes to repost the cheque.') }}</li>
+        </ol>
+
+        <x-docs.callout type="note" heading="{{ __('What a repost does to your books') }}">
+            {{ __('Reposting an edited cheque rebuilds the lines on the same journal entry it originally created — no new entry, no void-and-replace, and the audit trail records the before and after. If either the old or the new date falls inside a closed period, a filed sales-tax period, or a completed reconciliation, the app blocks the change until you undo that lock. To retire a cheque altogether rather than correct it, open it and choose Actions → Void, which posts a reversing entry.') }}
         </x-docs.callout>
 
         <x-docs.callout type="note" heading="{{ __('What shows in the cheque list') }}">

@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\CompanyRole;
+use App\Enums\InvoiceStatus;
 use App\Models\Account;
 use App\Models\Bill;
 use App\Models\Company;
@@ -131,6 +132,132 @@ it('saves a customer balance typed on the receivables grid', function () {
     $page->set('bal.'.$customer->id, '-25.50');
     expect($invoice->fresh()->voided_at)->not->toBeNull();
     expect((int) CreditMemo::query()->where('contact_id', $customer->id)->whereNull('voided_at')->value('total_cents'))->toBe(2550);
+});
+
+it('names the opening document before the balance is typed', function () {
+    $company = ($this->companyAs)(CompanyRole::Owner);
+    OpeningBalanceState::create(['company_id' => $company->id, 'as_of_date' => '2026-06-30']);
+    $customer = Contact::factory()->customer()->create(['company_id' => $company->id]);
+
+    Livewire::test('pages::opening-balances.receivables', ['company' => $company])
+        // Document number first — nothing exists to rename yet, so it is held.
+        ->set('doc.'.$customer->id, 'INV 27/10020')
+        ->assertSet('doc.'.$customer->id, 'INV 27/10020')
+        // …then the balance, which creates the document under that number.
+        ->set('bal.'.$customer->id, '1,000.00');
+
+    $invoice = Invoice::query()->where('contact_id', $customer->id)->where('is_opening_balance', true)->firstOrFail();
+
+    expect($invoice->invoice_no)->toBe('INV 27/10020');
+    expect((int) $invoice->total_cents)->toBe(100000);
+});
+
+it('renumbers an opening document already on the receivables grid', function () {
+    $company = ($this->companyAs)(CompanyRole::Owner);
+    OpeningBalanceState::create(['company_id' => $company->id, 'as_of_date' => '2026-06-30']);
+    $customer = Contact::factory()->customer()->create(['company_id' => $company->id]);
+
+    $page = Livewire::test('pages::opening-balances.receivables', ['company' => $company])
+        ->set('bal.'.$customer->id, '500.00');
+
+    $invoice = Invoice::query()->where('contact_id', $customer->id)->firstOrFail();
+    $entryId = $invoice->journal_entry_id;
+
+    $page->set('doc.'.$customer->id, 'INV 27/10020');
+
+    expect($invoice->fresh()->invoice_no)->toBe('INV 27/10020');
+    expect($invoice->fresh()->journal_entry_id)->toBe($entryId);
+});
+
+it('does not auto-generate a colliding number for a company with imported invoices', function () {
+    $company = ($this->companyAs)(CompanyRole::Owner);
+    OpeningBalanceState::create(['company_id' => $company->id, 'as_of_date' => '2026-06-30']);
+
+    // The back catalogue, imported so the newest row by id is not the highest.
+    foreach (['INV 27/10052', 'INV 27/10020', 'INV 27/10019'] as $number) {
+        Invoice::create([
+            'contact_id' => Contact::factory()->customer()->create(['company_id' => $company->id])->id,
+            'invoice_no' => $number,
+            'invoice_date' => '2026-06-30',
+            'due_date' => '2026-06-30',
+            'status' => InvoiceStatus::Draft,
+        ]);
+    }
+
+    $customer = Contact::factory()->customer()->create(['company_id' => $company->id]);
+
+    Livewire::test('pages::opening-balances.receivables', ['company' => $company])
+        ->set('bal.'.$customer->id, '100.00');
+
+    $invoice = Invoice::query()
+        ->where('contact_id', $customer->id)
+        ->where('is_opening_balance', true)
+        ->firstOrFail();
+
+    expect($invoice->invoice_no)->toBe('INV 27/10053');
+});
+
+it('refuses a document number another document already owns', function () {
+    $company = ($this->companyAs)(CompanyRole::Owner);
+    OpeningBalanceState::create(['company_id' => $company->id, 'as_of_date' => '2026-06-30']);
+    $first = Contact::factory()->customer()->create(['company_id' => $company->id]);
+    $second = Contact::factory()->customer()->create(['company_id' => $company->id]);
+
+    $page = Livewire::test('pages::opening-balances.receivables', ['company' => $company])
+        ->set('doc.'.$first->id, 'INV 27/10020')
+        ->set('bal.'.$first->id, '100.00')
+        ->set('bal.'.$second->id, '200.00');
+
+    $secondInvoice = Invoice::query()->where('contact_id', $second->id)->firstOrFail();
+    $before = $secondInvoice->invoice_no;
+
+    $page->set('doc.'.$second->id, 'INV 27/10020');
+
+    expect($secondInvoice->fresh()->invoice_no)->toBe($before);
+});
+
+it('names the opening bill before the balance is typed', function () {
+    $company = ($this->companyAs)(CompanyRole::Owner);
+    OpeningBalanceState::create(['company_id' => $company->id, 'as_of_date' => '2026-06-30']);
+    $vendor = Contact::factory()->vendor()->create(['company_id' => $company->id]);
+
+    Livewire::test('pages::opening-balances.payables', ['company' => $company])
+        ->set('doc.'.$vendor->id, 'BILL-88213')
+        ->set('bal.'.$vendor->id, '425.00');
+
+    expect(Bill::query()->where('contact_id', $vendor->id)->value('bill_no'))->toBe('BILL-88213');
+});
+
+it('imports opening customer balances with their document numbers', function () {
+    $company = ($this->companyAs)(CompanyRole::Owner);
+    OpeningBalanceState::create(['company_id' => $company->id, 'as_of_date' => '2026-06-30']);
+    Contact::factory()->customer()->create(['company_id' => $company->id, 'display_name' => 'Acme Landscaping']);
+
+    $csv = "customer_display_name,document_no,balance\nAcme Landscaping,INV 27/10020,1250.00\n";
+
+    Livewire::test('pages::opening-balances.receivables', ['company' => $company])
+        ->set('importFile', UploadedFile::fake()->createWithContent('ar.csv', $csv))
+        ->call('previewImport')
+        ->assertHasNoErrors()
+        ->call('runImport');
+
+    expect(Invoice::query()->where('is_opening_balance', true)->value('invoice_no'))->toBe('INV 27/10020');
+});
+
+it('still imports opening customer balances without the optional column', function () {
+    $company = ($this->companyAs)(CompanyRole::Owner);
+    OpeningBalanceState::create(['company_id' => $company->id, 'as_of_date' => '2026-06-30']);
+    Contact::factory()->customer()->create(['company_id' => $company->id, 'display_name' => 'Acme Landscaping']);
+
+    $csv = "customer_display_name,balance\nAcme Landscaping,1250.00\n";
+
+    Livewire::test('pages::opening-balances.receivables', ['company' => $company])
+        ->set('importFile', UploadedFile::fake()->createWithContent('ar.csv', $csv))
+        ->call('previewImport')
+        ->assertHasNoErrors()
+        ->call('runImport');
+
+    expect((int) Invoice::query()->where('is_opening_balance', true)->value('total_cents'))->toBe(125000);
 });
 
 it('saves a vendor balance typed on the payables grid', function () {

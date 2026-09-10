@@ -56,7 +56,8 @@ class ChequeController extends ApiController
     }
 
     /**
-     * Only draft cheques are editable — ChequePoster has no repost path.
+     * Edit a cheque. Drafts are rebuilt in place; posted cheques are reposted
+     * (their GL entry rebuilt) via ChequePoster, mirroring the Livewire form.
      */
     public function update(UpdateChequeRequest $request, Cheque $cheque): ChequeResource
     {
@@ -64,17 +65,23 @@ class ChequeController extends ApiController
             $this->conflict('A voided cheque cannot be edited.');
         }
 
-        if ($cheque->journal_entry_id !== null) {
-            $this->conflict('This posted document cannot be edited; void and recreate.');
-        }
+        $wasPosted = $cheque->journal_entry_id !== null;
 
-        $cheque = app(SaveCheque::class)->handle($request->validated(), $cheque);
+        $cheque = $this->posting(function () use ($request, $cheque, $wasPosted): Cheque {
+            $cheque = app(SaveCheque::class)->handle($request->validated(), $cheque);
 
-        return new ChequeResource($cheque->fresh(['lines']));
+            if ($wasPosted) {
+                $this->poster->repost($cheque);
+            }
+
+            return $cheque->fresh(['lines']);
+        });
+
+        return new ChequeResource($cheque);
     }
 
     /**
-     * Post a draft cheque. Posted cheques have no repost path.
+     * Post a draft cheque. An already-posted cheque is edited via PATCH (repost).
      */
     public function post(Cheque $cheque): ChequeResource
     {
@@ -83,7 +90,7 @@ class ChequeController extends ApiController
         }
 
         if ($cheque->journal_entry_id !== null) {
-            $this->conflict('Cheque is already posted; void and recreate to change it.');
+            $this->conflict('Cheque is already posted; edit it with PATCH to change it.');
         }
 
         $cheque = $this->posting(function () use ($cheque): Cheque {

@@ -15,6 +15,7 @@ use App\Services\Audit\AuditMute;
 use App\Services\Currency\ExchangeRateService;
 use App\Services\Reconciliation\BankReconciliationLockGuard;
 use App\Services\Tax\TaxPeriodLockGuard;
+use App\Support\Banking\BankLineMemo;
 use App\Support\Currency;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Auth;
@@ -320,7 +321,7 @@ class ChequePoster
             'account_id' => $cheque->bank_account_id,
             'debit_cents' => 0,
             'credit_cents' => $bankHome,
-            'memo' => 'Cheque '.$cheque->cheque_no,
+            'memo' => BankLineMemo::forSource($cheque),
             'contact_id' => $cheque->payee_contact_id,
             'line_order' => $order++,
             ...Currency::lineMemo($currency, $rate, 0, $totalForeign),

@@ -12,6 +12,7 @@ use App\Models\JournalEntry;
 use App\Models\PayrollCheque;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
+use App\Support\Banking\BankLineMemo;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -77,7 +78,7 @@ class PayrollChequePoster
                 'account_id' => $cheque->bank_account_id,
                 'debit_cents' => 0,
                 'credit_cents' => (int) $cheque->amount_cents,
-                'memo' => 'Payroll cheque '.$cheque->cheque_no,
+                'memo' => BankLineMemo::forSource($cheque),
                 'contact_id' => $cheque->payee_contact_id,
                 'line_order' => 1,
             ]);

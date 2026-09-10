@@ -23,6 +23,7 @@ use App\Services\Banking\Import\BankRuleEngine;
 use App\Services\Banking\Import\OpenBillMatcher;
 use App\Services\Banking\Import\StatementImportCommitter;
 use App\Services\Classification\CategorySuggester;
+use App\Support\Banking\LastBankAccount;
 use App\Support\Money;
 use Flux\Flux;
 use Illuminate\Support\Collection;
@@ -73,13 +74,21 @@ new #[Title('Import statement')] class extends Component {
             ->orderBy('code')
             ->first();
 
-        $this->account_id = request('account') ? (int) request('account') : $first?->id;
+        // Reopen on the account this operator last worked in anywhere in
+        // Banking; fall back to the lowest-numbered active account.
+        $this->account_id = request('account')
+            ? (int) request('account')
+            : LastBankAccount::recall($company, $this->bankAccounts) ?? $first?->id;
+
+        LastBankAccount::remember($company, $this->account_id);
 
         $this->resumeLatestImport();
     }
 
     public function updatedAccountId(): void
     {
+        LastBankAccount::remember($this->company, $this->account_id);
+
         $this->reset('importId', 'upload', 'mapping', 'lineCategory', 'lineContact', 'lineBill', 'lineTax', 'editingLines', 'lineHint', 'saveProfile', 'profileName');
         $this->resumeLatestImport();
     }

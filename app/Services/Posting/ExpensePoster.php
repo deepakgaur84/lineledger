@@ -12,6 +12,7 @@ use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
 use App\Services\Currency\ExchangeRateService;
 use App\Services\Tax\TaxPeriodLockGuard;
+use App\Support\Banking\BankLineMemo;
 use App\Support\Currency;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Auth;
@@ -202,7 +203,7 @@ class ExpensePoster
             'account_id' => $expense->payment_account_id,
             'debit_cents' => 0,
             'credit_cents' => $payHome,
-            'memo' => $expense->reference ? 'Expense '.$expense->reference : 'Expense',
+            'memo' => BankLineMemo::forSource($expense),
             'contact_id' => $expense->payee_contact_id,
             'line_order' => $order++,
             ...Currency::lineMemo($currency, $rate, 0, $totalForeign),

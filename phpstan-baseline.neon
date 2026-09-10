@@ -3331,6 +3331,12 @@ parameters:
 			path: app/Services/Tax/TaxReturnFiler.php
 
 		-
+			message: '#^Strict comparison using \=\=\= between string and App\\Enums\\TaxReturnPaymentDirection\:\:Outgoing will always evaluate to false\.$#'
+			identifier: identical.alwaysFalse
+			count: 1
+			path: app/Support/Banking/BankLineMemo.php
+
+		-
 			message: '#^Strict comparison using \!\=\= between string and App\\Enums\\TaxReturnStatus\:\:Filed will always evaluate to true\.$#'
 			identifier: notIdentical.alwaysTrue
 			count: 1
