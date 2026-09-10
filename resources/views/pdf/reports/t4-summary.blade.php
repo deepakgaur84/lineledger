@@ -60,6 +60,6 @@
         Employer EI contributions: <strong>{{ $fmt($summary['employer_ei']) }}</strong>
     </p>
 
-    <div class="footer">Generated {{ \Carbon\CarbonImmutable::now()->format('Y-m-d H:i') }}. Figures from posted pay runs in {{ $year }}.</div>
+    <div class="footer">Generated {{ \App\Support\Reporting\GeneratedAt::label($company) }}. Figures from posted pay runs in {{ $year }}.</div>
 </body>
 </html>

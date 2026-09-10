@@ -22,7 +22,7 @@
     <div class="subtitle">{{ $company->name }} · {{ $agencyName }}</div>
     <div class="meta">
         Period: {{ $startDate }} → {{ $endDate }}<br>
-        Generated {{ \Carbon\CarbonImmutable::now()->format('Y-m-d H:i') }}
+        Generated {{ \App\Support\Reporting\GeneratedAt::label($company) }}
     </div>
 
     <table>

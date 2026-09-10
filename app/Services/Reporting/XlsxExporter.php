@@ -7,6 +7,7 @@ use App\Models\BankReconciliation;
 use App\Models\Company;
 use App\Models\Contact;
 use App\Models\ReportGroup;
+use App\Support\Reporting\GeneratedAt;
 use App\Support\Reporting\StatementLabels;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
@@ -2259,7 +2260,7 @@ class XlsxExporter
         $titleStyle = $this->makeStyle(bold: true, fontSize: 14);
         $generatedStyle = $this->makeStyle(italic: true, fontSize: 10, fontColor: '6B7280', alignment: CellAlignment::RIGHT);
 
-        $generatedAt = 'Generated '.CarbonImmutable::now()->format('Y-m-d H:i');
+        $generatedAt = 'Generated '.GeneratedAt::label();
 
         // First row: title in col 1, generation timestamp in last column
         $firstRowCells = [];

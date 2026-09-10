@@ -42,6 +42,6 @@
     @else
         <div class="footer" style="font-weight: bold;">COPIE DE TRAVAIL — NE PAS TRANSMETTRE / WORKING COPY — NOT FOR FILING. Un relevé 1 officiel sur papier exige un numéro d'autorisation de Revenu Québec (FS·······, RQ_AUTHORIZATION_NUMBER). Transmettez plutôt le fichier XML RL-1.</div>
     @endif
-    <div class="footer">Généré le {{ \Carbon\CarbonImmutable::now()->format('Y-m-d H:i') }}. Montants provenant des paies comptabilisées en {{ $year }}. Vérifiez les exigences de Revenu Québec avant l'émission.</div>
+    <div class="footer">Généré le {{ \App\Support\Reporting\GeneratedAt::label($company) }}. Montants provenant des paies comptabilisées en {{ $year }}. Vérifiez les exigences de Revenu Québec avant l'émission.</div>
 </body>
 </html>
