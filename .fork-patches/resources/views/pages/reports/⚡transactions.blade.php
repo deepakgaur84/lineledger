@@ -103,6 +103,23 @@ new #[Title('Transactions')] class extends Component {
         return $columns;
     }
 
+    /**
+     * columnVisible() (from HasColumnToggles) only checks whether the user
+     * explicitly hid a column — it does NOT verify the column actually
+     * exists in the current columnRegistry() output. For our conditionally
+     * registered columns (balance/source_*, which only exist when a
+     * matching account is filtered), that gap means columnVisible() returns
+     * true even when the column was never registered for this view — e.g.
+     * landing here from a P&L drill-down into a non-foreign-currency
+     * account still reported 'source_debit' as "visible", throwing an
+     * undefined-array-key error the moment the row tried to render it. This
+     * wrapper adds the missing existence check.
+     */
+    public function columnActuallyVisible(string $key): bool
+    {
+        return array_key_exists($key, $this->columnRegistry()) && $this->columnVisible($key);
+    }
+
     public function updated(string $property): void
     {
         if (in_array($property, ['accountId', 'contactId', 'startDate', 'endDate', 'preset', 'classId', 'locationId', 'groupBy', 'sourceType'], true)) {
@@ -731,14 +748,14 @@ new #[Title('Transactions')] class extends Component {
                     @endif
                     <th class="px-4 py-2 text-right">{{ __('Debit') }}</th>
                     <th class="px-4 py-2 text-right">{{ __('Credit') }}</th>
-                    @if ($this->columnVisible('balance'))
+                    @if ($this->columnActuallyVisible('balance'))
                         <th class="px-4 py-2 text-right">{{ __('Balance') }}</th>
                     @endif
-                    @if ($this->columnVisible('source_debit'))
+                    @if ($this->columnActuallyVisible('source_debit'))
                         <th class="px-4 py-2 text-right">{{ $this->columnRegistry()['source_debit'] }}</th>
                         <th class="px-4 py-2 text-right">{{ $this->columnRegistry()['source_credit'] }}</th>
                     @endif
-                    @if ($this->columnVisible('source_balance'))
+                    @if ($this->columnActuallyVisible('source_balance'))
                         <th class="px-4 py-2 text-right">{{ $this->columnRegistry()['source_balance'] }}</th>
                     @endif
                     <th class="px-4 py-2"></th>
@@ -751,11 +768,11 @@ new #[Title('Transactions')] class extends Component {
                     $pageLines = $this->lines->items();
                     $fullSpan = $this->visibleColumnCount(fixed: 5);
                 @endphp
-                @if ($this->columnVisible('balance') && $this->lines->currentPage() === 1)
+                @if ($this->columnActuallyVisible('balance') && $this->lines->currentPage() === 1)
                     <tr class="bg-muted/50" data-test="opening-balance-row">
-                        <td colspan="{{ $fullSpan - 2 - ($this->columnVisible('source_balance') ? 1 : 0) }}" class="px-4 py-2 text-right font-medium">{{ __('Opening Balance') }}</td>
+                        <td colspan="{{ $fullSpan - 2 - ($this->columnActuallyVisible('source_balance') ? 1 : 0) }}" class="px-4 py-2 text-right font-medium">{{ __('Opening Balance') }}</td>
                         <td class="px-4 py-2 text-right font-mono font-semibold">{{ number_format($this->openingHomeBalanceCents() / 100, 2) }}</td>
-                        @if ($this->columnVisible('source_balance'))
+                        @if ($this->columnActuallyVisible('source_balance'))
                             <td class="px-4 py-2 text-right font-mono font-semibold">{{ number_format($this->openingForeignBalanceCents() / 100, 2) }}</td>
                         @endif
                         <td class="px-4 py-2"></td>
@@ -803,7 +820,7 @@ new #[Title('Transactions')] class extends Component {
                         @endif
                         <td class="px-4 py-2 text-right font-mono">{{ $line->debit_cents ? number_format($line->debit_cents / 100, 2) : '' }}</td>
                         <td class="px-4 py-2 text-right font-mono">{{ $line->credit_cents ? number_format($line->credit_cents / 100, 2) : '' }}</td>
-                        @if ($this->columnVisible('balance'))
+                        @if ($this->columnActuallyVisible('balance'))
                             @php
                                 $runningHomeBalance += $this->filteredAccount()->normal_balance === NormalBalance::Debit
                                     ? (int) $line->debit_cents - (int) $line->credit_cents
@@ -811,11 +828,11 @@ new #[Title('Transactions')] class extends Component {
                             @endphp
                             <td class="px-4 py-2 text-right font-mono">{{ number_format($runningHomeBalance / 100, 2) }}</td>
                         @endif
-                        @if ($this->columnVisible('source_debit'))
+                        @if ($this->columnActuallyVisible('source_debit'))
                             <td class="px-4 py-2 text-right font-mono">{{ $line->foreign_debit_cents ? number_format($line->foreign_debit_cents / 100, 2) : '' }}</td>
                             <td class="px-4 py-2 text-right font-mono">{{ $line->foreign_credit_cents ? number_format($line->foreign_credit_cents / 100, 2) : '' }}</td>
                         @endif
-                        @if ($this->columnVisible('source_balance'))
+                        @if ($this->columnActuallyVisible('source_balance'))
                             @php
                                 $runningForeignBalance += (int) $line->foreign_debit_cents - (int) $line->foreign_credit_cents;
                             @endphp
@@ -842,11 +859,11 @@ new #[Title('Transactions')] class extends Component {
                 @empty
                     <tr><td colspan="{{ $fullSpan }}" class="px-4 py-6 text-center text-muted-foreground">{{ __('No transactions match these filters.') }}</td></tr>
                 @endforelse
-                @if ($this->columnVisible('balance') && $this->lines->currentPage() === $this->lines->lastPage())
+                @if ($this->columnActuallyVisible('balance') && $this->lines->currentPage() === $this->lines->lastPage())
                     <tr class="bg-muted/50 font-semibold" data-test="closing-balance-row">
-                        <td colspan="{{ $fullSpan - 2 - ($this->columnVisible('source_balance') ? 1 : 0) }}" class="px-4 py-2 text-right font-medium">{{ __('Closing Balance') }}</td>
+                        <td colspan="{{ $fullSpan - 2 - ($this->columnActuallyVisible('source_balance') ? 1 : 0) }}" class="px-4 py-2 text-right font-medium">{{ __('Closing Balance') }}</td>
                         <td class="px-4 py-2 text-right font-mono">{{ number_format($this->closingHomeBalanceCents() / 100, 2) }}</td>
-                        @if ($this->columnVisible('source_balance'))
+                        @if ($this->columnActuallyVisible('source_balance'))
                             <td class="px-4 py-2 text-right font-mono">{{ number_format($this->closingForeignBalanceCents() / 100, 2) }}</td>
                         @endif
                         <td class="px-4 py-2"></td>
