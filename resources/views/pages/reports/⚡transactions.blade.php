@@ -589,7 +589,6 @@ new #[Title('Transactions')] class extends Component {
             <tbody class="divide-y divide-border">
                 @php
                     $runningForeignBalance = $this->runningForeignBalanceBeforePage();
-                @endphp
                     $pageLines = $this->lines->items();
                     $fullSpan = $this->visibleColumnCount(fixed: 5);
                 @endphp
