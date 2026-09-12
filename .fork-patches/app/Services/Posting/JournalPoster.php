@@ -157,7 +157,7 @@ class JournalPoster
                         // wrong even though the home-currency side is correct.
                         ...Currency::lineMemo(
                             $line->currency_code,
-                            $line->fx_rate,
+                            $line->fx_rate !== null ? (string) $line->fx_rate : null,
                             (int) $line->foreign_credit_cents,
                             (int) $line->foreign_debit_cents,
                         ),
