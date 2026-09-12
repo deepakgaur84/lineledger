@@ -14,6 +14,17 @@ on:
     branches: [main]
   workflow_dispatch: {}
 
+# Two rapid pushes to main previously triggered two overlapping runs of this
+# workflow, which raced each other's checkout/copy/commit/push sequence and
+# corrupted a file (one run committed mid-write from the other). This queues
+# runs on the same ref sequentially instead of letting them overlap —
+# cancel-in-progress: false means a newer push waits for the current run to
+# finish rather than killing it mid-commit, which would risk the same kind
+# of corruption a different way.
+concurrency:
+  group: reapply-fork-patches-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
