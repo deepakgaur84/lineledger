@@ -6,6 +6,7 @@ use App\Concerns\HasCustomReportHeader;
 use App\Concerns\HasReportDateRange;
 use App\Concerns\HasReportDimensions;
 use App\Concerns\Memorizable;
+use App\Enums\NormalBalance;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\Contact;
@@ -79,6 +80,13 @@ new #[Title('Transactions')] class extends Component {
             'name' => __('Name'),
             'memo' => __('Memo'),
         ];
+
+        // Home-currency running balance: any single filtered account, any
+        // currency — a grouped/multi-account view has no one chronological
+        // line to run a balance down.
+        if ($this->filteredAccount() !== null && $this->groupBy === 'none') {
+            $columns['balance'] = __('Balance');
+        }
 
         if (($account = $this->foreignAccountFilter()) !== null) {
             $columns['source_debit'] = __('Debit (:currency)', ['currency' => $account->currency_code]);
@@ -158,6 +166,19 @@ new #[Title('Transactions')] class extends Component {
     }
 
     /**
+     * The filtered account, of any currency — gates the general home-currency
+     * running balance column, same scope as foreignAccountFilter but without
+     * the currency requirement. A balance is only meaningful for one specific
+     * account's chronological line of transactions, so grouped/multi-account
+     * views never show it.
+     */
+    #[Computed]
+    public function filteredAccount(): ?Account
+    {
+        return $this->accountId !== null ? Account::find($this->accountId) : null;
+    }
+
+    /**
      * The filtered account, when it's a genuine foreign-currency account —
      * gates the source-currency columns, same scope as Xero's own account
      * transaction report (which is always single-account). Grouped/multi-
@@ -167,11 +188,7 @@ new #[Title('Transactions')] class extends Component {
     #[Computed]
     public function foreignAccountFilter(): ?Account
     {
-        if ($this->accountId === null) {
-            return null;
-        }
-
-        $account = Account::find($this->accountId);
+        $account = $this->filteredAccount();
 
         return $account?->currency_code !== null ? $account : null;
     }
@@ -297,6 +314,117 @@ new #[Title('Transactions')] class extends Component {
     }
 
     /**
+     * Net home-currency movement on the filtered account, strictly before
+     * the report's start date, signed per the account's own normal balance
+     * (matches Account::recomputeBalance's convention) — the register's
+     * opening balance line. Null when no single account is being viewed.
+     */
+    #[Computed]
+    public function openingHomeBalanceCents(): ?int
+    {
+        $account = $this->filteredAccount();
+
+        if ($account === null) {
+            return null;
+        }
+
+        $totals = JournalLine::query()
+            ->where('is_posted', true)
+            ->where('account_id', $account->id)
+            ->where('entry_date', '<', $this->startDate)
+            ->selectRaw('COALESCE(SUM(debit_cents), 0) AS debits, COALESCE(SUM(credit_cents), 0) AS credits')
+            ->first();
+
+        $debits = (int) $totals->debits;
+        $credits = (int) $totals->credits;
+
+        return $account->normal_balance === NormalBalance::Debit
+            ? $debits - $credits
+            : $credits - $debits;
+    }
+
+    /**
+     * Running home-currency balance immediately before the current page's
+     * first row — same pagination-safe approach as
+     * runningForeignBalanceBeforePage, signed per the account's normal
+     * balance. Null outside the plain, ungrouped register view.
+     */
+    #[Computed]
+    public function runningHomeBalanceBeforePage(): ?int
+    {
+        $account = $this->filteredAccount();
+
+        if ($account === null || $this->groupBy !== 'none') {
+            return null;
+        }
+
+        $skip = max(0, ($this->lines->firstItem() ?? 1) - 1);
+
+        if ($skip === 0) {
+            return $this->openingHomeBalanceCents();
+        }
+
+        $priorTotals = $this->baseQuery()
+            ->orderBy('journal_lines.entry_date')
+            ->orderBy('journal_lines.id')
+            ->limit($skip)
+            ->selectRaw('COALESCE(SUM(debit_cents), 0) AS debits, COALESCE(SUM(credit_cents), 0) AS credits')
+            ->first();
+
+        $priorNet = $account->normal_balance === NormalBalance::Debit
+            ? (int) $priorTotals->debits - (int) $priorTotals->credits
+            : (int) $priorTotals->credits - (int) $priorTotals->debits;
+
+        return $this->openingHomeBalanceCents() + $priorNet;
+    }
+
+    /**
+     * The account's true home-currency balance as of the report's end date —
+     * independent of pagination, so it's correct however many pages the
+     * period spans. Null when no single account is being viewed.
+     */
+    #[Computed]
+    public function closingHomeBalanceCents(): ?int
+    {
+        $account = $this->filteredAccount();
+
+        if ($account === null) {
+            return null;
+        }
+
+        $totals = $this->baseQuery()
+            ->selectRaw('COALESCE(SUM(debit_cents), 0) AS debits, COALESCE(SUM(credit_cents), 0) AS credits')
+            ->first();
+
+        $periodNet = $account->normal_balance === NormalBalance::Debit
+            ? (int) $totals->debits - (int) $totals->credits
+            : (int) $totals->credits - (int) $totals->debits;
+
+        return $this->openingHomeBalanceCents() + $periodNet;
+    }
+
+    /**
+     * The foreign-currency closing balance as of the report's end date,
+     * mirroring closingHomeBalanceCents but for the source-currency amounts.
+     * Null unless a foreign-currency account is being viewed.
+     */
+    #[Computed]
+    public function closingForeignBalanceCents(): ?int
+    {
+        $account = $this->foreignAccountFilter();
+
+        if ($account === null) {
+            return null;
+        }
+
+        $periodNet = (int) $this->baseQuery()
+            ->selectRaw('COALESCE(SUM(foreign_debit_cents - foreign_credit_cents), 0) AS net')
+            ->value('net');
+
+        return $this->openingForeignBalanceCents() + $periodNet;
+    }
+
+    /**
      * @return LengthAwarePaginator<int, JournalLine>
      */
     #[Computed]
@@ -390,17 +518,20 @@ new #[Title('Transactions')] class extends Component {
      * stream to the download without materialising every line at once. When
      * grouping is on, each row gains a leading 'group' label; exports carry no
      * subtotal rows (follow-up) and all columns regardless of hidden columns.
-     * When filtered to a foreign-currency account, each row also carries its
-     * source-currency debit/credit and a running source balance — CSV and PDF
-     * exports render these; see columnRegistry for why this is account-scoped.
+     * When filtered to a single account, each row also carries a running
+     * home-currency balance; a foreign-currency account additionally carries
+     * its source-currency debit/credit and a running source balance — CSV and
+     * PDF exports render these; see columnRegistry for why this is account-scoped.
      *
-     * @return iterable<int, array{group?: string, date: string, entry_no: ?string, account: string, name: ?string, memo: ?string, debit: int, credit: int, source_debit?: int, source_credit?: int, source_balance?: int}>
+     * @return iterable<int, array{group?: string, date: string, entry_no: ?string, account: string, name: ?string, memo: ?string, debit: int, credit: int, balance?: int, source_debit?: int, source_credit?: int, source_balance?: int}>
      */
     private function exportRows(): iterable
     {
         $grouped = $this->groupBy !== 'none';
+        $account = $this->filteredAccount();
         $foreignAccount = $this->foreignAccountFilter();
-        $runningBalance = $foreignAccount !== null ? $this->openingForeignBalanceCents() : null;
+        $runningHomeBalance = $account !== null ? $this->openingHomeBalanceCents() : null;
+        $runningForeignBalance = $foreignAccount !== null ? $this->openingForeignBalanceCents() : null;
 
         foreach ($this->filteredQuery()->lazy() as $line) {
             $row = [
@@ -413,12 +544,20 @@ new #[Title('Transactions')] class extends Component {
                 'credit' => (int) $line->credit_cents,
             ];
 
+            if ($account !== null) {
+                $runningHomeBalance += $account->normal_balance === NormalBalance::Debit
+                    ? (int) $line->debit_cents - (int) $line->credit_cents
+                    : (int) $line->credit_cents - (int) $line->debit_cents;
+
+                $row['balance'] = $runningHomeBalance;
+            }
+
             if ($foreignAccount !== null) {
-                $runningBalance += (int) $line->foreign_debit_cents - (int) $line->foreign_credit_cents;
+                $runningForeignBalance += (int) $line->foreign_debit_cents - (int) $line->foreign_credit_cents;
 
                 $row['source_debit'] = (int) $line->foreign_debit_cents;
                 $row['source_credit'] = (int) $line->foreign_credit_cents;
-                $row['source_balance'] = $runningBalance;
+                $row['source_balance'] = $runningForeignBalance;
             }
 
             if ($grouped) {
@@ -437,9 +576,10 @@ new #[Title('Transactions')] class extends Component {
     public function exportCsv()
     {
         $grouped = $this->groupBy !== 'none';
+        $account = $this->filteredAccount();
         $foreignAccount = $this->foreignAccountFilter();
 
-        $rows = (function () use ($grouped, $foreignAccount) {
+        $rows = (function () use ($grouped, $account, $foreignAccount) {
             foreach ($this->exportRows() as $row) {
                 $cells = [
                     $row['date'],
@@ -450,6 +590,10 @@ new #[Title('Transactions')] class extends Component {
                     CsvExporter::cents($row['debit']),
                     CsvExporter::cents($row['credit']),
                 ];
+
+                if ($account !== null) {
+                    $cells[] = CsvExporter::cents($row['balance']);
+                }
 
                 if ($foreignAccount !== null) {
                     $cells[] = CsvExporter::cents($row['source_debit']);
@@ -466,6 +610,10 @@ new #[Title('Transactions')] class extends Component {
         })();
 
         $headers = ['Date', 'Entry #', 'Account', 'Name', 'Memo', 'Debit', 'Credit'];
+
+        if ($account !== null) {
+            $headers[] = 'Balance';
+        }
 
         if ($foreignAccount !== null) {
             $headers[] = "Debit ({$foreignAccount->currency_code})";
@@ -497,6 +645,8 @@ new #[Title('Transactions')] class extends Component {
     {
         // The PDF export stays ungrouped (flat rows; extra 'group' keys are
         // ignored by the template) — grouping is an on-screen + CSV/XLSX concern.
+        $account = $this->filteredAccount();
+
         return app(PdfExporter::class)->download('pdf.reports.transactions', [
             'company' => $this->company,
             'rows' => iterator_to_array($this->exportRows()),
@@ -504,6 +654,11 @@ new #[Title('Transactions')] class extends Component {
             'period' => $this->startDate.' to '.$this->endDate,
             'context' => $this->exportContext(),
             'foreignCurrency' => $this->foreignAccountFilter()?->currency_code,
+            'showBalance' => $account !== null,
+            'openingBalance' => $account !== null ? $this->openingHomeBalanceCents() : null,
+            'closingBalance' => $account !== null ? $this->closingHomeBalanceCents() : null,
+            'openingForeignBalance' => $this->openingForeignBalanceCents(),
+            'closingForeignBalance' => $this->closingForeignBalanceCents(),
         ], $this->exportFilename('pdf'));
     }
 
@@ -576,6 +731,9 @@ new #[Title('Transactions')] class extends Component {
                     @endif
                     <th class="px-4 py-2 text-right">{{ __('Debit') }}</th>
                     <th class="px-4 py-2 text-right">{{ __('Credit') }}</th>
+                    @if ($this->columnVisible('balance'))
+                        <th class="px-4 py-2 text-right">{{ __('Balance') }}</th>
+                    @endif
                     @if ($this->columnVisible('source_debit'))
                         <th class="px-4 py-2 text-right">{{ $this->columnRegistry()['source_debit'] }}</th>
                         <th class="px-4 py-2 text-right">{{ $this->columnRegistry()['source_credit'] }}</th>
@@ -589,9 +747,20 @@ new #[Title('Transactions')] class extends Component {
             <tbody class="divide-y divide-border">
                 @php
                     $runningForeignBalance = $this->runningForeignBalanceBeforePage();
+                    $runningHomeBalance = $this->runningHomeBalanceBeforePage();
                     $pageLines = $this->lines->items();
                     $fullSpan = $this->visibleColumnCount(fixed: 5);
                 @endphp
+                @if ($this->columnVisible('balance') && $this->lines->currentPage() === 1)
+                    <tr class="bg-muted/50" data-test="opening-balance-row">
+                        <td colspan="{{ $fullSpan - 2 - ($this->columnVisible('source_balance') ? 1 : 0) }}" class="px-4 py-2 text-right font-medium">{{ __('Opening Balance') }}</td>
+                        <td class="px-4 py-2 text-right font-mono font-semibold">{{ number_format($this->openingHomeBalanceCents() / 100, 2) }}</td>
+                        @if ($this->columnVisible('source_balance'))
+                            <td class="px-4 py-2 text-right font-mono font-semibold">{{ number_format($this->openingForeignBalanceCents() / 100, 2) }}</td>
+                        @endif
+                        <td class="px-4 py-2"></td>
+                    </tr>
+                @endif
                 @forelse ($pageLines as $i => $line)
                     @php
                         $url = $this->sourceUrl($line->journalEntry);
@@ -634,6 +803,14 @@ new #[Title('Transactions')] class extends Component {
                         @endif
                         <td class="px-4 py-2 text-right font-mono">{{ $line->debit_cents ? number_format($line->debit_cents / 100, 2) : '' }}</td>
                         <td class="px-4 py-2 text-right font-mono">{{ $line->credit_cents ? number_format($line->credit_cents / 100, 2) : '' }}</td>
+                        @if ($this->columnVisible('balance'))
+                            @php
+                                $runningHomeBalance += $this->filteredAccount()->normal_balance === NormalBalance::Debit
+                                    ? (int) $line->debit_cents - (int) $line->credit_cents
+                                    : (int) $line->credit_cents - (int) $line->debit_cents;
+                            @endphp
+                            <td class="px-4 py-2 text-right font-mono">{{ number_format($runningHomeBalance / 100, 2) }}</td>
+                        @endif
                         @if ($this->columnVisible('source_debit'))
                             <td class="px-4 py-2 text-right font-mono">{{ $line->foreign_debit_cents ? number_format($line->foreign_debit_cents / 100, 2) : '' }}</td>
                             <td class="px-4 py-2 text-right font-mono">{{ $line->foreign_credit_cents ? number_format($line->foreign_credit_cents / 100, 2) : '' }}</td>
@@ -665,6 +842,16 @@ new #[Title('Transactions')] class extends Component {
                 @empty
                     <tr><td colspan="{{ $fullSpan }}" class="px-4 py-6 text-center text-muted-foreground">{{ __('No transactions match these filters.') }}</td></tr>
                 @endforelse
+                @if ($this->columnVisible('balance') && $this->lines->currentPage() === $this->lines->lastPage())
+                    <tr class="bg-muted/50 font-semibold" data-test="closing-balance-row">
+                        <td colspan="{{ $fullSpan - 2 - ($this->columnVisible('source_balance') ? 1 : 0) }}" class="px-4 py-2 text-right font-medium">{{ __('Closing Balance') }}</td>
+                        <td class="px-4 py-2 text-right font-mono">{{ number_format($this->closingHomeBalanceCents() / 100, 2) }}</td>
+                        @if ($this->columnVisible('source_balance'))
+                            <td class="px-4 py-2 text-right font-mono">{{ number_format($this->closingForeignBalanceCents() / 100, 2) }}</td>
+                        @endif
+                        <td class="px-4 py-2"></td>
+                    </tr>
+                @endif
             </tbody>
         </table>
     </div>
