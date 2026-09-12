@@ -12,6 +12,16 @@ on:
       - '.github/workflows/docker.yml'
   workflow_dispatch:
 
+# A normal commit is often followed within seconds by reapply-fork-patches'
+# own bot commit, and each build here takes several minutes — without this,
+# two overlapping runs could finish out of order, with the older commit's
+# build publishing :edge *after* the newer one and silently overwriting it
+# with stale content. Queuing (not cancelling) keeps builds strictly in push
+# order, so the run for the newest commit always finishes and publishes last.
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
   packages: write
