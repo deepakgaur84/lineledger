@@ -3,7 +3,6 @@
 use App\Enums\AccountSubtype;
 use App\Enums\AccountType;
 use App\Enums\BillStatus;
-use App\Enums\ChequeStatus;
 use App\Enums\DataMigrationMode;
 use App\Enums\DataMigrationStatus;
 use App\Enums\InvoiceStatus;
@@ -22,6 +21,7 @@ use App\Models\Invoice;
 use App\Models\JournalEntry;
 use App\Services\Migration\ImportContext;
 use App\Services\Migration\Importers\GeneralLedgerReplayImporter;
+use App\Services\Migration\QuickBooksDocumentReconstructor;
 use App\Services\Migration\QuickBooksMigrationService;
 use Carbon\CarbonImmutable;
 
@@ -264,17 +264,12 @@ it('uniquifies duplicate QuickBooks document numbers', function () {
 });
 
 it('still posts the journal entry when document reconstruction fails', function () {
-    // A pre-existing cheque occupies the number the import will try to reuse, so the
-    // cheque reconstruction will hit the unique constraint and fail.
-    Cheque::withoutGlobalScopes()->create([
-        'company_id' => $this->company->id,
-        'bank_account_id' => $this->bank->id,
-        'cheque_no' => '999',
-        'cheque_date' => '2024-01-01',
-        'payee_name' => 'Existing',
-        'amount_cents' => 100,
-        'status' => ChequeStatus::Posted,
-    ]);
+    // Reconstruction is best-effort: whatever goes wrong building the document,
+    // the replayed GL entry has to survive it. Stand in a reconstructor that
+    // throws, so the test exercises the guarantee rather than one instance of it.
+    $this->mock(QuickBooksDocumentReconstructor::class)
+        ->shouldReceive('build')
+        ->andThrow(new RuntimeException('reconstruction failed'));
 
     ($this->import)(
         "trans_no,type,date,num,name,memo,account,debit,credit\n"
@@ -282,8 +277,8 @@ it('still posts the journal entry when document reconstruction fails', function 
         .",,,,,,{$this->bank->name},,200.00\n"
     );
 
-    // No new cheque document (reconstruction failed), but the GL entry still posted.
-    expect(Cheque::withoutGlobalScopes()->where('company_id', $this->company->id)->count())->toBe(1);
+    // No cheque document (reconstruction failed), but the GL entry still posted.
+    expect(Cheque::withoutGlobalScopes()->where('company_id', $this->company->id)->count())->toBe(0);
     $this->bank->recomputeBalance();
     expect((int) $this->bank->balance_cents)->toBe(-20000); // bank credited $200
 });

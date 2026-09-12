@@ -27,7 +27,7 @@
     <div class="subtitle">{{ $company->name }}</div>
     <div class="meta">
         Remitting period: {{ $periodLabel }}<br>
-        Generated {{ \Carbon\CarbonImmutable::now()->format('Y-m-d H:i') }}
+        Generated {{ \App\Support\Reporting\GeneratedAt::label($company) }}
     </div>
 
     <table class="summary">

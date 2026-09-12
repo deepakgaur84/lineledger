@@ -68,6 +68,6 @@
     @if ($facsimile ?? false)
         <div class="footer" style="font-weight: bold;">FACSIMILE — the official CRA {{ $year }} T4 template is not installed. Box figures are identical to the official form; install a flattened copy of the fillable T4 at storage/app/slip-templates/{{ $year }}/t4.pdf to print on the CRA form.</div>
     @endif
-    <div class="footer">Generated {{ \Carbon\CarbonImmutable::now()->format('Y-m-d H:i') }}. Figures from posted pay runs in {{ $year }}. Verify against CRA requirements before issuing.</div>
+    <div class="footer">Generated {{ \App\Support\Reporting\GeneratedAt::label($company) }}. Figures from posted pay runs in {{ $year }}. Verify against CRA requirements before issuing.</div>
 </body>
 </html>

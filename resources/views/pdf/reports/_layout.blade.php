@@ -39,7 +39,7 @@
                 @endisset
             </td>
             <td class="generated" style="width: 30%;">
-                Generated<br>{{ \Carbon\CarbonImmutable::now()->format('Y-m-d H:i') }}
+                Generated<br>{{ \App\Support\Reporting\GeneratedAt::label($company) }}
             </td>
         </tr>
     </table>

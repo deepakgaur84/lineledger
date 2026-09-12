@@ -170,19 +170,22 @@ it('creates a deposit in transit as DR Bank / CR OBE with an OBD number', functi
     expect($entry->lines->firstWhere('account_id', $this->obe->id)->credit_cents)->toBe(5000);
 });
 
-it('rejects a duplicate cheque number on the same bank account', function () {
+it('carries over two outstanding cheques sharing a number', function () {
+    // "DD" and friends stand in for a number on electronic payments, so the same
+    // label can be outstanding twice at conversion.
     $data = [
         'bank_account_id' => $this->bank->id,
-        'cheque_no' => '4021',
+        'cheque_no' => 'DD',
         'cheque_date' => CarbonImmutable::parse('2026-05-14'),
         'payee_name' => 'Acme Roofing',
         'amount_cents' => 20000,
     ];
 
-    chequeSync()->create($this->state, $data);
+    $first = chequeSync()->create($this->state, $data);
+    $second = chequeSync()->create($this->state, [...$data, 'amount_cents' => 15000]);
 
-    expect(fn () => chequeSync()->create($this->state, $data))
-        ->toThrow(RuntimeException::class, 'already used');
+    expect($second->id)->not->toBe($first->id)
+        ->and(Cheque::query()->where('cheque_no', 'DD')->count())->toBe(2);
 });
 
 it('rejects a non-opening cheque and a non-bank account', function () {

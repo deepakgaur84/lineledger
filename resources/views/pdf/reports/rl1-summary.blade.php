@@ -71,6 +71,6 @@
         </div>
     @endif
 
-    <div class="footer">Généré le {{ \Carbon\CarbonImmutable::now()->format('Y-m-d H:i') }}. Montants provenant des paies comptabilisées en {{ $year }}.</div>
+    <div class="footer">Généré le {{ \App\Support\Reporting\GeneratedAt::label($company) }}. Montants provenant des paies comptabilisées en {{ $year }}.</div>
 </body>
 </html>

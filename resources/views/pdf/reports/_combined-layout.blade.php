@@ -32,7 +32,7 @@
                 <div class="subtitle">{{ $group->name }} · {{ $group->currency_code }}{{ isset($period) ? ' · '.$period : '' }}</div>
             </td>
             <td class="generated" style="width: 30%;">
-                Generated<br>{{ \Carbon\CarbonImmutable::now()->format('Y-m-d H:i') }}
+                Generated<br>{{ \App\Support\Reporting\GeneratedAt::label() }}
             </td>
         </tr>
     </table>

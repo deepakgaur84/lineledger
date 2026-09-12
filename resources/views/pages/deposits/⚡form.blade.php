@@ -16,9 +16,13 @@ use App\Models\SalesReceipt;
 use App\Rules\MoneyString;
 use App\Services\Posting\DepositPoster;
 use App\Services\Posting\DocumentNumberGenerator;
+use App\Services\Reporting\CsvExporter;
+use App\Services\Reporting\PdfExporter;
+use App\Services\Reporting\XlsxExporter;
 use App\Support\Banking\LastBankAccount;
 use App\Support\Money;
 use Flux\Flux;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
@@ -46,7 +50,7 @@ new #[Title('Make deposit')] class extends Component
     /**
      * Receipts available for deposit: keyed by receipt_id → include
      *
-     * @var array<int, array{receipt_id: int, date: string, contact: string, amount: int, included: bool}>
+     * @var array<int, array{source: string, receipt_id: int, date: string, receipt_no: string, contact: string, payment_method: ?string, reference: ?string, amount: int, included: bool}>
      */
     public array $availableReceipts = [];
 
@@ -283,6 +287,138 @@ new #[Title('Make deposit')] class extends Component
         }
 
         unset($this->allReceiptsSelected);
+    }
+
+    /**
+     * The picker's rows in the order they are displayed. Every export reads
+     * this, so a downloaded copy matches the sort the operator is looking at
+     * — and carries the tick state, which is what makes it a deposit slip.
+     *
+     * @return Collection<int, array<string, mixed>>
+     */
+    protected function orderedReceipts(): Collection
+    {
+        $rows = [];
+
+        foreach ($this->receiptOrder as $i) {
+            if (isset($this->availableReceipts[$i])) {
+                $rows[] = $this->availableReceipts[$i];
+            }
+        }
+
+        return collect($rows);
+    }
+
+    /** Export filename, dated by the deposit being prepared. */
+    protected function exportFilename(string $extension): string
+    {
+        $date = $this->deposit_date !== '' ? $this->deposit_date : $this->company->currentDateTime()->toDateString();
+
+        return 'undeposited-receipts-'.$date.'.'.$extension;
+    }
+
+    /** @return array<int, string> */
+    protected function exportHeaders(): array
+    {
+        return [__('Selected'), __('Date'), __('Receipt #'), __('From'), __('Payment type'), __('Ref'), __('Amount')];
+    }
+
+    /** Bank and selection summary printed under the title on XLSX/PDF. */
+    protected function exportMetaLines(): array
+    {
+        $rows = $this->orderedReceipts();
+        $selected = $rows->where('included', true);
+        $bank = $this->bankAccounts->firstWhere('id', (int) $this->bank_account_id);
+
+        return array_values(array_filter([
+            $bank ? __('Deposit to: :account', ['account' => $bank->code.' — '.$bank->name]) : null,
+            __(':selected of :total selected · :amount', [
+                'selected' => $selected->count(),
+                'total' => $rows->count(),
+                'amount' => number_format((int) $selected->sum('amount') / 100, 2),
+            ]),
+        ]));
+    }
+
+    public function exportCsv()
+    {
+        $rows = $this->orderedReceipts();
+
+        return app(CsvExporter::class)->stream(
+            $this->exportFilename('csv'),
+            $this->exportHeaders(),
+            $rows->map(fn (array $r) => [
+                $r['included'] ? __('Yes') : __('No'),
+                $r['date'],
+                $r['receipt_no'],
+                $r['contact'],
+                $r['payment_method'] ?? '',
+                $r['reference'] ?? '',
+                CsvExporter::cents((int) $r['amount']),
+            ])->push(['', '', '', '', '', __('TOTAL'), CsvExporter::cents((int) $rows->sum('amount'))]),
+        );
+    }
+
+    public function exportXlsx()
+    {
+        $rows = $this->orderedReceipts();
+
+        return app(XlsxExporter::class)->listTable(
+            $this->exportFilename('xlsx'),
+            'Undeposited receipts',
+            __('Undeposited receipts'),
+            $this->company,
+            $this->exportMetaLines(),
+            $this->exportHeaders(),
+            $rows->map(fn (array $r) => [
+                $r['included'] ? __('Yes') : __('No'),
+                $r['date'],
+                $r['receipt_no'],
+                $r['contact'],
+                $r['payment_method'] ?? '',
+                $r['reference'] ?? '',
+                (int) $r['amount'],
+            ])->all(),
+            moneyColumns: [7],
+            columnWidths: [1 => 10, 2 => 12, 3 => 18, 4 => 32, 5 => 18, 6 => 16, 7 => 14],
+            totals: ['', '', '', '', '', __('TOTAL'), (int) $rows->sum('amount')],
+        );
+    }
+
+    public function exportPdf()
+    {
+        $rows = $this->orderedReceipts();
+
+        return app(PdfExporter::class)->download('pdf.reports.list-table', [
+            'company' => $this->company,
+            'title' => __('Undeposited receipts'),
+            'period' => __('as of :date', ['date' => $this->deposit_date]),
+            'metaLines' => $this->exportMetaLines(),
+            'headers' => [
+                ['label' => __('Selected')],
+                ['label' => __('Date')],
+                ['label' => __('Receipt #')],
+                ['label' => __('From')],
+                ['label' => __('Payment type')],
+                ['label' => __('Ref')],
+                ['label' => __('Amount'), 'num' => true],
+            ],
+            'rows' => $rows->map(fn (array $r) => [
+                ['value' => $r['included'] ? __('Yes') : __('No')],
+                ['value' => $r['date']],
+                ['value' => $r['receipt_no']],
+                ['value' => $r['contact']],
+                ['value' => $r['payment_method'] ?? '—'],
+                ['value' => $r['reference'] ?? ''],
+                ['value' => number_format((int) $r['amount'] / 100, 2), 'num' => true],
+            ])->all(),
+            'totals' => [
+                ['value' => ''], ['value' => ''], ['value' => ''], ['value' => ''], ['value' => ''],
+                ['value' => __('TOTAL')],
+                ['value' => number_format((int) $rows->sum('amount') / 100, 2), 'num' => true],
+            ],
+            'emptyMessage' => __('No undeposited receipts.'),
+        ], $this->exportFilename('pdf'));
     }
 
     public function addOtherLine(): void
@@ -561,7 +697,23 @@ new #[Title('Make deposit')] class extends Component
         <flux:input wire:model="memo" :label="__('Memo')" />
 
         <div>
-            <flux:heading class="mb-2">{{ __('Undeposited receipts') }}</flux:heading>
+            <div class="mb-2 flex items-center justify-between gap-2">
+                <flux:heading>{{ __('Undeposited receipts') }}</flux:heading>
+
+                @if (! empty($availableReceipts))
+                    <flux:dropdown align="end">
+                        <flux:button size="sm" variant="filled" icon="arrow-down-tray" icon:trailing="chevron-down" data-test="export-receipts-menu">
+                            {{ __('Export') }}
+                        </flux:button>
+                        <flux:menu>
+                            <flux:menu.item icon="document" wire:click="exportPdf" data-test="export-receipts-pdf">{{ __('PDF') }}</flux:menu.item>
+                            <flux:menu.item icon="document-text" wire:click="exportCsv" data-test="export-receipts-csv">{{ __('CSV') }}</flux:menu.item>
+                            <flux:menu.item icon="table-cells" wire:click="exportXlsx" data-test="export-receipts-xlsx">{{ __('Excel') }}</flux:menu.item>
+                        </flux:menu>
+                    </flux:dropdown>
+                @endif
+            </div>
+
             @if (empty($availableReceipts))
                 <flux:text class="py-4 text-center text-muted-foreground">{{ __('No undeposited receipts.') }}</flux:text>
             @else

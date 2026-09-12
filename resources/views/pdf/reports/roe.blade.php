@@ -53,6 +53,6 @@
         </tfoot>
     </table>
 
-    <div class="footer">Generated {{ \Carbon\CarbonImmutable::now()->format('Y-m-d H:i') }}. Transcribe into Service Canada ROE Web. Electronic submission is not provided.</div>
+    <div class="footer">Generated {{ \App\Support\Reporting\GeneratedAt::label($company) }}. Transcribe into Service Canada ROE Web. Electronic submission is not provided.</div>
 </body>
 </html>

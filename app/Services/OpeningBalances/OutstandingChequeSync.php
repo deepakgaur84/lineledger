@@ -44,18 +44,6 @@ class OutstandingChequeSync
             throw new RuntimeException('Cheque amount must be greater than zero.');
         }
 
-        // Friendlier than the unique-index violation it prevents. The index
-        // spans voided and soft-deleted rows too, so check the same way.
-        $duplicate = Cheque::withoutGlobalScopes()->withTrashed()
-            ->where('company_id', $state->company_id)
-            ->where('bank_account_id', $bank->id)
-            ->where('cheque_no', $data['cheque_no'])
-            ->exists();
-
-        if ($duplicate) {
-            throw new RuntimeException("Cheque number {$data['cheque_no']} is already used on {$bank->name}.");
-        }
-
         $cheque = DB::transaction(function () use ($state, $data, $bank, $obe): Cheque {
             $cheque = Cheque::create([
                 'company_id' => $state->company_id,
