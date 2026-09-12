@@ -6,6 +6,7 @@ use App\Concerns\HasCustomReportHeader;
 use App\Concerns\HasReportDateRange;
 use App\Concerns\HasReportDimensions;
 use App\Concerns\Memorizable;
+use App\Enums\AccountType;
 use App\Enums\NormalBalance;
 use App\Models\Account;
 use App\Models\Company;
@@ -189,10 +190,28 @@ new #[Title('Transactions')] class extends Component {
      * account's chronological line of transactions, so grouped/multi-account
      * views never show it.
      */
+    /**
+     * The filtered account, restricted to balance sheet types (asset,
+     * liability, equity) — gates the general home-currency running balance
+     * column. Income/expense accounts are deliberately excluded: they're
+     * flow accounts measured per period, not accounts with a balance
+     * meaningfully carried forward across arbitrary date ranges (this
+     * showed up as opening/closing balances appearing on P&L accounts
+     * drilled into from the Income Statement, which isn't a real concept
+     * in standard accounting — an expense account has no "opening balance").
+     */
     #[Computed]
     public function filteredAccount(): ?Account
     {
-        return $this->accountId !== null ? Account::find($this->accountId) : null;
+        if ($this->accountId === null) {
+            return null;
+        }
+
+        $account = Account::find($this->accountId);
+
+        return $account !== null && ! in_array($account->type, [AccountType::Income, AccountType::Expense], true)
+            ? $account
+            : null;
     }
 
     /**
