@@ -2,6 +2,7 @@
 
 namespace App\Actions\Payroll;
 
+use App\Actions\Inventory\EnsureInventoryAccounts;
 use App\Enums\AccountSubtype;
 use App\Models\Account;
 use App\Models\Company;
@@ -12,7 +13,7 @@ use App\Models\Company;
  * Account::scopeEmployeeReimbursementsPayable). The setup wizard seeds this only
  * when the employees feature is selected (ChartTemplateBuilder::FEATURE_GATED_CORE);
  * this backfills it when employees is enabled later on a company that lacks it —
- * mirrors {@see \App\Actions\Inventory\EnsureInventoryAccounts}. Idempotent:
+ * mirrors {@see EnsureInventoryAccounts}. Idempotent:
  * matches by name + subtype before creating (the same identity
  * scopeEmployeeReimbursementsPayable looks up by), so calling this on a company
  * that already has the account is a harmless no-op. Returns the number of
