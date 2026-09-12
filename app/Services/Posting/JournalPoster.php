@@ -11,6 +11,7 @@ use App\Models\JournalEntry;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
 use App\Services\Reconciliation\BankReconciliationLockGuard;
+use App\Support\Currency;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -149,6 +150,17 @@ class JournalPoster
                         'class_id' => $line->class_id,
                         'location_id' => $line->location_id,
                         'fund_id' => $line->fund_id,
+                        // Mirror the home-currency debit/credit swap on the
+                        // foreign side too — otherwise a reversal of any
+                        // foreign-currency line silently drops its foreign
+                        // amount, leaving the void's foreign-balance effect
+                        // wrong even though the home-currency side is correct.
+                        ...Currency::lineMemo(
+                            $line->currency_code,
+                            $line->fx_rate,
+                            (int) $line->foreign_credit_cents,
+                            (int) $line->foreign_debit_cents,
+                        ),
                     ]);
                 }
             });
