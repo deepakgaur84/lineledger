@@ -18,7 +18,7 @@ use App\Models\Company;
  * business rules (including currency handling) as one entered by hand.
  *
  * To add a new entity type: implement this interface, call the real
- * Save*/Store* action in commit(), and register the class in
+ * Save or Store action in commit(), and register the class in
  * BulkImportRegistry::all().
  */
 interface ImporterDefinition
