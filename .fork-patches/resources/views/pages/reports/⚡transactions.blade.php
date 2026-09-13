@@ -564,8 +564,12 @@ new #[Title('Transactions')] class extends Component {
     private function exportRows(): iterable
     {
         $grouped = $this->groupBy !== 'none';
-        $account = $this->filteredAccount();
-        $foreignAccount = $this->foreignAccountFilter();
+        // A running balance split across groups isn't a coherent thing to
+        // show, same reasoning as the on-screen view (see columnRegistry) —
+        // exports drop the balance columns entirely once grouping is on,
+        // rather than showing a balance that resets or runs oddly per group.
+        $account = $grouped ? null : $this->filteredAccount();
+        $foreignAccount = $grouped ? null : $this->foreignAccountFilter();
         $runningHomeBalance = $account !== null ? $this->openingHomeBalanceCents() : null;
         $runningForeignBalance = $foreignAccount !== null ? $this->openingForeignBalanceCents() : null;
 
@@ -612,8 +616,8 @@ new #[Title('Transactions')] class extends Component {
     public function exportCsv()
     {
         $grouped = $this->groupBy !== 'none';
-        $account = $this->filteredAccount();
-        $foreignAccount = $this->foreignAccountFilter();
+        $account = $grouped ? null : $this->filteredAccount();
+        $foreignAccount = $grouped ? null : $this->foreignAccountFilter();
 
         $rows = (function () use ($grouped, $account, $foreignAccount) {
             foreach ($this->exportRows() as $row) {
@@ -666,6 +670,10 @@ new #[Title('Transactions')] class extends Component {
 
     public function exportXlsx()
     {
+        $grouped = $this->groupBy !== 'none';
+        $account = $grouped ? null : $this->filteredAccount();
+        $foreignAccount = $grouped ? null : $this->foreignAccountFilter();
+
         return app(XlsxExporter::class)->transactions(
             $this->exportFilename('xlsx'),
             $this->company,
@@ -673,15 +681,27 @@ new #[Title('Transactions')] class extends Component {
             $this->startDate,
             $this->endDate,
             $this->exportContext(),
-            grouped: $this->groupBy !== 'none',
+            grouped: $grouped,
+            foreignCurrency: $foreignAccount?->currency_code,
+            openingBalance: $account !== null ? $this->openingHomeBalanceCents() : null,
+            closingBalance: $account !== null ? $this->closingHomeBalanceCents() : null,
+            openingForeignBalance: $foreignAccount !== null ? $this->openingForeignBalanceCents() : null,
+            closingForeignBalance: $foreignAccount !== null ? $this->closingForeignBalanceCents() : null,
         );
     }
 
     public function exportPdf()
     {
         // The PDF export stays ungrouped (flat rows; extra 'group' keys are
-        // ignored by the template) — grouping is an on-screen + CSV/XLSX concern.
-        $account = $this->filteredAccount();
+        // ignored by the template) — grouping is an on-screen + CSV/XLSX
+        // concern. It still inherits exportRows()'s own grouped-vs-not gate
+        // on the balance columns though, since it consumes exportRows()
+        // directly: if groupBy is active, those keys genuinely aren't in
+        // the row data, so the flags below must agree or the template
+        // would try to read a key that was never set.
+        $grouped = $this->groupBy !== 'none';
+        $account = $grouped ? null : $this->filteredAccount();
+        $foreignAccount = $grouped ? null : $this->foreignAccountFilter();
 
         return app(PdfExporter::class)->download('pdf.reports.transactions', [
             'company' => $this->company,
@@ -689,12 +709,12 @@ new #[Title('Transactions')] class extends Component {
             'title' => $this->effectiveTitle('Transactions'),
             'period' => $this->startDate.' to '.$this->endDate,
             'context' => $this->exportContext(),
-            'foreignCurrency' => $this->foreignAccountFilter()?->currency_code,
+            'foreignCurrency' => $foreignAccount?->currency_code,
             'showBalance' => $account !== null,
             'openingBalance' => $account !== null ? $this->openingHomeBalanceCents() : null,
             'closingBalance' => $account !== null ? $this->closingHomeBalanceCents() : null,
-            'openingForeignBalance' => $this->openingForeignBalanceCents(),
-            'closingForeignBalance' => $this->closingForeignBalanceCents(),
+            'openingForeignBalance' => $foreignAccount !== null ? $this->openingForeignBalanceCents() : null,
+            'closingForeignBalance' => $foreignAccount !== null ? $this->closingForeignBalanceCents() : null,
         ], $this->exportFilename('pdf'));
     }
 
