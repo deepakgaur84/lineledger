@@ -1689,17 +1689,38 @@ class XlsxExporter
      * Posted journal lines behind a figure (QuickZoom drill target). `$rows` may
      * be a lazy generator; it is iterated exactly once so the full range never
      * materialises. When $grouped, each row carries a leading 'group' label
-     * column (flat rows, no subtotal rows).
+     * column (flat rows, no subtotal rows). When $openingBalance is non-null
+     * (a single balance-sheet account is filtered — see the report's own
+     * filteredAccount()), each row also carries a running home-currency
+     * balance, with Opening/Closing Balance rows bracketing the data; a
+     * foreign-currency account additionally carries source-currency
+     * debit/credit/balance columns.
      *
-     * @param  iterable<int, array{group?: string, date: string, entry_no: ?string, account: string, name: ?string, memo: ?string, debit: int, credit: int}>  $rows
+     * @param  iterable<int, array{group?: string, date: string, entry_no: ?string, account: string, name: ?string, memo: ?string, debit: int, credit: int, balance?: int, source_debit?: int, source_credit?: int, source_balance?: int}>  $rows
      */
-    public function transactions(string $filename, Company $company, iterable $rows, string $startDate, string $endDate, ?string $context = null, bool $grouped = false): BinaryFileResponse
-    {
-        return $this->buildAndStream($filename, function (Writer $writer) use ($company, $rows, $startDate, $endDate, $context, $grouped) {
+    public function transactions(
+        string $filename,
+        Company $company,
+        iterable $rows,
+        string $startDate,
+        string $endDate,
+        ?string $context = null,
+        bool $grouped = false,
+        ?string $foreignCurrency = null,
+        ?int $openingBalance = null,
+        ?int $closingBalance = null,
+        ?int $openingForeignBalance = null,
+        ?int $closingForeignBalance = null,
+    ): BinaryFileResponse {
+        return $this->buildAndStream($filename, function (Writer $writer) use ($company, $rows, $startDate, $endDate, $context, $grouped, $foreignCurrency, $openingBalance, $closingBalance, $openingForeignBalance, $closingForeignBalance) {
             $sheet = $writer->getCurrentSheet();
             $sheet->setName('Transactions');
 
             $offset = $grouped ? 1 : 0;
+            $hasBalance = $openingBalance !== null;
+            $isForeign = $foreignCurrency !== null;
+            $extraCols = ($hasBalance ? 1 : 0) + ($isForeign ? 3 : 0);
+            $totalCols = 7 + $offset + $extraCols;
 
             if ($grouped) {
                 $sheet->setColumnWidth(28, 1);
@@ -1708,14 +1729,24 @@ class XlsxExporter
             $sheet->setColumnWidth(14, 2 + $offset);
             $sheet->setColumnWidth(36, 3 + $offset, 4 + $offset);
             $sheet->setColumnWidth(40, 5 + $offset);
-            $sheet->setColumnWidth(16, 6 + $offset, 7 + $offset);
+            $sheet->setColumnWidth(16, 6 + $offset, 7 + $offset + $extraCols);
 
             $headerRowsUsed = $this->writeReportHeader($writer, 'Transactions', $company->name, [
                 $context,
                 'Period: '.$startDate.' to '.$endDate,
-            ], totalColumns: 7 + $offset);
+            ], totalColumns: $totalCols);
 
             $columnHeaders = ['Date', 'Entry #', 'Account', 'Name', 'Memo', 'Debit', 'Credit'];
+
+            if ($hasBalance) {
+                $columnHeaders[] = 'Balance';
+            }
+
+            if ($isForeign) {
+                $columnHeaders[] = "Debit ({$foreignCurrency})";
+                $columnHeaders[] = "Credit ({$foreignCurrency})";
+                $columnHeaders[] = "Balance ({$foreignCurrency})";
+            }
 
             if ($grouped) {
                 array_unshift($columnHeaders, 'Group');
@@ -1731,7 +1762,27 @@ class XlsxExporter
             $moneyStyle = $this->makeStyle(format: self::MONEY_FORMAT);
             $firstDataRow = $columnHeaderRow + 1;
 
-            $rowIndex = $columnHeaderRow;
+            if ($hasBalance) {
+                // hasBalance is only ever true when $offset is 0 (balance
+                // columns are unavailable whenever grouping is on — see
+                // exportRows()), so these are fixed column positions, not
+                // offset-relative: 1=label, 2-7=Entry#/Account/Name/Memo/
+                // Debit/Credit (blank), 8=home balance, 9-10=FC debit/credit
+                // (blank, if foreign), 11=FC balance (if foreign).
+                $openingValues = array_merge(
+                    ['Opening Balance'],
+                    array_fill(0, 6, ''),
+                    [$openingBalance / 100],
+                    $isForeign ? array_merge(array_fill(0, 2, ''), [$openingForeignBalance / 100]) : [],
+                );
+                $this->writeTotalsRow($writer, $openingValues, moneyColumns: array_filter([
+                    8,
+                    $isForeign ? 11 : null,
+                ]));
+                $firstDataRow++;
+            }
+
+            $rowIndex = $firstDataRow - 1;
             foreach ($rows as $r) {
                 $rowIndex++;
                 $cells = [
@@ -1744,6 +1795,16 @@ class XlsxExporter
                     Cell::fromValue($r['credit'] / 100, $moneyStyle),
                 ];
 
+                if ($hasBalance) {
+                    $cells[] = Cell::fromValue($r['balance'] / 100, $moneyStyle);
+                }
+
+                if ($isForeign) {
+                    $cells[] = Cell::fromValue($r['source_debit'] / 100, $moneyStyle);
+                    $cells[] = Cell::fromValue($r['source_credit'] / 100, $moneyStyle);
+                    $cells[] = Cell::fromValue($r['source_balance'] / 100, $moneyStyle);
+                }
+
                 if ($grouped) {
                     array_unshift($cells, $this->text($r['group'] ?? ''));
                 }
@@ -1751,6 +1812,19 @@ class XlsxExporter
                 $writer->addRow(new Row($cells));
             }
             $lastDataRow = $rowIndex;
+
+            if ($hasBalance) {
+                $closingValues = array_merge(
+                    ['Closing Balance'],
+                    array_fill(0, 6, ''),
+                    [$closingBalance / 100],
+                    $isForeign ? array_merge(array_fill(0, 2, ''), [$closingForeignBalance / 100]) : [],
+                );
+                $this->writeTotalsRow($writer, $closingValues, moneyColumns: array_filter([
+                    8,
+                    $isForeign ? 11 : null,
+                ]));
+            }
 
             if ($lastDataRow >= $firstDataRow) {
                 $totals = array_merge(
@@ -1760,6 +1834,11 @@ class XlsxExporter
                         $this->sumFormula($grouped ? 'G' : 'F', $firstDataRow, $lastDataRow),
                         $this->sumFormula($grouped ? 'H' : 'G', $firstDataRow, $lastDataRow),
                     ],
+                    // Source debit/credit/balance totals aren't meaningful to sum
+                    // across rows (a source-currency total across mixed rates
+                    // isn't a real figure, and a running balance never is) —
+                    // left blank, matching the CSV/PDF exports' same choice.
+                    array_fill(0, $extraCols, ''),
                 );
 
                 $this->writeTotalsRow($writer, $totals, moneyColumns: [6 + $offset, 7 + $offset]);
