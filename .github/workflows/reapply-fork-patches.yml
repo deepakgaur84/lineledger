@@ -36,6 +36,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
+          fetch-depth: 0
 
       - name: Copy patch files over their real paths
         run: |
@@ -65,3 +66,43 @@ jobs:
           git add -A
           git commit -m "Reapply fork patches after upstream sync"
           git push origin main
+
+      - name: Warn if this push also touched a patched file
+        # Runs after the reapply above already committed and pushed — the
+        # app is already back on our patched code either way. This step's
+        # only job is to make the RUN show red so a failure notification
+        # fires; a plain ::warning:: annotation does not trigger GitHub's
+        # failure-notification email, only a genuinely failed run does.
+        #
+        # workflow_dispatch has no before/after commit range to diff, so
+        # there's nothing to check on a manual run.
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          before="${{ github.event.before }}"
+          after="${{ github.event.after }}"
+
+          # A new branch's first push has an all-zero "before" SHA.
+          if [ "$before" = "0000000000000000000000000000000000000000" ]; then
+            echo "No prior commit to compare against — skipping."
+            exit 0
+          fi
+
+          changed_by_push="$(git diff --name-only "$before" "$after")"
+          collisions=""
+
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            dest="${f#.fork-patches/}"
+            if printf '%s\n' "$changed_by_push" | grep -qxF "$dest"; then
+              collisions="${collisions}${dest}"$'\n'
+            fi
+          done < <(find .fork-patches -type f)
+
+          if [ -n "$collisions" ]; then
+            echo "::error::This push also modified a file we've patched in .fork-patches. The reapply step above already restored OUR version over it — the app is fine — but that may have silently discarded a genuine upstream improvement. Diff upstream's current version of each file below against .fork-patches before assuming nothing was lost:"
+            printf '%s' "$collisions" | sed 's/^/::error::  - /'
+            exit 1
+          fi
+
+          echo "No overlap between this push and our patched files — nothing to review."
