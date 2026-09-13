@@ -200,6 +200,15 @@ class SidebarNavCatalog
             ]);
         }
 
+        // Fork addition — the standalone bulk CSV importer (see
+        // app/Services/BulkImport/README.md). No Section gate: this isn't
+        // an upstream feature going through the permission system, just a
+        // company-member tool, same as everything else already implicitly
+        // requires company membership to reach.
+        $groups[] = self::group('tools', __('Tools'), [
+            self::item('tools.bulk_import', __('Bulk Import'), 'arrow-up-tray', 'tools.bulk-import', ['tools.bulk-import']),
+        ]);
+
         return array_values(array_filter($groups, fn (array $group): bool => $group['items'] !== []));
     }
 
