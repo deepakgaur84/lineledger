@@ -174,6 +174,26 @@ and currency handling to one entered by hand.
 
 ---
 
+---
+
+## Ongoing maintenance — the one thing the automation doesn't handle
+
+`reapply-fork-patches` (see §7) removed the need to manually check for
+conflicts before syncing — it's now safe to always just click "Sync
+fork". But it *overwrites*, it doesn't *merge*: if upstream ever improves
+one of the files listed in this doc, the automation will always restore
+our version and silently discard upstream's change, forever, unless a
+human notices and manually re-merges it into `.fork-patches`. This is
+exactly what happened with `BillPaymentPoster.php` — upstream added real
+new ledger-integrity methods, and our own automation blanked the file
+mid-race, then restored our older, feature-incomplete version.
+
+There's no automated check for this. Periodically (or if something in
+one of these files starts behaving oddly after a sync), worth diffing
+upstream's current version of that specific file against what's staged
+in `.fork-patches`, to see if anything upstream added is worth pulling
+in alongside our own changes.
+
 ## NAS-side infrastructure (not repo files)
 
 Documented in full in the earlier session's `CHANGES.md` (image pinned to
