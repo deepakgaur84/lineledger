@@ -68,6 +68,7 @@ final class ContactReferenceRegistry
             ['table' => 'vendor_credits', 'column' => 'contact_id'],
             ['table' => 'bill_payments', 'column' => 'contact_id'],
             ['table' => 'cheques', 'column' => 'payee_contact_id'],
+            ['table' => 'cheque_lines', 'column' => 'contact_id'],
             ['table' => 'purchase_orders', 'column' => 'contact_id'],
             ['table' => 'expenses', 'column' => 'payee_contact_id'],
 

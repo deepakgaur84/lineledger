@@ -2,11 +2,13 @@
 
 use App\Actions\Sales\SaveSalesOrder;
 use App\Enums\AccountSubtype;
+use App\Enums\CompanyRole;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\CompanyApiKey;
 use App\Models\Contact;
 use App\Models\SalesOrder;
+use App\Services\EditLocks\EditLockManager;
 
 beforeEach(function () {
     $this->company = Company::factory()->create();
@@ -143,6 +145,27 @@ it('renders ApiController::posting() generic 422 fallback when a poster throws a
         ->not->toContain((string) $foreignAccount->id)
         ->not->toContain($foreignAccount->code ?? '___no_code___')
         ->not->toContain((string) $otherCompany->id);
+});
+
+it('renders RecordEditLockedException as 423 with Retry-After and without naming the editor', function () {
+    $editor = editLockMember($this->company, CompanyRole::Accountant);
+    $editor->forceFill(['name' => 'Jane Editlock-Canary'])->save();
+    $invoice = editLockDraftInvoice($this->company);
+    app()->forgetInstance('current_company');
+
+    app(EditLockManager::class)->acquire($invoice, $editor);
+
+    $response = $this->patchJson("/api/v1/invoices/{$invoice->id}", ['memo' => 'From the API'], $this->h);
+
+    $response->assertStatus(423)
+        ->assertExactJson(['message' => 'This invoice is being edited by someone else in LineLedger. Try again shortly.'])
+        ->assertHeader('Retry-After');
+
+    expect((int) $response->headers->get('Retry-After'))->toBeGreaterThanOrEqual(1)
+        ->and($response->getContent())
+        ->not->toContain('Jane')
+        ->not->toContain('Editlock-Canary')
+        ->not->toContain($editor->email);
 });
 
 it('renders the Throwable catch-all as a generic 500 without leaking exception detail', function () {

@@ -1,5 +1,6 @@
 <?php
 
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Budget;
 use App\Models\Company;
 use Illuminate\Support\Facades\DB;
@@ -8,6 +9,8 @@ use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Budgets')] class extends Component {
+    use HoldsEditLock;
+
     public Company $company;
 
     #[Computed]
@@ -54,7 +57,11 @@ new #[Title('Budgets')] class extends Component {
 
     public function delete(int $id): void
     {
-        Budget::where('company_id', $this->company->id)->findOrFail($id)->delete();
+        $budget = Budget::where('company_id', $this->company->id)->findOrFail($id);
+
+        if (! $this->guardEditLockedWrite($budget, fn () => $budget->delete())) {
+            return;
+        }
 
         unset($this->budgets);
 

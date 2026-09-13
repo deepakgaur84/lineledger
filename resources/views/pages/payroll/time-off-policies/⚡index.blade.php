@@ -4,6 +4,7 @@ use App\Actions\Payroll\SaveTimeOffPolicy;
 use App\Enums\TimeOffAccrualMethod;
 use App\Enums\TimeOffCategory;
 use App\Enums\TimeOffUnit;
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Company;
 use App\Models\TimeOffPolicy;
 use Flux\Flux;
@@ -12,6 +13,8 @@ use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Time-off policies')] class extends Component {
+    use HoldsEditLock;
+
     public Company $company;
 
     public ?int $editingId = null;
@@ -47,6 +50,7 @@ new #[Title('Time-off policies')] class extends Component {
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->resetForm();
         Flux::modal('policy-form')->show();
     }
@@ -54,6 +58,10 @@ new #[Title('Time-off policies')] class extends Component {
     public function openEdit(int $id): void
     {
         $policy = TimeOffPolicy::findOrFail($id);
+
+        if (! $this->acquireEditLock($policy, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
 
         $this->editingId = $policy->id;
         $this->f_name = $policy->name;
@@ -78,6 +86,10 @@ new #[Title('Time-off policies')] class extends Component {
 
     public function save(SaveTimeOffPolicy $action): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(TimeOffPolicy::class, $this->editingId)) {
+            return;
+        }
+
         $validated = $this->validate([
             'f_name' => ['required', 'string', 'max:255'],
             'f_code' => ['nullable', 'string', 'max:40', 'regex:/^[a-z0-9_]*$/'],
@@ -126,6 +138,7 @@ new #[Title('Time-off policies')] class extends Component {
             'is_active' => $validated['f_is_active'],
         ], $this->editingId ? TimeOffPolicy::findOrFail($this->editingId) : null);
 
+        $this->completeEditLockSave();
         Flux::modal('policy-form')->close();
         $this->resetForm();
 
@@ -226,8 +239,11 @@ new #[Title('Time-off policies')] class extends Component {
         </table>
     </div>
 
-    <flux:modal name="policy-form" class="max-w-lg">
+    <flux:modal name="policy-form" class="max-w-lg" wire:close="releaseEditLock">
         <form wire:submit="save" class="space-y-5">
+            @if ($editLockToken)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg">{{ $editingId ? __('Edit time-off policy') : __('New time-off policy') }}</flux:heading>
 
             <flux:input wire:model="f_name" :label="__('Name')" required data-test="policy-name" />
@@ -277,4 +293,6 @@ new #[Title('Time-off policies')] class extends Component {
             </div>
         </form>
     </flux:modal>
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

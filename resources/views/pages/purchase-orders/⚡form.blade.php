@@ -2,6 +2,7 @@
 
 use App\Actions\Purchasing\SavePurchaseOrder;
 use App\Enums\AccountType;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Classification;
 use App\Models\Company;
@@ -17,6 +18,7 @@ use App\Services\Posting\TaxCalculator;
 use App\Support\Money;
 use App\Support\Quantity;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
@@ -24,6 +26,8 @@ use Livewire\Component;
 
 new #[Title('Purchase Order')] class extends Component
 {
+    use GuardsEditLockedForm;
+
     public Company $company;
 
     public ?PurchaseOrder $purchaseOrder = null;
@@ -59,6 +63,11 @@ new #[Title('Purchase Order')] class extends Component
      * }>
      */
     public array $lines = [];
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->purchaseOrder;
+    }
 
     public function mount(Company $company, ?PurchaseOrder $purchaseOrder = null): void
     {
@@ -496,6 +505,9 @@ new #[Title('Purchase Order')] class extends Component
 }; ?>
 
 <section class="w-full">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <flux:heading size="xl" level="1" class="mb-6">{{ $purchaseOrder?->id ? __('Edit purchase order') : __('New purchase order') }}</flux:heading>
 
     <form wire:submit="save" class="space-y-6">
@@ -701,4 +713,5 @@ new #[Title('Purchase Order')] class extends Component
             <flux:button variant="primary" type="submit" data-test="save-purchase-order-button">{{ __('Save purchase order') }}</flux:button>
         </div>
     </form>
+    @endif
 </section>

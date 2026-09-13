@@ -1,20 +1,30 @@
 <?php
 
 use App\Enums\DonationReceiptStatus;
+use App\Livewire\Attributes\GuardsEditLock;
+use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\Company;
 use App\Models\DonationReceipt;
 use App\Services\Charity\DonationReceiptIssuer;
 use App\Support\Money;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Donation receipt')] class extends Component {
+    use ShowsEditLock;
+
     public Company $company;
 
     public DonationReceipt $receipt;
 
     public string $voidReason = '';
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->receipt;
+    }
 
     public function mount(Company $company, DonationReceipt $donationReceipt): void
     {
@@ -26,6 +36,7 @@ new #[Title('Donation receipt')] class extends Component {
         $this->receipt = $donationReceipt->load('contact', 'journalEntry', 'reissuedFrom');
     }
 
+    #[GuardsEditLock]
     public function issue(): void
     {
         try {
@@ -40,6 +51,7 @@ new #[Title('Donation receipt')] class extends Component {
         Flux::toast(variant: 'success', text: __('Receipt issued.'));
     }
 
+    #[GuardsEditLock]
     public function void(): void
     {
         $this->validate(['voidReason' => ['required', 'string', 'max:255']]);
@@ -52,6 +64,7 @@ new #[Title('Donation receipt')] class extends Component {
         Flux::toast(variant: 'success', text: __('Receipt voided.'));
     }
 
+    #[GuardsEditLock]
     public function reissue(): void
     {
         $draft = app(DonationReceiptIssuer::class)->reissue($this->receipt);
@@ -72,6 +85,8 @@ new #[Title('Donation receipt')] class extends Component {
 }; ?>
 
 <section class="mx-auto w-full max-w-2xl">
+    <x-edit-lock.banner :lock="$this->editLockBanner" />
+
     <div class="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
             <div class="flex items-center gap-3">

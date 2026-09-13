@@ -3,18 +3,22 @@
 use App\Actions\Charity\SaveDonationReceipt;
 use App\Enums\AccountType;
 use App\Enums\GiftType;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\Contact;
 use App\Models\DonationReceipt;
 use App\Support\Money;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Donation receipt')] class extends Component {
+    use GuardsEditLockedForm;
+
     public Company $company;
 
     public ?DonationReceipt $receipt = null;
@@ -42,6 +46,11 @@ new #[Title('Donation receipt')] class extends Component {
     public ?int $debit_account_id = null;
 
     public string $notes = '';
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->receipt;
+    }
 
     public function mount(Company $company, ?DonationReceipt $donationReceipt = null): void
     {
@@ -148,6 +157,9 @@ new #[Title('Donation receipt')] class extends Component {
 }; ?>
 
 <section class="mx-auto w-full max-w-2xl">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <flux:heading size="xl" level="1" data-test="page-title">{{ $receipt?->exists ? __('Edit donation receipt') : __('New donation receipt') }}</flux:heading>
     <flux:subheading class="mb-6">{{ __('Drafts can be edited until issued. Issuing locks the serial number.') }}</flux:subheading>
 
@@ -206,4 +218,5 @@ new #[Title('Donation receipt')] class extends Component {
             <flux:button variant="primary" type="submit" data-test="donation-receipt-save-button">{{ __('Save draft') }}</flux:button>
         </div>
     </form>
+    @endif
 </section>

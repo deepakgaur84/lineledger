@@ -2,6 +2,8 @@
 
 use App\Enums\TaxReturnPaymentStatus;
 use App\Enums\TaxReturnStatus;
+use App\Livewire\Attributes\GuardsEditLock;
+use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\Bill;
 use App\Models\Cheque;
 use App\Models\Company;
@@ -9,15 +11,23 @@ use App\Models\Invoice;
 use App\Models\TaxReturn;
 use App\Services\Tax\TaxReturnFiler;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Tax return')] class extends Component {
+    use ShowsEditLock;
+
     public Company $company;
 
     public TaxReturn $taxReturn;
 
     public string $voidReason = '';
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->taxReturn;
+    }
 
     public function mount(Company $company, TaxReturn $tax_return): void
     {
@@ -25,6 +35,7 @@ new #[Title('Tax return')] class extends Component {
         $this->taxReturn = $tax_return->load('lines', 'taxAgency.payableAccount', 'filedBy', 'voidedBy', 'payments');
     }
 
+    #[GuardsEditLock]
     public function file(TaxReturnFiler $filer): void
     {
         try {
@@ -39,6 +50,7 @@ new #[Title('Tax return')] class extends Component {
         $this->taxReturn = $filed;
     }
 
+    #[GuardsEditLock]
     public function void(TaxReturnFiler $filer): void
     {
         $reason = trim($this->voidReason);
@@ -83,6 +95,8 @@ new #[Title('Tax return')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    <x-edit-lock.banner :lock="$this->editLockBanner" />
+
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
             <flux:heading size="xl" level="1">{{ __('Tax return') }} {{ $taxReturn->tax_return_no }}</flux:heading>

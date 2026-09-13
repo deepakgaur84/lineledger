@@ -1,12 +1,15 @@
 <?php
 
 use App\Enums\VendorCreditStatus;
+use App\Livewire\Attributes\GuardsEditLock;
+use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\Attachment;
 use App\Models\Company;
 use App\Models\VendorCredit;
 use App\Services\AttachmentService;
 use App\Services\Posting\VendorCreditPoster;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
@@ -14,6 +17,7 @@ use Livewire\Component;
 use Livewire\WithFileUploads;
 
 new #[Title('Vendor credit')] class extends Component {
+    use ShowsEditLock;
     use WithFileUploads;
 
     public Company $company;
@@ -22,12 +26,18 @@ new #[Title('Vendor credit')] class extends Component {
 
     public array $newAttachments = [];
 
+    protected function editLockRecord(): ?Model
+    {
+        return $this->vendorCredit;
+    }
+
     public function mount(Company $company, VendorCredit $vendor_credit): void
     {
         $this->company = $company;
         $this->vendorCredit = $vendor_credit->load('lines.account', 'lines.taxCode', 'lines.secondaryTaxCode', 'contact', 'journalEntry');
     }
 
+    #[GuardsEditLock]
     public function post(VendorCreditPoster $poster): void
     {
         try {
@@ -42,6 +52,7 @@ new #[Title('Vendor credit')] class extends Component {
         Flux::toast(variant: 'success', text: __('Vendor credit posted.'));
     }
 
+    #[GuardsEditLock]
     public function void(VendorCreditPoster $poster): void
     {
         try {
@@ -85,6 +96,8 @@ new #[Title('Vendor credit')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    <x-edit-lock.banner :lock="$this->editLockBanner" />
+
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
             <flux:heading size="xl" level="1">{{ __('Vendor credit') }} {{ $vendorCredit->vendor_credit_no }}</flux:heading>

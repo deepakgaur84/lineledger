@@ -278,6 +278,7 @@ you need the full set of knobs; the keys below are the ones that turn the featur
 | **AI daily insights** | `INSIGHTS_AI_ENABLED=true` + `ANTHROPIC_API_KEY`; `INSIGHTS_AI_MODEL` / `_MAX_CANDIDATES` / `_TIMEOUT` | `config/insights.php` |
 | **Bank-import AI fallback** | `BANK_IMPORT_AI_ENABLED=true` + `ANTHROPIC_API_KEY`; `BANK_IMPORT_PDF_EXTRACTOR`, `BANK_IMPORT_AI_MODEL` / `_DRIVER` / `_TIMEOUT` / `_SAMPLE_ROWS`, `BANK_IMPORT_MAX_KILOBYTES`, `BANK_IMPORT_DATE_TOLERANCE_DAYS` | `config/banking.php` |
 | **Transaction classification** | On by default; tune history depth with `CLASSIFICATION_HISTORY_DAYS`, `CLASSIFICATION_MAX_HISTORY_ROWS`, `CLASSIFICATION_DESCRIPTION_HISTORY_LIMIT`, `CLASSIFICATION_AI_MAX_DESCRIPTIONS` | `config/classification.php` |
+| **Edit locks** (one member edits a record at a time) | On by default; `EDIT_LOCKS_ENABLED=false` switches it off. Tune with `EDIT_LOCKS_TTL_SECONDS` (lease length, 120 — keep it above 60, since hidden tabs renew about once a minute), `EDIT_LOCKS_HEARTBEAT_SECONDS` (30), `EDIT_LOCKS_IDLE_MINUTES` (15) and `EDIT_LOCKS_PRUNE_AFTER_DAYS` (7) | `config/edit_locks.php` |
 | **Security-alert thresholds** | `SECURITY_ALERT_WINDOW_MINUTES`, `SECURITY_ALERT_FAILED_LOGIN_THRESHOLD`, `SECURITY_ALERT_API_KEY_REVOCATION_THRESHOLD` (defaults 60 / 10 / 5) | `config/services.php` |
 
 > **Filing payroll slips needs your transmitter identity.** The T4 / T4A XML carries a
@@ -307,6 +308,7 @@ long-running `schedule:work` process:
 | `rates:health` | daily 08:30 | Alert if FX rates are stale (the fetch missed or failed) |
 | `security:monitor` | hourly | Scan the security log for anomalies (failed-login spikes, lockouts, mass API-key revocation, privilege escalation); email ops on any finding |
 | `backups:prune-expired` | daily | Delete expired organization backup files |
+| `edit-locks:prune` | daily | Delete released edit-lock rows nobody has held or changed for `EDIT_LOCKS_PRUNE_AFTER_DAYS` (default 7) |
 
 The per-organization jobs — `recurring:generate`, `depreciation:generate`,
 `insights:generate`, `reports:send-scheduled`, `reminders:send` — all take an optional
@@ -335,7 +337,11 @@ so GL-driven statements match aging), `payroll:backfill-accounts` (create the
 system payroll GL accounts on existing Canadian organizations), and
 `banking:backfill-line-memos` (append each posted document's own memo to its bank
 journal line, so the bank register reads "Deposit: August rent" instead of a bare
-"Deposit"; wording only, amounts untouched).
+"Deposit"; wording only, amounts untouched), and
+`banking:backfill-reconciliation-stamps [--dry-run]` (un-clear the service-charge
+and interest lines a completed reconciliation replaced or left unticked, so the
+register's cleared balance matches the reconciliation; reconciliations whose
+ticked lines no longer line up, e.g. after a restore, are skipped and listed).
 
 ## Operating & maintenance
 

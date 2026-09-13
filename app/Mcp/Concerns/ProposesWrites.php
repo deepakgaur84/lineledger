@@ -32,6 +32,13 @@ use Laravel\Mcp\Response;
  * The matching ConfirmProposal tool then replays the payload through the real Save
  * action (+ Poster), inheriting the lock-date check and the audit trail from that
  * pipeline. This trait never posts.
+ *
+ * Edit locks: the BusinessActionsServer tools only CREATE records today, so none
+ * of them can collide with a member editing a record in the web app. Any future
+ * tool that updates, voids or deletes an EXISTING record must run that write
+ * through App\Services\EditLocks\EditLockManager::guardWrite() with a null
+ * actor — the same rule as the REST API: refused (the 423 equivalent) while a web
+ * user holds the record's edit lock, and the lock's version replaced afterwards.
  */
 trait ProposesWrites
 {

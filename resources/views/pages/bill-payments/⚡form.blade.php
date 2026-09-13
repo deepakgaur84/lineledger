@@ -5,6 +5,7 @@ use App\Enums\BillPaymentStatus;
 use App\Enums\BillStatus;
 use App\Enums\BillType;
 use App\Exceptions\Posting\PeriodLockedException;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Bill;
 use App\Models\BillPayment;
@@ -16,6 +17,7 @@ use App\Services\Posting\BillPaymentPoster;
 use App\Services\Posting\DocumentNumberGenerator;
 use App\Support\Money;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
@@ -23,6 +25,8 @@ use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Pay bills')] class extends Component {
+    use GuardsEditLockedForm;
+
     public Company $company;
 
     public ?BillPayment $payment = null;
@@ -47,6 +51,11 @@ new #[Title('Pay bills')] class extends Component {
      * @var array<int, array{bill_id: int, bill_no: string, due_date: string, balance: int, apply: string}>
      */
     public array $applyTable = [];
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->payment;
+    }
 
     public function mount(Company $company, ?BillPayment $payment = null): void
     {
@@ -351,6 +360,9 @@ new #[Title('Pay bills')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <flux:heading size="xl" level="1" class="mb-6">{{ __('Pay bills') }}</flux:heading>
 
     <form wire:submit="save" class="space-y-6">
@@ -473,4 +485,5 @@ new #[Title('Pay bills')] class extends Component {
             <flux:button variant="primary" type="submit" data-test="save-payment-button">{{ __('Save & post') }}</flux:button>
         </div>
     </form>
+    @endif
 </section>

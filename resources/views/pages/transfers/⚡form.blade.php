@@ -5,6 +5,7 @@ use App\Enums\AccountSubtype;
 use App\Enums\TransferStatus;
 use App\Exceptions\Posting\PeriodLockedException;
 use App\Exceptions\Posting\ReconciliationLockedException;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\Transfer;
@@ -13,6 +14,7 @@ use App\Services\Posting\TransferPoster;
 use App\Support\Banking\LastBankAccount;
 use App\Support\Money;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
@@ -20,6 +22,8 @@ use Livewire\Component;
 
 new #[Title('Transfer')] class extends Component
 {
+    use GuardsEditLockedForm;
+
     public Company $company;
 
     public ?Transfer $transfer = null;
@@ -37,6 +41,11 @@ new #[Title('Transfer')] class extends Component
     public string $to_amount = '0.00';
 
     public string $memo = '';
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->transfer;
+    }
 
     public function mount(Company $company, ?Transfer $transfer = null): void
     {
@@ -175,6 +184,9 @@ new #[Title('Transfer')] class extends Component
 }; ?>
 
 <section class="w-full">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <flux:heading size="xl" level="1" class="mb-6">{{ $transfer?->id ? __('Edit transfer') : __('New transfer') }}</flux:heading>
 
     <form wire:submit="postTransfer" class="space-y-6">
@@ -223,4 +235,5 @@ new #[Title('Transfer')] class extends Component
             <flux:button variant="primary" type="submit" data-test="post-transfer-button">{{ __('Post transfer') }}</flux:button>
         </div>
     </form>
+    @endif
 </section>

@@ -1,5 +1,7 @@
 <?php
 
+use App\Livewire\Attributes\GuardsEditLock;
+use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\Asset;
 use App\Models\Attachment;
 use App\Models\Bill;
@@ -9,6 +11,7 @@ use App\Models\JournalEntry;
 use App\Services\Assets\DepreciationSchedule;
 use App\Services\AttachmentService;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
@@ -16,6 +19,7 @@ use Livewire\Component;
 use Livewire\WithFileUploads;
 
 new #[Title('Asset')] class extends Component {
+    use ShowsEditLock;
     use WithFileUploads;
 
     public Company $company;
@@ -23,6 +27,11 @@ new #[Title('Asset')] class extends Component {
     public Asset $asset;
 
     public array $newAttachments = [];
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->asset;
+    }
 
     public function mount(Company $company, Asset $asset): void
     {
@@ -35,18 +44,21 @@ new #[Title('Asset')] class extends Component {
         ]);
     }
 
+    #[GuardsEditLock]
     public function archive(): void
     {
         $this->asset->update(['is_active' => false]);
         Flux::toast(variant: 'success', text: __('Asset archived.'));
     }
 
+    #[GuardsEditLock]
     public function restore(): void
     {
         $this->asset->update(['is_active' => true]);
         Flux::toast(variant: 'success', text: __('Asset restored.'));
     }
 
+    #[GuardsEditLock]
     public function delete(): void
     {
         $this->asset->delete();
@@ -124,6 +136,8 @@ new #[Title('Asset')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    <x-edit-lock.banner :lock="$this->editLockBanner" />
+
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
             <flux:heading size="xl" level="1">{{ $asset->name }} <span class="text-muted-foreground font-mono text-base">{{ $asset->asset_no }}</span></flux:heading>

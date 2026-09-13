@@ -5,6 +5,7 @@ use App\Enums\AccountType;
 use App\Enums\BillStatus;
 use App\Enums\BillType;
 use App\Exceptions\Posting\PeriodLockedException;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Attachment;
 use App\Models\Bill;
@@ -24,6 +25,7 @@ use App\Support\Money;
 use App\Support\Quantity;
 use Carbon\CarbonImmutable;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
@@ -35,6 +37,7 @@ use Livewire\WithFileUploads;
 
 new #[Title('Bill')] class extends Component
 {
+    use GuardsEditLockedForm;
     use WithFileUploads;
 
     public Company $company;
@@ -82,6 +85,11 @@ new #[Title('Bill')] class extends Component
 
     /** @var array<int, mixed> */
     public array $newAttachments = [];
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->bill;
+    }
 
     public function mount(Company $company, ?Bill $bill = null): void
     {
@@ -747,6 +755,9 @@ new #[Title('Bill')] class extends Component
 }; ?>
 
 <section class="w-full">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <flux:heading size="xl" level="1" class="mb-6">{{ $bill?->id ? __('Edit bill') : __('New bill') }}</flux:heading>
 
     <form wire:submit="postBill" class="space-y-6">
@@ -1011,4 +1022,5 @@ new #[Title('Bill')] class extends Component
             </div>
         </div>
     </flux:modal>
+    @endif
 </section>

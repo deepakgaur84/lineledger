@@ -1,3 +1,10 @@
+{{--
+    Per-line customer / vendor picker for a line coded to an Accounts Receivable
+    or Accounts Payable control account. Binds into the host's `lines.{i}.*`
+    array and calls the handlers in
+    {@see \App\Livewire\Concerns\ManagesLineContacts} — used by the journal
+    entry and cheque forms.
+--}}
 @props([
     'index',
     'addLabel' => 'customer',

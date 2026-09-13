@@ -1,6 +1,7 @@
 <?php
 
 use App\Contracts\ClientSafeException;
+use App\Exceptions\EditLocks\RecordEditLockedException;
 use App\Exceptions\Posting\AlreadyPostedException;
 use App\Http\Middleware\AuthenticateApiKey;
 use App\Http\Middleware\BindMcpCompany;
@@ -11,6 +12,8 @@ use App\Http\Middleware\EnsureLegalAcceptance;
 use App\Http\Middleware\EnsurePortalAudience;
 use App\Http\Middleware\EnsureUserHasCompany;
 use App\Http\Middleware\EnsureUserIsActive;
+use App\Http\Middleware\RecordRequestStart;
+use App\Http\Middleware\RejectEditLockedRecords;
 use App\Http\Middleware\RequireTwoFactorConfirmation;
 use App\Http\Middleware\ResolvePortalCompany;
 use App\Http\Middleware\SecurityHeaders;
@@ -52,6 +55,12 @@ return Application::configure(basePath: dirname(__DIR__))
                 | Request::HEADER_X_FORWARDED_PROTO,
         );
 
+        // First in the group, so it runs before route-model binding loads a record
+        // an edit form may compare against later saves (edit locks).
+        $middleware->web(prepend: [
+            RecordRequestStart::class,
+        ]);
+
         $middleware->web(append: [
             SecurityHeaders::class,
             CheckSiteMaintenance::class,
@@ -72,6 +81,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'portal.audience' => EnsurePortalAudience::class,
             'mcp.company' => BindMcpCompany::class,
             '2fa.confirm' => RequireTwoFactorConfirmation::class,
+            'api.edit_lock' => RejectEditLockedRecords::class,
         ]);
 
         // API-key auth (and the ability gate) must run before route-model
@@ -150,6 +160,16 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(function (AlreadyPostedException $e, Request $request) {
             if ($request->is('api/*')) {
                 return response()->json(['message' => $e->clientSafeMessage()], 409);
+            }
+        });
+
+        // Someone is editing the record in the web app: 423 Locked, with the time
+        // left on their lease as Retry-After. The message never names them.
+        $exceptions->render(function (RecordEditLockedException $e, Request $request) {
+            if ($request->is('api/*')) {
+                return response()->json(['message' => $e->clientSafeMessage()], 423, [
+                    'Retry-After' => (string) $e->retryAfterSeconds,
+                ]);
             }
         });
 

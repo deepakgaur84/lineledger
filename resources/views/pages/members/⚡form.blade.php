@@ -2,18 +2,24 @@
 
 use App\Actions\Contacts\SaveContact;
 use App\Actions\Membership\SaveMember;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Company;
 use App\Models\Contact;
 use App\Models\Member;
 use App\Models\MembershipLevel;
+use App\Models\RecurringDocument;
+use App\Services\EditLocks\EditLockManager;
 use App\Support\Money;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Member')] class extends Component {
+    use GuardsEditLockedForm;
+
     public Company $company;
 
     public ?Member $member = null;
@@ -58,6 +64,11 @@ new #[Title('Member')] class extends Component {
     public string $notes = '';
 
     public bool $is_active = true;
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->member;
+    }
 
     public function mount(Company $company, ?Member $member = null): void
     {
@@ -185,6 +196,16 @@ new #[Title('Member')] class extends Component {
             'is_active' => $this->is_active,
         ], $this->member);
 
+        // SaveMember keeps the member's dues schedule in step: an open editor on
+        // that recurring transaction must not save over the synced values.
+        $schedule = $member->recurring_document_id !== null
+            ? RecurringDocument::query()->find($member->recurring_document_id)
+            : null;
+
+        if ($schedule !== null) {
+            app(EditLockManager::class)->touch($schedule);
+        }
+
         Flux::toast(variant: 'success', text: __('Member saved.'));
 
         $this->redirectRoute('members.show', ['company' => $this->company, 'member' => $member], navigate: true);
@@ -192,6 +213,9 @@ new #[Title('Member')] class extends Component {
 }; ?>
 
 <section class="mx-auto w-full max-w-2xl">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <flux:heading size="xl" level="1" data-test="page-title">{{ $member?->exists ? __('Edit member') : __('New member') }}</flux:heading>
     <flux:subheading class="mb-6">{{ __('Members are billed for dues as invoices.') }}</flux:subheading>
 
@@ -264,4 +288,5 @@ new #[Title('Member')] class extends Component {
             <flux:button variant="primary" type="submit" data-test="member-save-button">{{ __('Save') }}</flux:button>
         </div>
     </form>
+    @endif
 </section>

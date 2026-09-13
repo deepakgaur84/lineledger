@@ -1,6 +1,7 @@
 <?php
 
 use App\Actions\Sales\SaveFormStyle;
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Company;
 use App\Models\FormStyle;
 use Flux\Flux;
@@ -9,6 +10,8 @@ use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Form styles')] class extends Component {
+    use HoldsEditLock;
+
     public Company $company;
 
     public ?int $editingId = null;
@@ -32,6 +35,7 @@ new #[Title('Form styles')] class extends Component {
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->reset(['editingId', 'f_name', 'f_show_logo', 'f_accent_color', 'f_footer_message', 'f_is_default', 'f_is_active']);
         $this->f_show_logo = true;
         $this->f_is_active = true;
@@ -41,6 +45,11 @@ new #[Title('Form styles')] class extends Component {
     public function openEdit(int $id): void
     {
         $s = FormStyle::findOrFail($id);
+
+        if (! $this->acquireEditLock($s, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
+
         $this->editingId = $s->id;
         $this->f_name = $s->name;
         $this->f_show_logo = $s->show_logo;
@@ -53,6 +62,10 @@ new #[Title('Form styles')] class extends Component {
 
     public function save(): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(FormStyle::class, $this->editingId)) {
+            return;
+        }
+
         $validated = $this->validate([
             'f_name' => ['required', 'string', 'max:255'],
             'f_show_logo' => ['boolean'],
@@ -76,6 +89,7 @@ new #[Title('Form styles')] class extends Component {
             'is_active' => $validated['f_is_active'],
         ], $editing);
 
+        $this->completeEditLockSave();
         Flux::modal('form-styles-form')->close();
         Flux::toast(variant: 'success', text: __('Form style saved.'));
     }
@@ -133,8 +147,11 @@ new #[Title('Form styles')] class extends Component {
         </div>
     </x-pages::settings.layout>
 
-    <flux:modal name="form-styles-form" class="max-w-lg">
+    <flux:modal name="form-styles-form" class="max-w-lg" wire:close="releaseEditLock">
         <form wire:submit="save" class="space-y-6">
+            @if ($editLockToken)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg">{{ $editingId ? __('Edit form style') : __('New form style') }}</flux:heading>
             <flux:input wire:model="f_name" :label="__('Name')" required data-test="style-name" />
             <flux:input wire:model="f_accent_color" :label="__('Accent colour')" placeholder="#2563eb" :description="__('Tints the invoice title, table headers and total. Leave blank for the standard look.')" data-test="style-accent-color" />
@@ -148,4 +165,6 @@ new #[Title('Form styles')] class extends Component {
             </div>
         </form>
     </flux:modal>
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

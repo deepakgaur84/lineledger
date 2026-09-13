@@ -1,5 +1,6 @@
 <?php
 
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Company;
 use App\Models\Contact;
 use Flux\Flux;
@@ -10,6 +11,7 @@ use Livewire\Component;
 use Livewire\WithPagination;
 
 new #[Title('Employees')] class extends Component {
+    use HoldsEditLock;
     use WithPagination;
     public Company $company;
 
@@ -82,6 +84,7 @@ new #[Title('Employees')] class extends Component {
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->resetForm();
         Flux::modal('employee-form')->show();
     }
@@ -89,6 +92,10 @@ new #[Title('Employees')] class extends Component {
     public function openEdit(int $id): void
     {
         $c = Contact::findOrFail($id);
+
+        if (! $this->acquireEditLock($c, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
 
         $this->editingId = $c->id;
         $this->f_display_name = $c->display_name;
@@ -110,6 +117,10 @@ new #[Title('Employees')] class extends Component {
 
     public function save(): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(Contact::class, $this->editingId)) {
+            return;
+        }
+
         $validated = $this->validate([
             'f_display_name' => ['required', 'string', 'max:255'],
             'f_first_name' => ['nullable', 'string', 'max:100'],
@@ -150,6 +161,7 @@ new #[Title('Employees')] class extends Component {
             Contact::create([...$payload, 'is_employee' => true]);
         }
 
+        $this->completeEditLockSave();
         Flux::modal('employee-form')->close();
         $this->resetForm();
 
@@ -244,8 +256,11 @@ new #[Title('Employees')] class extends Component {
 
     <div class="mt-4">{{ $this->employees->links() }}</div>
 
-    <flux:modal name="employee-form" class="max-w-xl">
+    <flux:modal name="employee-form" class="max-w-xl" wire:close="releaseEditLock">
         <form wire:submit="save" class="space-y-6">
+            @if ($editLockToken)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg">{{ $editingId ? __('Edit employee') : __('New employee') }}</flux:heading>
 
             <flux:input wire:model="f_display_name" :label="__('Display name')" required data-test="employee-display-name" />
@@ -292,4 +307,6 @@ new #[Title('Employees')] class extends Component {
             </div>
         </form>
     </flux:modal>
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

@@ -2,6 +2,7 @@
 
 use App\Actions\Banking\SaveBankRule;
 use App\Enums\BankRuleMatchType;
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Account;
 use App\Models\BankRule;
 use App\Models\Company;
@@ -13,6 +14,8 @@ use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Bank rules')] class extends Component {
+    use HoldsEditLock;
+
     public Company $company;
 
     public ?int $editingId = null;
@@ -38,6 +41,7 @@ new #[Title('Bank rules')] class extends Component {
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->reset(['editingId', 'f_name', 'f_match_type', 'f_match_pattern', 'f_action_account_id', 'f_action_contact_id', 'f_priority', 'f_is_active']);
         $this->f_match_type = 'contains';
         $this->f_priority = '0';
@@ -48,6 +52,11 @@ new #[Title('Bank rules')] class extends Component {
     public function openEdit(int $id): void
     {
         $r = BankRule::findOrFail($id);
+
+        if (! $this->acquireEditLock($r, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
+
         $this->editingId = $r->id;
         $this->f_name = $r->name;
         $this->f_match_type = $r->match_type->value;
@@ -61,6 +70,10 @@ new #[Title('Bank rules')] class extends Component {
 
     public function save(): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(BankRule::class, $this->editingId)) {
+            return;
+        }
+
         $validated = $this->validate([
             'f_name' => ['required', 'string', 'max:255'],
             'f_match_type' => ['required', Rule::enum(BankRuleMatchType::class)],
@@ -84,6 +97,7 @@ new #[Title('Bank rules')] class extends Component {
             'is_active' => $validated['f_is_active'],
         ], $editing);
 
+        $this->completeEditLockSave();
         Flux::modal('bank-rule-form')->close();
         Flux::toast(variant: 'success', text: __('Bank rule saved.'));
     }
@@ -176,8 +190,11 @@ new #[Title('Bank rules')] class extends Component {
         </table>
     </div>
 
-    <flux:modal name="bank-rule-form" class="max-w-lg">
+    <flux:modal name="bank-rule-form" class="max-w-lg" wire:close="releaseEditLock">
         <form wire:submit="save" class="space-y-6">
+            @if ($editLockToken)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg">{{ $editingId ? __('Edit rule') : __('New rule') }}</flux:heading>
 
             <flux:input wire:model="f_name" :label="__('Rule name')" required data-test="bank-rule-name" />
@@ -216,4 +233,6 @@ new #[Title('Bank rules')] class extends Component {
             </div>
         </form>
     </flux:modal>
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

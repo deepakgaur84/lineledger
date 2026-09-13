@@ -3,6 +3,8 @@
 use App\Enums\AccountSubtype;
 use App\Enums\PayrollChequeStatus;
 use App\Enums\PayRunStatus;
+use App\Livewire\Attributes\GuardsEditLock;
+use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\PayRun;
@@ -14,11 +16,14 @@ use App\Services\Posting\PayrollChequePoster;
 use App\Services\Posting\PayRunPoster;
 use App\Support\Money;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Pay run')] class extends Component {
+    use ShowsEditLock;
+
     public Company $company;
 
     public PayRun $payRun;
@@ -41,6 +46,11 @@ new #[Title('Pay run')] class extends Component {
     public string $startingChequeNumber = '';
 
     public ?int $bankAccountId = null;
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->payRun;
+    }
 
     public function mount(Company $company, PayRun $payRun): void
     {
@@ -69,6 +79,7 @@ new #[Title('Pay run')] class extends Component {
         return $this->payRun->cheques()->with('payee')->orderBy('cheque_no')->get();
     }
 
+    #[GuardsEditLock]
     public function post(PayRunPoster $poster): void
     {
         try {
@@ -83,6 +94,7 @@ new #[Title('Pay run')] class extends Component {
         Flux::toast(variant: 'success', text: __('Pay run posted.'));
     }
 
+    #[GuardsEditLock]
     public function writeCheques(\App\Actions\Payroll\IssuePayrollCheques $issuer): void
     {
         $this->validate([
@@ -104,6 +116,7 @@ new #[Title('Pay run')] class extends Component {
         Flux::toast(variant: 'success', text: __('Cheques written.'));
     }
 
+    #[GuardsEditLock]
     public function voidRun(PayRunPoster $poster): void
     {
         try {
@@ -118,6 +131,7 @@ new #[Title('Pay run')] class extends Component {
         Flux::toast(variant: 'success', text: __('Pay run voided.'));
     }
 
+    #[GuardsEditLock]
     public function recalculate(CalculatePayRun $calculate): void
     {
         abort_unless($this->payRun->status->isEditable(), 403);
@@ -144,6 +158,7 @@ new #[Title('Pay run')] class extends Component {
         Flux::modal('adjust-line')->show();
     }
 
+    #[GuardsEditLock]
     public function saveAdjust(): void
     {
         abort_unless($this->payRun->status->isEditable(), 403);
@@ -185,6 +200,7 @@ new #[Title('Pay run')] class extends Component {
         $line->{$component.'_override_cents'} = $cents === (int) $line->{$component.'_computed_cents'} ? null : $cents;
     }
 
+    #[GuardsEditLock]
     public function resetAdjust(): void
     {
         abort_unless($this->payRun->status->isEditable(), 403);
@@ -206,6 +222,7 @@ new #[Title('Pay run')] class extends Component {
         Flux::toast(variant: 'success', text: __('Reset to calculated amounts.'));
     }
 
+    #[GuardsEditLock]
     public function voidCheque(int $chequeId, PayrollChequePoster $poster): void
     {
         $cheque = PayrollCheque::findOrFail($chequeId);
@@ -231,6 +248,8 @@ new #[Title('Pay run')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    <x-edit-lock.banner :lock="$this->editLockBanner" />
+
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
             <flux:button variant="ghost" size="sm" icon="arrow-left" :href="route('pay-runs.index')" wire:navigate>

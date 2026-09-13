@@ -1,6 +1,7 @@
 <?php
 
 use App\Actions\Sales\SaveInvoiceTemplate;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Classification;
 use App\Models\Company;
@@ -13,12 +14,15 @@ use App\Services\Posting\TaxCalculator;
 use App\Support\Money;
 use App\Support\Quantity;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Invoice template')] class extends Component {
+    use GuardsEditLockedForm;
+
     public Company $company;
 
     public ?InvoiceTemplate $invoiceTemplate = null;
@@ -36,6 +40,11 @@ new #[Title('Invoice template')] class extends Component {
      * }>
      */
     public array $lines = [];
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->invoiceTemplate;
+    }
 
     public function mount(Company $company, ?InvoiceTemplate $invoiceTemplate = null): void
     {
@@ -335,6 +344,9 @@ new #[Title('Invoice template')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <flux:heading size="xl" level="1" class="mb-6">
         {{ $invoiceTemplate?->id ? __('Edit invoice template') : __('New invoice template') }}
     </flux:heading>
@@ -528,4 +540,5 @@ new #[Title('Invoice template')] class extends Component {
             </div>
         </div>
     </form>
+    @endif
 </section>

@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 #[Fillable([
     'company_id', 'bank_account_id', 'cheque_no', 'cheque_date',
     'payee_contact_id', 'credit_memo_id', 'payee_name', 'memo', 'is_opening_balance', 'amount_cents',
+    'payee_line1', 'payee_line2', 'payee_city', 'payee_region', 'payee_postal_code', 'payee_country',
     'currency_code', 'fx_rate', 'home_amount_cents', 'status',
     'posted_at', 'posted_by_user_id', 'voided_at', 'voided_by_user_id',
     'journal_entry_id',

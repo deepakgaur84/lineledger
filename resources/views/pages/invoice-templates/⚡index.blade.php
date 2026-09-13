@@ -1,5 +1,6 @@
 <?php
 
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Company;
 use App\Models\InvoiceTemplate;
 use Flux\Flux;
@@ -9,6 +10,7 @@ use Livewire\Component;
 use Livewire\WithPagination;
 
 new #[Title('Invoice templates')] class extends Component {
+    use HoldsEditLock;
     use WithPagination;
     public Company $company;
 
@@ -32,7 +34,9 @@ new #[Title('Invoice templates')] class extends Component {
         $template = InvoiceTemplate::findOrFail($id);
         abort_if($template->company_id !== $this->company->id, 403);
 
-        $template->delete();
+        if (! $this->guardEditLockedWrite($template, fn () => $template->delete())) {
+            return;
+        }
 
         unset($this->templates);
         Flux::toast(variant: 'success', text: __('Template deleted.'));

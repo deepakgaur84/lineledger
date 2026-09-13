@@ -163,6 +163,7 @@ final class RowTransformer
         'cheque_lines' => [
             'cheque_id' => 'cheques',
             'account_id' => 'accounts',
+            'contact_id' => 'contacts',
             'tax_code_id' => 'tax_codes',
             'secondary_tax_code_id' => 'tax_codes',
             'class_id' => 'classifications',

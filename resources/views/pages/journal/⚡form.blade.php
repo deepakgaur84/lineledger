@@ -3,15 +3,15 @@
 use App\Actions\Accounting\SaveJournalEntry;
 use App\Actions\Accounting\SaveJournalEntryTemplate;
 use App\Actions\Accounting\UpdateJournalEntryHeader;
-use App\Enums\AccountSubtype;
 use App\Enums\AuditAction;
 use App\Exceptions\Posting\PeriodLockedException;
 use App\Exceptions\Posting\ReconciliationLockedException;
 use App\Exceptions\Posting\UnbalancedJournalException;
+use App\Livewire\Concerns\GuardsEditLockedForm;
+use App\Livewire\Concerns\ManagesLineContacts;
 use App\Models\Account;
 use App\Models\Classification;
 use App\Models\Company;
-use App\Models\Contact;
 use App\Models\Fund;
 use App\Models\JournalEntry;
 use App\Models\JournalEntryTemplate;
@@ -26,9 +26,8 @@ use App\Support\Reporting\SourceLinkResolver;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
 use Flux\Flux;
-use Illuminate\Support\Collection;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\Rule;
-use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
@@ -36,6 +35,9 @@ use Livewire\Component;
 
 new #[Title('Journal entry')] class extends Component
 {
+    use GuardsEditLockedForm;
+    use ManagesLineContacts;
+
     public Company $company;
 
     public ?JournalEntry $entry = null;
@@ -77,6 +79,11 @@ new #[Title('Journal entry')] class extends Component
      * @var array<int, array{account_id: ?int, contact_id: ?int, contact_query: string, contact_creating: bool, new_contact_name: string, debit: string, credit: string, memo: ?string, tax_code_id: ?int, class_id: ?int, location_id: ?int}>
      */
     public array $lines = [];
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->entry;
+    }
 
     public function mount(Company $company, ?JournalEntry $entry = null): void
     {
@@ -172,10 +179,7 @@ new #[Title('Journal entry')] class extends Component
     {
         return [
             'account_id' => null,
-            'contact_id' => null,
-            'contact_query' => '',
-            'contact_creating' => false,
-            'new_contact_name' => '',
+            ...$this->emptyLineContactState(),
             'debit' => '',
             'credit' => '',
             'memo' => null,
@@ -217,87 +221,6 @@ new #[Title('Journal entry')] class extends Component
     }
 
     /**
-     * Map of account id => required contact role ('customer' for AR, 'vendor' for AP).
-     *
-     * @return array<int, string>
-     */
-    #[Computed]
-    public function contactRequiringAccounts(): array
-    {
-        return Account::query()
-            ->where('company_id', $this->company->id)
-            ->whereIn('subtype', [
-                AccountSubtype::AccountsReceivable->value,
-                AccountSubtype::AccountsPayable->value,
-            ])
-            ->get(['id', 'subtype'])
-            ->mapWithKeys(fn (Account $a) => [
-                $a->id => $a->subtype === AccountSubtype::AccountsReceivable ? 'customer' : 'vendor',
-            ])
-            ->all();
-    }
-
-    /**
-     * Contacts matching a line's current search, scoped to the role its account requires.
-     *
-     * @return Collection<int, Contact>
-     */
-    public function lineContactOptions(int $index): Collection
-    {
-        $role = $this->contactRequiringAccounts[(int) ($this->lines[$index]['account_id'] ?? 0)] ?? null;
-
-        if ($role === null) {
-            return collect();
-        }
-
-        $query = Contact::query()
-            ->where($role === 'customer' ? 'is_customer' : 'is_vendor', true)
-            ->where('is_active', true);
-
-        $search = trim((string) ($this->lines[$index]['contact_query'] ?? ''));
-
-        if ($search !== '') {
-            $query->where('display_name', 'like', '%'.$search.'%');
-        }
-
-        return $query->orderBy('display_name')->limit(50)->get(['id', 'display_name']);
-    }
-
-    public function lineContactName(int $index): ?string
-    {
-        $id = $this->lines[$index]['contact_id'] ?? null;
-
-        return $id ? Contact::query()->where('id', $id)->value('display_name') : null;
-    }
-
-    public function selectLineContact(int $index, int $id): void
-    {
-        $this->lines[$index]['contact_id'] = $id;
-        $this->lines[$index]['contact_creating'] = false;
-        $this->lines[$index]['new_contact_name'] = '';
-        $this->lines[$index]['contact_query'] = '';
-        $this->resetErrorBag(["lines.{$index}.contact_id", "lines.{$index}.new_contact_name"]);
-    }
-
-    public function startNewLineContact(int $index): void
-    {
-        $this->lines[$index]['new_contact_name'] = trim((string) ($this->lines[$index]['contact_query'] ?? ''));
-        $this->lines[$index]['contact_creating'] = true;
-        $this->lines[$index]['contact_id'] = null;
-        $this->lines[$index]['contact_query'] = '';
-        $this->resetErrorBag(["lines.{$index}.contact_id", "lines.{$index}.new_contact_name"]);
-    }
-
-    public function clearLineContact(int $index): void
-    {
-        $this->lines[$index]['contact_id'] = null;
-        $this->lines[$index]['contact_creating'] = false;
-        $this->lines[$index]['new_contact_name'] = '';
-        $this->lines[$index]['contact_query'] = '';
-        $this->resetErrorBag(["lines.{$index}.contact_id", "lines.{$index}.new_contact_name"]);
-    }
-
-    /**
      * Reset the contact picker when a line's account changes to one that no longer
      * requires it, and fill a blank tax code from the account's default.
      */
@@ -319,10 +242,7 @@ new #[Title('Journal entry')] class extends Component
         }
 
         if (! isset($this->contactRequiringAccounts[(int) $value])) {
-            $this->lines[$index]['contact_id'] = null;
-            $this->lines[$index]['contact_creating'] = false;
-            $this->lines[$index]['new_contact_name'] = '';
-            $this->lines[$index]['contact_query'] = '';
+            $this->resetLineContactState($index);
         }
     }
 
@@ -662,100 +582,21 @@ new #[Title('Journal entry')] class extends Component
     }
 
     /**
-     * Create any "add new" contacts typed into the line pickers before validation runs.
-     */
-    private function resolveNewLineContacts(): void
-    {
-        foreach ($this->lines as $i => $line) {
-            if (empty($line['contact_creating'])) {
-                continue;
-            }
-
-            $role = $this->contactRequiringAccounts[(int) ($line['account_id'] ?? 0)] ?? null;
-
-            if ($role === null || ! $this->lineHasAmount($line)) {
-                continue;
-            }
-
-            $this->validate(
-                ["lines.{$i}.new_contact_name" => ['required', 'string', 'max:255']],
-                attributes: ["lines.{$i}.new_contact_name" => $role === 'customer' ? __('customer name') : __('vendor name')],
-            );
-
-            $contact = Contact::create([
-                'display_name' => trim((string) $line['new_contact_name']),
-                'is_customer' => $role === 'customer',
-                'is_vendor' => $role === 'vendor',
-                'is_active' => true,
-            ]);
-
-            $this->lines[$i]['contact_id'] = $contact->id;
-            $this->lines[$i]['contact_creating'] = false;
-            $this->lines[$i]['new_contact_name'] = '';
-            $this->lines[$i]['contact_query'] = '';
-        }
-    }
-
-    /**
      * @param  array{debit: string, credit: string}  $line
      */
-    private function lineHasAmount(array $line): bool
+    protected function lineHasAmount(array $line): bool
     {
         $debit = Money::tryFromString((string) $line['debit'])?->cents ?? 0;
         $credit = Money::tryFromString((string) $line['credit'])?->cents ?? 0;
 
         return $debit !== 0 || $credit !== 0;
     }
-
-    /**
-     * Require a customer on Accounts Receivable lines and a vendor on Accounts Payable lines.
-     */
-    private function validateLineContacts(): void
-    {
-        $errors = [];
-
-        foreach ($this->lines as $i => $line) {
-            if (! $this->lineHasAmount($line)) {
-                continue;
-            }
-
-            $role = $this->contactRequiringAccounts[(int) ($line['account_id'] ?? 0)] ?? null;
-
-            if ($role === null) {
-                continue;
-            }
-
-            $contactId = $line['contact_id'] ?? null;
-
-            if (! $contactId) {
-                $errors["lines.{$i}.contact_id"] = $role === 'customer'
-                    ? __('Select a customer for the Accounts Receivable line.')
-                    : __('Select a vendor for the Accounts Payable line.');
-
-                continue;
-            }
-
-            $column = $role === 'customer' ? 'is_customer' : 'is_vendor';
-
-            $exists = Contact::query()
-                ->whereKey($contactId)
-                ->where($column, true)
-                ->exists();
-
-            if (! $exists) {
-                $errors["lines.{$i}.contact_id"] = $role === 'customer'
-                    ? __('Select a valid customer for the Accounts Receivable line.')
-                    : __('Select a valid vendor for the Accounts Payable line.');
-            }
-        }
-
-        if ($errors !== []) {
-            throw ValidationException::withMessages($errors);
-        }
-    }
 }; ?>
 
 <section class="w-full">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <flux:heading size="xl" level="1" class="mb-6">{{ $entry?->id ? __('Edit journal entry') : __('New journal entry') }}</flux:heading>
 
     @if ($linesLocked)
@@ -861,7 +702,7 @@ new #[Title('Journal entry')] class extends Component
 
                                 @php($contactRole = $this->contactRequiringAccounts[(int) ($line['account_id'] ?? 0)] ?? null)
                                 @if ($contactRole === 'customer')
-                                    <x-journal-contact-combo
+                                    <x-line-contact-combo
                                         :index="$i"
                                         add-label="customer"
                                         :placeholder="__('Search or add a customer…')"
@@ -873,7 +714,7 @@ new #[Title('Journal entry')] class extends Component
                                         data-test="line-customer-combo"
                                     />
                                 @elseif ($contactRole === 'vendor')
-                                    <x-journal-contact-combo
+                                    <x-line-contact-combo
                                         :index="$i"
                                         add-label="vendor"
                                         :placeholder="__('Search or add a vendor…')"
@@ -1020,4 +861,5 @@ new #[Title('Journal entry')] class extends Component
             </div>
         </form>
     </flux:modal>
+    @endif
 </section>

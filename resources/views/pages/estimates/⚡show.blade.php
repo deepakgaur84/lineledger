@@ -3,17 +3,27 @@
 use App\Actions\Sales\ConvertEstimateToInvoice;
 use App\Actions\Sales\ConvertEstimateToSalesOrder;
 use App\Enums\EstimateStatus;
+use App\Livewire\Attributes\GuardsEditLock;
+use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\Company;
 use App\Models\Estimate;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Estimate')] class extends Component {
+    use ShowsEditLock;
+
     public Company $company;
 
     public Estimate $estimate;
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->estimate;
+    }
 
     public function mount(Company $company, Estimate $estimate): void
     {
@@ -39,6 +49,7 @@ new #[Title('Estimate')] class extends Component {
             && $this->estimate->converted_sales_order_id === null;
     }
 
+    #[GuardsEditLock]
     public function accept(): void
     {
         if ($this->estimate->status !== EstimateStatus::Pending) {
@@ -50,6 +61,7 @@ new #[Title('Estimate')] class extends Component {
         Flux::toast(variant: 'success', text: __('Estimate accepted.'));
     }
 
+    #[GuardsEditLock]
     public function reject(): void
     {
         if (! in_array($this->estimate->status, [EstimateStatus::Pending, EstimateStatus::Accepted], true)) {
@@ -61,6 +73,7 @@ new #[Title('Estimate')] class extends Component {
         Flux::toast(variant: 'success', text: __('Estimate rejected.'));
     }
 
+    #[GuardsEditLock]
     public function convert(ConvertEstimateToInvoice $action): void
     {
         // Revive an orphaned estimate (its invoice was deleted) so it can convert again.
@@ -80,6 +93,7 @@ new #[Title('Estimate')] class extends Component {
         $this->redirectRoute('invoices.edit', ['company' => $this->company->slug, 'invoice' => $invoice->id], navigate: true);
     }
 
+    #[GuardsEditLock]
     public function convertToSalesOrder(ConvertEstimateToSalesOrder $action): void
     {
         // Revive an orphaned estimate (its document was deleted) so it can convert again.
@@ -101,6 +115,8 @@ new #[Title('Estimate')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    <x-edit-lock.banner :lock="$this->editLockBanner" />
+
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
             <flux:heading size="xl" level="1">{{ __('Estimate') }} {{ $estimate->estimate_no }}</flux:heading>

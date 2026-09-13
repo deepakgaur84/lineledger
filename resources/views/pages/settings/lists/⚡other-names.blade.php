@@ -3,6 +3,7 @@
 use App\Actions\Contacts\ConvertOtherName;
 use App\Actions\Contacts\SaveOtherName;
 use App\Enums\Section;
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Company;
 use App\Models\Contact;
 use App\Support\Contacts\ContactLinkResolver;
@@ -21,6 +22,8 @@ use Livewire\Component;
  * offer the one-way Convert to vendor / customer / employee.
  */
 new #[Title('Other names')] class extends Component {
+    use HoldsEditLock;
+
     public Company $company;
 
     public ?int $editingId = null;
@@ -38,6 +41,7 @@ new #[Title('Other names')] class extends Component {
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->reset(['editingId', 'f_display_name', 'f_notes', 'f_is_active']);
         $this->f_is_active = true;
         $this->resetErrorBag();
@@ -49,6 +53,11 @@ new #[Title('Other names')] class extends Component {
         // Scoped to other names: this form must never rename a vendor or
         // customer that happens to share the contacts table.
         $contact = Contact::query()->otherNames()->findOrFail($id);
+
+        if (! $this->acquireEditLock($contact, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
+
         $this->editingId = $contact->id;
         $this->f_display_name = $contact->display_name;
         $this->f_notes = (string) $contact->notes;
@@ -59,6 +68,10 @@ new #[Title('Other names')] class extends Component {
 
     public function save(): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(Contact::class, $this->editingId)) {
+            return;
+        }
+
         $validated = $this->validate([
             'f_display_name' => ['required', 'string', 'max:255'],
             'f_notes' => ['nullable', 'string', 'max:5000'],
@@ -74,6 +87,7 @@ new #[Title('Other names')] class extends Component {
             'is_active' => $validated['f_is_active'],
         ], $editing);
 
+        $this->completeEditLockSave();
         unset($this->otherNames);
         Flux::modal('other-names-form')->close();
         Flux::toast(variant: 'success', text: __('Other name saved.'));
@@ -99,10 +113,14 @@ new #[Title('Other names')] class extends Component {
         }
 
         try {
-            app(ConvertOtherName::class)->handle($contact, $role);
+            $converted = $this->guardEditLockedWrite($contact, fn () => app(ConvertOtherName::class)->handle($contact, $role));
         } catch (ValidationException $e) {
             $this->addError('convert', collect($e->errors())->flatten()->first());
 
+            return;
+        }
+
+        if (! $converted) {
             return;
         }
 
@@ -268,8 +286,11 @@ new #[Title('Other names')] class extends Component {
         </div>
     </x-pages::settings.layout>
 
-    <flux:modal name="other-names-form" class="max-w-lg">
+    <flux:modal name="other-names-form" class="max-w-lg" wire:close="releaseEditLock">
         <form wire:submit="save" class="space-y-6">
+            @if ($editLockToken)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg">{{ $editingId ? __('Edit other name') : __('New other name') }}</flux:heading>
             <div>
                 <flux:input wire:model.live.debounce.500ms="f_display_name" :label="__('Name')" :description="__('Printed on cheques as the payee.')" required data-test="other-name-name" />
@@ -288,4 +309,6 @@ new #[Title('Other names')] class extends Component {
             </div>
         </form>
     </flux:modal>
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

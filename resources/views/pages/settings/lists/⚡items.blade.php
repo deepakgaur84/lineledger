@@ -3,6 +3,7 @@
 use App\Actions\MasterData\SaveItem;
 use App\Enums\AccountSubtype;
 use App\Enums\ItemType;
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Livewire\Concerns\ImportsCsvList;
 use App\Models\Account;
 use App\Models\Company;
@@ -23,6 +24,7 @@ use Livewire\WithPagination;
 use Livewire\WithFileUploads;
 
 new #[Title('Items')] class extends Component {
+    use HoldsEditLock;
     use WithPagination;
     use ImportsCsvList;
     use WithFileUploads;
@@ -116,6 +118,7 @@ new #[Title('Items')] class extends Component {
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->resetForm();
         $this->f_inventory_asset_account_id = $this->company->default_inventory_asset_account_id;
         $this->f_cogs_account_id = $this->company->default_cogs_account_id;
@@ -125,6 +128,10 @@ new #[Title('Items')] class extends Component {
     public function openEdit(int $id): void
     {
         $i = Item::with('components')->findOrFail($id);
+
+        if (! $this->acquireEditLock($i, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
 
         $this->editingId = $i->id;
         $this->f_name = $i->name;
@@ -163,6 +170,10 @@ new #[Title('Items')] class extends Component {
 
     public function save(): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(Item::class, $this->editingId)) {
+            return;
+        }
+
         $companyId = $this->company->id;
 
         $rules = [
@@ -224,6 +235,7 @@ new #[Title('Items')] class extends Component {
             'components' => $this->f_type === ItemType::Bundle->value ? $this->f_components : [],
         ], $existingItem);
 
+        $this->completeEditLockSave();
         Flux::modal('item-form')->close();
         $this->resetForm();
         Flux::toast(variant: 'success', text: __('Item saved.'));
@@ -415,8 +427,11 @@ new #[Title('Items')] class extends Component {
         <div class="mt-4">{{ $this->items->links() }}</div>
     </x-pages::settings.layout>
 
-    <flux:modal name="item-form" class="max-w-xl">
+    <flux:modal name="item-form" class="max-w-xl" wire:close="releaseEditLock">
         <form wire:submit="save" class="space-y-6">
+            @if ($editLockToken)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg">{{ $editingId ? __('Edit item') : __('New item') }}</flux:heading>
 
             <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -565,4 +580,6 @@ new #[Title('Items')] class extends Component {
             <p class="mt-2">{{ __('Account columns reference your Chart of Accounts by code; default_tax_code references a tax code by its code. "type" is one of service, non_inventory, other_charge, inventory, bundle (left blank, it follows is_inventory). A new item_category is created automatically if it doesn\'t exist yet.') }}</p>
         </x-slot:help>
     </x-csv-import-modal>
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

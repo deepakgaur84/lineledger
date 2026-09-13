@@ -217,6 +217,30 @@ parameters:
 			path: app/Concerns/HasReportNotes.php
 
 		-
+			message: '#^Trait App\\Livewire\\Concerns\\GuardsEditLockedForm is used zero times and is not analysed\.$#'
+			identifier: trait.unused
+			count: 1
+			path: app/Livewire/Concerns/GuardsEditLockedForm.php
+
+		-
+			message: '#^Trait App\\Livewire\\Concerns\\HoldsEditLock is used zero times and is not analysed\.$#'
+			identifier: trait.unused
+			count: 1
+			path: app/Livewire/Concerns/HoldsEditLock.php
+
+		-
+			message: '#^Trait App\\Livewire\\Concerns\\ShowsEditLock is used zero times and is not analysed\.$#'
+			identifier: trait.unused
+			count: 1
+			path: app/Livewire/Concerns/ShowsEditLock.php
+
+		-
+			message: '#^Trait App\\Livewire\\Concerns\\ManagesLineContacts is used zero times and is not analysed\.$#'
+			identifier: trait.unused
+			count: 1
+			path: app/Livewire/Concerns/ManagesLineContacts.php
+
+		-
 			message: '#^Trait App\\Livewire\\Concerns\\ManagesStatementLineContacts is used zero times and is not analysed\.$#'
 			identifier: trait.unused
 			count: 1
@@ -689,18 +713,6 @@ parameters:
 			identifier: argument.type
 			count: 1
 			path: app/Http/Controllers/Stripe/WebhookController.php
-
-		-
-			message: '#^Strict comparison using \=\=\= between ''vendor'' and ''customer'' will always evaluate to false\.$#'
-			identifier: identical.alwaysFalse
-			count: 2
-			path: app/Http/Requests/Api/V1/JournalEntryLineRules.php
-
-		-
-			message: '#^Strict comparison using \=\=\= between string and App\\Enums\\AccountSubtype\:\:AccountsReceivable will always evaluate to false\.$#'
-			identifier: identical.alwaysFalse
-			count: 1
-			path: app/Http/Requests/Api/V1/JournalEntryLineRules.php
 
 		-
 			message: '#^Using nullsafe property access "\?\-\>payment_type" on left side of \?\? is unnecessary\. Use \-\> instead\.$#'
@@ -2337,12 +2349,6 @@ parameters:
 		-
 			message: '#^Access to an undefined property App\\Models\\Deposit\:\:\$fx_rate\.$#'
 			identifier: property.notFound
-			count: 1
-			path: app/Services/Posting/DepositPoster.php
-
-		-
-			message: '#^Offset ''contact_id'' does not exist on array\{account_id\: int, class_id\?\: int\|null, location_id\?\: int\|null, foreign\: int, home\: int, memo\: string\|null\}\.$#'
-			identifier: offsetAccess.notFound
 			count: 1
 			path: app/Services/Posting/DepositPoster.php
 

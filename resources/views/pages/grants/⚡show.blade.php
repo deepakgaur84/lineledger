@@ -1,16 +1,21 @@
 <?php
 
+use App\Livewire\Attributes\GuardsEditLock;
+use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\Company;
 use App\Models\Grant;
 use App\Services\Fundraising\GrantPoster;
 use App\Services\Fundraising\RecognizeDeferredContribution;
 use App\Support\Money;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Grant')] class extends Component {
+    use ShowsEditLock;
+
     public Company $company;
 
     public Grant $grant;
@@ -18,6 +23,11 @@ new #[Title('Grant')] class extends Component {
     public string $recognizeAmount = '';
 
     public string $recognizeDate = '';
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->grant;
+    }
 
     public function mount(Company $company, Grant $grant): void
     {
@@ -39,6 +49,7 @@ new #[Title('Grant')] class extends Component {
             && $this->grant->deferredBalanceCents() > 0;
     }
 
+    #[GuardsEditLock]
     public function postAward(): void
     {
         try {
@@ -59,6 +70,7 @@ new #[Title('Grant')] class extends Component {
         Flux::modal('recognize-grant')->show();
     }
 
+    #[GuardsEditLock]
     public function recognize(): void
     {
         $cents = Money::tryFromString($this->recognizeAmount)?->cents ?? 0;
@@ -83,6 +95,7 @@ new #[Title('Grant')] class extends Component {
         Flux::toast(variant: 'success', text: __('Grant revenue recognized.'));
     }
 
+    #[GuardsEditLock]
     public function void(): void
     {
         try {
@@ -99,6 +112,8 @@ new #[Title('Grant')] class extends Component {
 }; ?>
 
 <section class="mx-auto w-full max-w-3xl">
+    <x-edit-lock.banner :lock="$this->editLockBanner" />
+
     <div class="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
             <div class="flex items-center gap-3">

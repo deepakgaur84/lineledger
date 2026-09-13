@@ -6,6 +6,7 @@ use App\Models\BillPayment;
 use App\Models\Cheque;
 use App\Models\Company;
 use App\Models\PayrollCheque;
+use App\Support\Contacts\AddressLines;
 use App\Support\Money;
 use TCPDF;
 
@@ -32,6 +33,7 @@ class ChequePdfRenderer
      *     total_numeric: string,
      *     memo: string,
      *     bank_account_name: string,
+     *     address_lines: array<int, string>,
      *     lines: array<int, array{account: string, description: string, amount: string}>,
      * }
      */
@@ -61,7 +63,7 @@ class ChequePdfRenderer
      * A payroll cheque prints as a pay stub: net pay on the cheque band, with the
      * earnings and deduction breakdown on the voucher stubs.
      *
-     * @return array{date_mmddyyyy: string, date_slashed: string, payee: string, amount_numeric: string, amount_words: string, total_numeric: string, memo: string, bank_account_name: string, lines: array<int, array{account: string, description: string, amount: string}>}
+     * @return array{date_mmddyyyy: string, date_slashed: string, payee: string, amount_numeric: string, amount_words: string, total_numeric: string, memo: string, bank_account_name: string, address_lines: array<int, string>, lines: array<int, array{account: string, description: string, amount: string}>}
      */
     private function dataForPayrollCheque(PayrollCheque $cheque): array
     {
@@ -106,12 +108,44 @@ class ChequePdfRenderer
             'total_numeric' => $totalDecimal,
             'memo' => __('Net pay :run', ['run' => (string) $cheque->payRun->run_no]),
             'bank_account_name' => (string) ($cheque->bankAccount?->name ?? ''),
+            // Payroll cheques are usually handed over, not mailed, and an
+            // employee's home address on a shared printer is its own decision.
+            'address_lines' => [],
             'lines' => $stub,
         ];
     }
 
     /**
-     * @return array{date_mmddyyyy: string, date_slashed: string, payee: string, amount_numeric: string, amount_words: string, total_numeric: string, memo: string, bank_account_name: string, lines: array<int, array{account: string, description: string, amount: string}>}
+     * The address block for a cheque: its own snapshot, taken when the cheque
+     * was written, so a reprint shows where the cheque actually went.
+     *
+     * Cheques written before the snapshot existed have none, so those fall back
+     * to the payee's current address — better than printing nothing on a
+     * reprint. A free-text payee with no linked contact has neither, and prints
+     * no address at all.
+     *
+     * @return list<string>
+     */
+    private function chequeAddressLines(Cheque $cheque): array
+    {
+        $snapshot = [
+            'line1' => $cheque->payee_line1,
+            'line2' => $cheque->payee_line2,
+            'city' => $cheque->payee_city,
+            'region' => $cheque->payee_region,
+            'postal_code' => $cheque->payee_postal_code,
+            'country' => $cheque->payee_country,
+        ];
+
+        if (AddressLines::isEmpty($snapshot)) {
+            return AddressLines::forContact($cheque->payee, $cheque->company);
+        }
+
+        return AddressLines::format($snapshot, $cheque->company);
+    }
+
+    /**
+     * @return array{date_mmddyyyy: string, date_slashed: string, payee: string, amount_numeric: string, amount_words: string, total_numeric: string, memo: string, bank_account_name: string, address_lines: array<int, string>, lines: array<int, array{account: string, description: string, amount: string}>}
      */
     private function dataForBillPayment(BillPayment $payment): array
     {
@@ -130,6 +164,8 @@ class ChequePdfRenderer
             'total_numeric' => $totalDecimal,
             'memo' => (string) ($payment->memo ?? ''),
             'bank_account_name' => (string) ($payment->paidFromAccount?->name ?? ''),
+            // Only the direct-cheque path prints an address today.
+            'address_lines' => [],
             'lines' => $payment->applications->map(fn ($app) => [
                 'account' => (string) (optional($app->bill)->bill_no ?? ''),
                 'description' => (string) (optional($app->bill)->memo ?? ''),
@@ -139,11 +175,11 @@ class ChequePdfRenderer
     }
 
     /**
-     * @return array{date_mmddyyyy: string, date_slashed: string, payee: string, amount_numeric: string, amount_words: string, total_numeric: string, memo: string, bank_account_name: string, lines: array<int, array{account: string, description: string, amount: string}>}
+     * @return array{date_mmddyyyy: string, date_slashed: string, payee: string, amount_numeric: string, amount_words: string, total_numeric: string, memo: string, bank_account_name: string, address_lines: array<int, string>, lines: array<int, array{account: string, description: string, amount: string}>}
      */
     private function dataForCheque(Cheque $cheque): array
     {
-        $cheque->loadMissing('bankAccount', 'payee', 'lines.account');
+        $cheque->loadMissing('bankAccount', 'payee', 'company', 'lines.account');
 
         $amount = Money::fromCents((int) $cheque->amount_cents);
         $padWidth = (int) config('cheque.amount_words_pad_width', 60);
@@ -160,6 +196,7 @@ class ChequePdfRenderer
             'total_numeric' => $totalDecimal,
             'memo' => (string) ($cheque->memo ?? ''),
             'bank_account_name' => (string) ($cheque->bankAccount?->name ?? ''),
+            'address_lines' => $this->chequeAddressLines($cheque),
             'lines' => $cheque->lines->map(fn ($line) => [
                 'account' => (string) (optional($line->account)->code ?? ''),
                 'description' => (string) ($line->description ?? ''),
@@ -169,7 +206,7 @@ class ChequePdfRenderer
     }
 
     /**
-     * @param  array{date_mmddyyyy: string, date_slashed: string, payee: string, amount_numeric: string, amount_words: string, total_numeric: string, memo: string, bank_account_name: string, lines: array<int, array{account: string, description: string, amount: string}>}  $data
+     * @param  array{date_mmddyyyy: string, date_slashed: string, payee: string, amount_numeric: string, amount_words: string, total_numeric: string, memo: string, bank_account_name: string, address_lines: array<int, string>, lines: array<int, array{account: string, description: string, amount: string}>}  $data
      */
     private function renderPdf(array $data, string $reference, ?Company $company = null): string
     {
@@ -247,6 +284,19 @@ class ChequePdfRenderer
         // Payee — left-justified to the same x as the amount-in-words line.
         [$x, $y] = $fields['cheque_payee'];
         $place($x, $y, $data['payee']);
+
+        // Address block under the payee, so the cheque can be window-enveloped.
+        // Capped so a long address cannot run down into the MEMO line.
+        if ($data['address_lines'] !== []) {
+            [$ax, $ay] = $fields['cheque_payee_address'];
+            $addressStep = (float) $cfg['address_line_height'];
+            $addressMax = (int) $cfg['address_max_lines'];
+            $addressSize = (int) $cfg['address_font_size'];
+
+            foreach (array_slice($data['address_lines'], 0, $addressMax) as $i => $line) {
+                $place($ax, $ay + $i * $addressStep, $line, 'L', $addressSize);
+            }
+        }
 
         // Memo.
         if ($data['memo'] !== '' || $drawLabels) {

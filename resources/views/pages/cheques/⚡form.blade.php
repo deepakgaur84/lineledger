@@ -1,10 +1,13 @@
 <?php
 
 use App\Actions\Banking\SaveCheque;
+use App\Actions\Contacts\UpdateContactAddress;
 use App\Enums\AccountSubtype;
 use App\Enums\AccountType;
 use App\Enums\ChequeStatus;
 use App\Exceptions\Posting\PeriodLockedException;
+use App\Livewire\Concerns\GuardsEditLockedForm;
+use App\Livewire\Concerns\ManagesLineContacts;
 use App\Livewire\Concerns\ManagesPayeeCombo;
 use App\Models\Account;
 use App\Models\Attachment;
@@ -19,9 +22,12 @@ use App\Rules\MoneyString;
 use App\Services\AttachmentService;
 use App\Services\Posting\ChequePoster;
 use App\Services\Posting\DocumentNumberGenerator;
+use App\Support\Accounting\ControlAccountRoles;
 use App\Support\Banking\LastBankAccount;
+use App\Support\Contacts\AddressLines;
 use App\Support\Money;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -34,7 +40,13 @@ use Livewire\WithFileUploads;
 
 new #[Title('Cheque')] class extends Component
 {
-    use ManagesPayeeCombo;
+    use GuardsEditLockedForm;
+    use ManagesLineContacts;
+    // clearPayee is extended below to clear the address with the payee; the
+    // trait's own version is aliased so the override can still call it.
+    use ManagesPayeeCombo {
+        ManagesPayeeCombo::clearPayee as protected clearPayeeCombo;
+    }
     use WithFileUploads;
 
     public Company $company;
@@ -54,7 +66,30 @@ new #[Title('Cheque')] class extends Component
     public string $memo = '';
 
     /**
-     * @var array<int, array{account_id: ?int, description: string, amount: string, tax_code_id: ?int, tax_override: string, class_id: ?int, location_id: ?int, auto_tax_cents: int, tax_cents: int, total: int}>
+     * The address this cheque is mailed to. Seeded from the payee's record but
+     * editable per cheque, and snapshotted onto the cheque when saved — see
+     * SaveCheque::payeeAddress().
+     */
+    public string $payee_line1 = '';
+
+    public string $payee_line2 = '';
+
+    public string $payee_city = '';
+
+    public string $payee_region = '';
+
+    public string $payee_postal_code = '';
+
+    public string $payee_country = '';
+
+    /** Save path parked while the "update the payee's record too?" modal is open. */
+    public ?string $pendingSaveAction = null;
+
+    /** Set once the operator has answered that modal, so a retry never re-asks. */
+    public bool $addressWriteBackAnswered = false;
+
+    /**
+     * @var array<int, array{account_id: ?int, contact_id: ?int, contact_query: string, contact_creating: bool, new_contact_name: string, description: string, amount: string, tax_code_id: ?int, tax_override: string, class_id: ?int, location_id: ?int, auto_tax_cents: int, tax_cents: int, total: int}>
      */
     public array $lines = [];
 
@@ -63,6 +98,11 @@ new #[Title('Cheque')] class extends Component
 
     #[Url(as: 'from')]
     public ?int $duplicateFromId = null;
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->cheque;
+    }
 
     public function mount(Company $company, ?Cheque $cheque = null): void
     {
@@ -80,6 +120,15 @@ new #[Title('Cheque')] class extends Component
             $this->payee_contact_id = $cheque->payee_contact_id;
             $this->payee_name = $cheque->payee_name;
             $this->memo = $cheque->memo ?? '';
+
+            $this->fillPayeeAddress([
+                'line1' => $cheque->payee_line1,
+                'line2' => $cheque->payee_line2,
+                'city' => $cheque->payee_city,
+                'region' => $cheque->payee_region,
+                'postal_code' => $cheque->payee_postal_code,
+                'country' => $cheque->payee_country,
+            ]);
 
             $this->loadLinesFrom($cheque);
         } else {
@@ -107,6 +156,7 @@ new #[Title('Cheque')] class extends Component
     {
         $this->lines = $cheque->lines->map(fn ($l) => [
             'account_id' => $l->account_id,
+            ...$this->emptyLineContactState($l->contact_id),
             'description' => $l->description ?? '',
             'amount' => Money::fromCents((int) $l->amount_cents)->toDecimalString(),
             'tax_code_id' => $l->tax_code_id,
@@ -146,6 +196,15 @@ new #[Title('Cheque')] class extends Component
         $this->payee_contact_id = $source->payee_contact_id;
         $this->payee_name = $source->payee_name;
         $this->memo = $source->memo ?? '';
+
+        $this->fillPayeeAddress([
+            'line1' => $source->payee_line1,
+            'line2' => $source->payee_line2,
+            'city' => $source->payee_city,
+            'region' => $source->payee_region,
+            'postal_code' => $source->payee_postal_code,
+            'country' => $source->payee_country,
+        ]);
 
         $this->loadLinesFrom($source);
 
@@ -222,11 +281,99 @@ new #[Title('Cheque')] class extends Component
     /**
      * Default the memo to the supplier's account number so it prints on the
      * cheque (QuickBooks behaviour). The user can still overwrite it.
+     *
+     * Also seeds any AR/AP line still missing a contact, so picking the payee
+     * after coding the line pre-fills it the same way coding the line after
+     * picking the payee does.
      */
     protected function afterPayeeSelected(Contact $contact): void
     {
         if ($this->memo === '' && $contact->account_no) {
             $this->memo = $contact->account_no;
+        }
+
+        foreach (array_keys($this->lines) as $i) {
+            $this->prefillLineContactFromPayee($i);
+        }
+
+        // Replace the whole block, never merge: the address belongs to the payee,
+        // so switching payee must not leave the previous one's street behind.
+        $this->fillPayeeAddress([
+            'line1' => $contact->billing_line1,
+            'line2' => $contact->billing_line2,
+            'city' => $contact->billing_city,
+            'region' => $contact->billing_region,
+            'postal_code' => $contact->billing_postal_code,
+            'country' => $contact->billing_country,
+        ]);
+
+        // A freshly seeded address matches the record by definition.
+        $this->addressWriteBackAnswered = false;
+    }
+
+    /**
+     * Clearing the payee clears the address with it — it described that payee.
+     */
+    public function clearPayee(): void
+    {
+        $this->clearPayeeCombo();
+
+        $this->fillPayeeAddress([]);
+        $this->addressWriteBackAnswered = false;
+    }
+
+    /**
+     * @param  array<string, ?string>  $address
+     */
+    protected function fillPayeeAddress(array $address): void
+    {
+        $this->payee_line1 = (string) ($address['line1'] ?? '');
+        $this->payee_line2 = (string) ($address['line2'] ?? '');
+        $this->payee_city = (string) ($address['city'] ?? '');
+        $this->payee_region = (string) ($address['region'] ?? '');
+        $this->payee_postal_code = (string) ($address['postal_code'] ?? '');
+        $this->payee_country = (string) ($address['country'] ?? '');
+    }
+
+    /**
+     * The typed address, in the shape SaveCheque and UpdateContactAddress take.
+     *
+     * @return array<string, string>
+     */
+    public function payeeAddressInput(): array
+    {
+        return [
+            'line1' => trim($this->payee_line1),
+            'line2' => trim($this->payee_line2),
+            'city' => trim($this->payee_city),
+            'region' => trim($this->payee_region),
+            'postal_code' => trim($this->payee_postal_code),
+            'country' => mb_strtoupper(trim($this->payee_country)),
+        ];
+    }
+
+    /**
+     * Seed a line's customer / vendor from the cheque's payee when the payee
+     * holds the role the line's account requires — the common case, where the
+     * cheque goes to the very customer or vendor whose balance it settles.
+     * Leaves the picker blank otherwise (paying a third party on a customer's
+     * behalf), and never overwrites a contact already chosen.
+     */
+    protected function prefillLineContactFromPayee(int $i): void
+    {
+        $role = $this->lineContactRole($i);
+
+        if ($role === null || ! empty($this->lines[$i]['contact_id']) || ! $this->payee_contact_id) {
+            return;
+        }
+
+        $holdsRole = Contact::query()
+            ->whereKey($this->payee_contact_id)
+            ->where(ControlAccountRoles::roleColumn($role), true)
+            ->exists();
+
+        if ($holdsRole) {
+            $this->lines[$i]['contact_id'] = (int) $this->payee_contact_id;
         }
     }
 
@@ -234,6 +381,7 @@ new #[Title('Cheque')] class extends Component
     {
         return [
             'account_id' => null, 'description' => '', 'amount' => '0.00',
+            ...$this->emptyLineContactState(),
             'tax_code_id' => null, 'secondary_tax_code_id' => null, 'tax_code_ids' => [], 'tax_override' => '', 'class_id' => null, 'location_id' => null,
             'auto_tax_cents' => 0, 'tax_cents' => 0, 'secondary_tax_cents' => 0, 'total' => 0,
         ];
@@ -275,11 +423,32 @@ new #[Title('Cheque')] class extends Component
 
         // Picking an account fills a blank tax code from the account's
         // default — never overwriting one already on the line.
-        if (str_ends_with($key, '.account_id') && $value && empty($this->lines[$i]['tax_code_id'])) {
-            $this->lines[$i]['tax_code_id'] = Account::find($value)?->default_tax_code_id;
+        if (str_ends_with($key, '.account_id')) {
+            if ($value && empty($this->lines[$i]['tax_code_id'])) {
+                $this->lines[$i]['tax_code_id'] = Account::find($value)?->default_tax_code_id;
+            }
+
+            // An AR/AP account needs a customer / vendor; anything else must not
+            // carry one, so a stale pick can't ride along on an expense line.
+            if ($this->lineContactRole($i) === null) {
+                $this->resetLineContactState($i);
+            } else {
+                $this->prefillLineContactFromPayee($i);
+            }
         }
 
         $this->recalcLine($i);
+    }
+
+    /**
+     * A cheque line carries money when its amount is non-zero; the tax columns
+     * are derived from it, so the amount alone decides.
+     *
+     * @param  array<string, mixed>  $line
+     */
+    protected function lineHasAmount(array $line): bool
+    {
+        return (Money::tryFromString((string) ($line['amount'] ?? ''))?->cents ?? 0) !== 0;
     }
 
     protected function recalcLine(int $i): void
@@ -317,6 +486,10 @@ new #[Title('Cheque')] class extends Component
 
     public function saveDraft(): void
     {
+        if ($this->promptAddressWriteBack('draft')) {
+            return;
+        }
+
         if ($this->cheque?->journal_entry_id) {
             $this->addError('lines', __('This :label is already posted. Use Save changes to update it.', [
                 'label' => mb_strtolower($this->company->jurisdiction->cheque('singular')),
@@ -325,7 +498,9 @@ new #[Title('Cheque')] class extends Component
             return;
         }
 
-        $this->cheque = app(SaveCheque::class)->handle($this->validatedChequeData(), $this->cheque);
+        // A draft writes nothing to the ledger, so there is nothing yet to
+        // mis-attribute: the AR/AP contact is only demanded at the post.
+        $this->cheque = app(SaveCheque::class)->handle($this->validatedChequeData(requireContacts: false), $this->cheque);
         $this->storePendingAttachments();
 
         Flux::toast(variant: 'success', text: __('Draft saved.'));
@@ -340,6 +515,10 @@ new #[Title('Cheque')] class extends Component
      */
     public function postCheque(ChequePoster $poster): void
     {
+        if ($this->promptAddressWriteBack('post')) {
+            return;
+        }
+
         $data = $this->validatedChequeData();
         $wasPosted = $this->cheque?->journal_entry_id !== null;
 
@@ -364,13 +543,83 @@ new #[Title('Cheque')] class extends Component
     }
 
     /**
+     * Park the save and ask whether the payee's record should learn the new
+     * address. Returns true when the caller must stand down — the modal is now
+     * open and one of its buttons will re-enter the save.
+     *
+     * Mirrors the duplicate-bill-number interstitial on the bill form.
+     */
+    protected function promptAddressWriteBack(string $action): bool
+    {
+        if ($this->addressWriteBackAnswered || ! $this->addressDiffersFromContact()) {
+            return false;
+        }
+
+        $this->pendingSaveAction = $action;
+        Flux::modal('cheque-address-writeback')->show();
+
+        return true;
+    }
+
+    /**
+     * Whether the typed address is a real change to the linked payee's record.
+     * A free-text payee has no record to update, and an address the operator has
+     * emptied entirely is a clearing of this cheque, not of the contact.
+     */
+    protected function addressDiffersFromContact(): bool
+    {
+        $contact = $this->selectedPayee;
+        $address = $this->payeeAddressInput();
+
+        if ($contact === null || AddressLines::isEmpty($address)) {
+            return false;
+        }
+
+        foreach ([
+            'line1' => 'billing_line1',
+            'line2' => 'billing_line2',
+            'city' => 'billing_city',
+            'region' => 'billing_region',
+            'postal_code' => 'billing_postal_code',
+            'country' => 'billing_country',
+        ] as $key => $column) {
+            if ($address[$key] !== (string) ($contact->{$column} ?? '')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public function confirmAddressWriteBack(bool $updateContact, ChequePoster $poster): void
+    {
+        $this->addressWriteBackAnswered = true;
+        Flux::modal('cheque-address-writeback')->close();
+
+        // While someone is editing the payee's record, skip only the write-back
+        // (the guard toasts who) — the cheque still saves with its own address.
+        if ($updateContact && $contact = $this->selectedPayee) {
+            $this->guardEditLockedWrite($contact, fn () => app(UpdateContactAddress::class)->handle($contact, $this->payeeAddressInput()));
+            unset($this->selectedPayee);
+        }
+
+        $action = $this->pendingSaveAction;
+        $this->pendingSaveAction = null;
+
+        $action === 'post' ? $this->postCheque($poster) : $this->saveDraft();
+    }
+
+    /**
      * Validate the form and shape it into the cents-based payload
      * {@see SaveCheque} takes. Runs outside the save transaction so a
      * validation failure never opens one.
      *
+     * $requireContacts gates the Accounts Receivable / Accounts Payable rule:
+     * on at the post, off for a draft save.
+     *
      * @return array<string, mixed>
      */
-    protected function validatedChequeData(): array
+    protected function validatedChequeData(bool $requireContacts = true): array
     {
         $companyId = $this->company->id;
 
@@ -380,9 +629,17 @@ new #[Title('Cheque')] class extends Component
             'cheque_date' => ['required', 'date'],
             'payee_contact_id' => ['nullable', 'integer', Rule::exists('contacts', 'id')->where('company_id', $companyId)],
             'payee_name' => ['required', 'string', 'max:255'],
+            'payee_line1' => ['nullable', 'string', 'max:255'],
+            'payee_line2' => ['nullable', 'string', 'max:255'],
+            'payee_city' => ['nullable', 'string', 'max:255'],
+            'payee_region' => ['nullable', 'string', 'max:255'],
+            'payee_postal_code' => ['nullable', 'string', 'max:255'],
+            // max, not size: Livewire submits an untouched field as '' not null.
+            'payee_country' => ['nullable', 'string', 'max:2'],
             'memo' => ['nullable', 'string'],
             'lines' => ['array', 'min:1'],
             'lines.*.account_id' => ['required', 'integer', Rule::exists('accounts', 'id')->where('company_id', $companyId)],
+            'lines.*.contact_id' => ['nullable', 'integer', Rule::exists('contacts', 'id')->where('company_id', $companyId)],
             'lines.*.amount' => ['required', 'string', new MoneyString],
             'lines.*.tax_code_id' => ['nullable', 'integer', Rule::exists('tax_codes', 'id')->where('company_id', $companyId)],
             'lines.*.secondary_tax_code_id' => ['nullable', 'integer', Rule::exists('tax_codes', 'id')->where('company_id', $companyId)],
@@ -396,15 +653,26 @@ new #[Title('Cheque')] class extends Component
             'payee_name.required' => __('Choose a payee, or add the name as an Other name.'),
         ]);
 
+        if ($requireContacts) {
+            $this->resolveNewLineContacts();
+            $this->validateLineContacts();
+        }
+
         return [
             'bank_account_id' => $validated['bank_account_id'],
             'cheque_no' => $validated['cheque_no'],
             'cheque_date' => $validated['cheque_date'],
             'payee_contact_id' => $validated['payee_contact_id'] ?: null,
             'payee_name' => $validated['payee_name'],
+            'payee_address' => $this->payeeAddressInput(),
             'memo' => $validated['memo'] ?: null,
-            'lines' => array_map(fn ($line) => [
+            'lines' => array_map(fn ($i, $line) => [
                 'account_id' => $line['account_id'],
+                // Only an AR/AP line keeps a contact — the account may have been
+                // changed after one was picked.
+                'contact_id' => $this->lineContactRole($i) !== null
+                    ? (($this->lines[$i]['contact_id'] ?? null) ?: null)
+                    : null,
                 'description' => $line['description'] ?? '',
                 'amount_cents' => Money::fromString($line['amount'])->cents,
                 'tax_code_id' => $line['tax_code_id'] ?? null,
@@ -414,7 +682,7 @@ new #[Title('Cheque')] class extends Component
                     : null,
                 'class_id' => $line['class_id'] ?? null,
                 'location_id' => $line['location_id'] ?? null,
-            ], $validated['lines']),
+            ], array_keys($validated['lines']), $validated['lines']),
         ];
     }
 
@@ -604,6 +872,9 @@ new #[Title('Cheque')] class extends Component
 }; ?>
 
 <section class="w-full">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     @php($j = $company->jurisdiction)
     <flux:heading size="xl" level="1" class="mb-6">{{ $cheque?->id ? $j->chequeLabel('edit') : $j->chequeLabel('write') }}</flux:heading>
 
@@ -643,6 +914,20 @@ new #[Title('Cheque')] class extends Component
                     data-test="cheque-payee-combo"
                     required
                 />
+            </div>
+
+            {{-- Where the cheque gets mailed. Seeded from the payee's record,
+                 editable for this cheque, and printed on the cheque itself. --}}
+            <div class="space-y-3 rounded-lg border border-border p-4 md:col-span-2" data-test="cheque-payee-address">
+                <flux:heading size="sm">{{ __('Address') }}</flux:heading>
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <flux:input wire:model="payee_line1" :label="__('Address line 1')" data-test="cheque-payee-line1" />
+                    <flux:input wire:model="payee_line2" :label="__('Address line 2')" />
+                    <flux:input wire:model="payee_city" :label="__('City')" />
+                    <flux:input wire:model="payee_region" :label="__('Province / State')" />
+                    <flux:input wire:model="payee_postal_code" :label="__('Postal / ZIP')" />
+                    <flux:input wire:model="payee_country" :label="__('Country')" maxlength="2" placeholder="CA" :description="__('Two-letter code')" data-test="cheque-payee-country" />
+                </div>
             </div>
         </div>
 
@@ -698,6 +983,36 @@ new #[Title('Cheque')] class extends Component
                                         <flux:select.option :value="$opt->id">{{ $opt->code }} — {{ $opt->name }}</flux:select.option>
                                     @endforeach
                                 </flux:select>
+
+                                {{-- An Accounts Receivable / Payable line needs its own customer
+                                     or vendor: the payee is who the cheque is made out to, which
+                                     is often not whose balance it settles. --}}
+                                @php($contactRole = $this->contactRequiringAccounts[(int) ($line['account_id'] ?? 0)] ?? null)
+                                @if ($contactRole === 'customer')
+                                    <x-line-contact-combo
+                                        :index="$i"
+                                        add-label="customer"
+                                        :placeholder="__('Search or add a customer…')"
+                                        :options="$this->lineContactOptions($i)"
+                                        :selected-id="$line['contact_id']"
+                                        :selected-name="$this->lineContactName($i)"
+                                        :query="$line['contact_query']"
+                                        :creating="$line['contact_creating']"
+                                        data-test="line-customer-combo"
+                                    />
+                                @elseif ($contactRole === 'vendor')
+                                    <x-line-contact-combo
+                                        :index="$i"
+                                        add-label="vendor"
+                                        :placeholder="__('Search or add a vendor…')"
+                                        :options="$this->lineContactOptions($i)"
+                                        :selected-id="$line['contact_id']"
+                                        :selected-name="$this->lineContactName($i)"
+                                        :query="$line['contact_query']"
+                                        :creating="$line['contact_creating']"
+                                        data-test="line-vendor-combo"
+                                    />
+                                @endif
                             </td>
                             <td class="block px-2 py-1 lg:table-cell lg:py-2">
                                 <span class="mb-1 block text-xs font-medium text-muted-foreground lg:hidden">{{ __('Description') }}</span>
@@ -833,4 +1148,31 @@ new #[Title('Cheque')] class extends Component
             </div>
         </div>
     </form>
+
+    {{-- The address on a cheque is usually a correction to a stale record, so
+         offer to keep the payee's record in step. The cheque stores its own copy
+         either way. --}}
+    <flux:modal name="cheque-address-writeback" class="max-w-md">
+        <div class="space-y-4">
+            <flux:heading size="lg">{{ __('Address changed') }}</flux:heading>
+            <flux:text>
+                {{ __('This address is different from the one on :name\'s record. Update their record too, or keep the change on this :label only?', [
+                    'name' => $this->selectedPayee?->display_name ?? $payee_name,
+                    'label' => mb_strtolower($j->cheque('singular')),
+                ]) }}
+            </flux:text>
+            <div class="flex justify-end gap-2">
+                <flux:modal.close>
+                    <flux:button variant="filled" type="button">{{ __('Cancel') }}</flux:button>
+                </flux:modal.close>
+                <flux:button variant="filled" type="button" wire:click="confirmAddressWriteBack(false)" data-test="address-writeback-skip">
+                    {{ __('Just this :label', ['label' => mb_strtolower($j->cheque('singular'))]) }}
+                </flux:button>
+                <flux:button variant="primary" type="button" wire:click="confirmAddressWriteBack(true)" data-test="address-writeback-update">
+                    {{ __('Update address') }}
+                </flux:button>
+            </div>
+        </div>
+    </flux:modal>
+    @endif
 </section>

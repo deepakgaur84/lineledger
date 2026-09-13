@@ -1,17 +1,27 @@
 <?php
 
 use App\Enums\TransferStatus;
+use App\Livewire\Attributes\GuardsEditLock;
+use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\Company;
 use App\Models\Transfer;
 use App\Services\Posting\TransferPoster;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Transfer')] class extends Component {
+    use ShowsEditLock;
+
     public Company $company;
 
     public Transfer $transfer;
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->transfer;
+    }
 
     public function mount(Company $company, Transfer $transfer): void
     {
@@ -19,6 +29,7 @@ new #[Title('Transfer')] class extends Component {
         $this->transfer = $transfer->load('fromAccount', 'toAccount', 'journalEntry');
     }
 
+    #[GuardsEditLock]
     public function void(TransferPoster $poster): void
     {
         try {
@@ -40,6 +51,8 @@ new #[Title('Transfer')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    <x-edit-lock.banner :lock="$this->editLockBanner" />
+
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
             <flux:heading size="xl" level="1">{{ __('Transfer') }} {{ $transfer->transfer_no }}</flux:heading>

@@ -2,17 +2,27 @@
 
 use App\Enums\DepositStatus;
 use App\Exceptions\Posting\PeriodLockedException;
+use App\Livewire\Attributes\GuardsEditLock;
+use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\Company;
 use App\Models\Deposit;
 use App\Services\Posting\DepositPoster;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Deposit')] class extends Component {
+    use ShowsEditLock;
+
     public Company $company;
 
     public Deposit $deposit;
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->deposit;
+    }
 
     public function mount(Company $company, Deposit $deposit): void
     {
@@ -20,6 +30,7 @@ new #[Title('Deposit')] class extends Component {
         $this->deposit = $deposit->load('lines.customerReceipt.contact', 'lines.account', 'lines.contact', 'bankAccount', 'journalEntry');
     }
 
+    #[GuardsEditLock]
     public function void(DepositPoster $poster): void
     {
         try {
@@ -34,6 +45,7 @@ new #[Title('Deposit')] class extends Component {
         $this->redirectRoute('deposits.index', ['company' => $this->company->slug], navigate: true);
     }
 
+    #[GuardsEditLock]
     public function post(DepositPoster $poster): void
     {
         try {
@@ -50,6 +62,8 @@ new #[Title('Deposit')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    <x-edit-lock.banner :lock="$this->editLockBanner" />
+
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
             <flux:heading size="xl" level="1">{{ __('Deposit') }} {{ $deposit->deposit_no }}</flux:heading>

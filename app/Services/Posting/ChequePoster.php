@@ -2,6 +2,7 @@
 
 namespace App\Services\Posting;
 
+use App\Enums\AccountSubtype;
 use App\Enums\AuditAction;
 use App\Enums\ChequeStatus;
 use App\Exceptions\Posting\AlreadyPostedException;
@@ -9,7 +10,10 @@ use App\Exceptions\Posting\PeriodLockedException;
 use App\Exceptions\Posting\UnbalancedJournalException;
 use App\Models\Account;
 use App\Models\Cheque;
+use App\Models\ChequeLine;
+use App\Models\Contact;
 use App\Models\JournalEntry;
+use App\Models\JournalLine;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
 use App\Services\Currency\ExchangeRateService;
@@ -24,7 +28,7 @@ use RuntimeException;
 
 /**
  * Posts a direct-expense cheque (no bill linkage) to the GL.
- *   DR  Expense (per-line, grouped by account, gross-up non-recoverable tax)
+ *   DR  Expense (per-line, grouped by account + contact, gross-up non-recoverable tax)
  *   DR  Tax Payable (per-agency, recoverable tax = input tax credit)
  *   CR    Bank account
  *
@@ -94,11 +98,11 @@ class ChequePoster
                 'journal_entry_id' => $entry->id,
             ])->save();
 
-            // A refund cheque debits Accounts Receivable, so the payee's cached
-            // AR balance must be recomputed to match the GL.
-            if ($cheque->isRefund()) {
-                $cheque->payee?->recomputeArBalance();
-            }
+            // Any leg on an AR/AP control account moves a contact's sub-ledger,
+            // whose cached balance is derived from the posted GL. Subsumes the old
+            // refund-only case: a credit-memo refund cheque's single line IS the AR
+            // leg. Must run after JournalPoster::post() flipped is_posted.
+            $this->recomputeSubledgerBalances($cheque, $entry->lines);
 
             $entry = $entry->fresh();
 
@@ -175,6 +179,11 @@ class ChequePoster
             // removing, the new date for the impact we're writing.
             $oldAccountIds = $entry->lines->pluck('account_id')->all();
 
+            // Keep the old line models too: a contact this edit REMOVES still needs
+            // its cache corrected, and $entry->refresh() below swaps the relation
+            // for the rebuilt lines.
+            $oldLines = $entry->lines->all();
+
             $newAccountIds = collect([$cheque->bank_account_id])
                 ->merge($cheque->lines->pluck('account_id'))
                 ->merge(array_keys($this->recoverableTaxByPayableAccount($cheque)));
@@ -201,9 +210,7 @@ class ChequePoster
                 Account::withoutGlobalScopes()->find($id)?->recomputeBalance();
             }
 
-            if ($cheque->isRefund()) {
-                $cheque->payee?->recomputeArBalance();
-            }
+            $this->recomputeSubledgerBalances($cheque, [...$oldLines, ...$entry->lines->all()]);
 
             $entry = $entry->fresh();
 
@@ -231,7 +238,7 @@ class ChequePoster
     public function void(Cheque $cheque, ?CarbonImmutable $voidDate = null): void
     {
         DB::transaction(fn () => AuditMute::silence(function () use ($cheque, $voidDate) {
-            $cheque->loadMissing('journalEntry');
+            $cheque->loadMissing('journalEntry.lines');
 
             if (! $cheque->journal_entry_id) {
                 throw new RuntimeException('Cheque is not posted.');
@@ -249,9 +256,10 @@ class ChequePoster
                 'voided_by_user_id' => Auth::id(),
             ])->save();
 
-            if ($cheque->isRefund()) {
-                $cheque->payee?->recomputeArBalance();
-            }
+            // JournalPoster::void() copies contact_id onto each reversing line and
+            // posts it, so the reversal's contacts are the original's — recompute
+            // from those, now that the reversal is on the books.
+            $this->recomputeSubledgerBalances($cheque, $cheque->journalEntry->lines);
 
             $this->auditRecorder->record(
                 (int) $cheque->company_id,
@@ -283,11 +291,11 @@ class ChequePoster
         $totalForeign = (int) $cheque->amount_cents;
         $bankHome = Currency::toHomeCents($totalForeign, $rate);
 
-        /** @var list<array{account_id: int, class_id: ?int, location_id: ?int, foreign: int, home: int, memo: ?string}> $legs */
+        /** @var list<array{account_id: int, class_id: ?int, location_id: ?int, contact_id: ?int, foreign: int, home: int, memo: ?string}> $legs */
         $legs = [];
 
         foreach ($this->expenseByAccount($cheque) as $expense) {
-            $legs[] = ['account_id' => $expense['account_id'], 'class_id' => $expense['class_id'], 'location_id' => $expense['location_id'], 'foreign' => $expense['cents'], 'home' => Currency::toHomeCents($expense['cents'], $rate), 'memo' => null];
+            $legs[] = ['account_id' => $expense['account_id'], 'class_id' => $expense['class_id'], 'location_id' => $expense['location_id'], 'contact_id' => $expense['contact_id'], 'foreign' => $expense['cents'], 'home' => Currency::toHomeCents($expense['cents'], $rate), 'memo' => null];
         }
 
         foreach ($this->recoverableTaxByPayableAccount($cheque) as $payableAccountId => $foreignCents) {
@@ -296,7 +304,9 @@ class ChequePoster
             }
 
             // Input tax credit is a system/aggregate leg — never dimension-tagged.
-            $legs[] = ['account_id' => $payableAccountId, 'class_id' => null, 'location_id' => null, 'foreign' => $foreignCents, 'home' => Currency::toHomeCents($foreignCents, $rate), 'memo' => 'Input tax credit'];
+            // It is owed to the tax agency, not to a line's customer/vendor, so it
+            // carries the cheque's payee like the bank leg does.
+            $legs[] = ['account_id' => $payableAccountId, 'class_id' => null, 'location_id' => null, 'contact_id' => $cheque->payee_contact_id === null ? null : (int) $cheque->payee_contact_id, 'foreign' => $foreignCents, 'home' => Currency::toHomeCents($foreignCents, $rate), 'memo' => 'Input tax credit'];
         }
 
         $this->applyRoundingPlug($legs, $bankHome);
@@ -309,7 +319,7 @@ class ChequePoster
                 'debit_cents' => $leg['home'],
                 'credit_cents' => 0,
                 'memo' => $leg['memo'],
-                'contact_id' => $cheque->payee_contact_id,
+                'contact_id' => $leg['contact_id'],
                 'line_order' => $order++,
                 'class_id' => $leg['class_id'],
                 'location_id' => $leg['location_id'],
@@ -332,6 +342,86 @@ class ChequePoster
         }
     }
 
+    /**
+     * Recompute the cached AR/AP balance of every contact stamped on one of the
+     * given lines' control-account legs.
+     *
+     * Those caches ({@see Contact::recomputeArBalance()}) are derived from the
+     * posted GL, so they must be refreshed after any post / repost / void that
+     * moves a contact's sub-ledger — including for a contact an edit REMOVED,
+     * which is why repost() passes the old and rebuilt lines together.
+     *
+     * @param  iterable<JournalLine>  $lines
+     */
+    protected function recomputeSubledgerBalances(Cheque $cheque, iterable $lines): void
+    {
+        $stamped = collect($lines)->filter(fn (JournalLine $line): bool => $line->contact_id !== null);
+
+        $sides = $this->subledgerAccountSides(
+            $cheque,
+            $stamped->pluck('account_id')->map(fn ($id): int => (int) $id)->unique()->values()->all(),
+        );
+
+        if ($sides === []) {
+            return;
+        }
+
+        /** @var array<string, array{0: string, 1: int}> $work */
+        $work = [];
+
+        foreach ($stamped as $line) {
+            $side = $sides[(int) $line->account_id] ?? null;
+
+            if ($side !== null) {
+                $work[$side.':'.(int) $line->contact_id] = [$side, (int) $line->contact_id];
+            }
+        }
+
+        foreach ($work as [$side, $contactId]) {
+            $contact = Contact::withoutGlobalScopes()
+                ->where('company_id', $cheque->company_id)
+                ->find($contactId);
+
+            if ($contact === null) {
+                continue;
+            }
+
+            $side === 'ar' ? $contact->recomputeArBalance() : $contact->recomputeApBalance();
+        }
+    }
+
+    /**
+     * Which of the given accounts are AR / AP control accounts. Matched by
+     * subtype across every currency — the same definition
+     * {@see Contact::recomputeArBalance()} sums over, so the cache and the
+     * trigger to refresh it can never disagree.
+     *
+     * @param  list<int>  $accountIds
+     * @return array<int, string> account id => 'ar'|'ap'
+     */
+    protected function subledgerAccountSides(Cheque $cheque, array $accountIds): array
+    {
+        if ($accountIds === []) {
+            return [];
+        }
+
+        $sides = [];
+
+        foreach (['ar' => AccountSubtype::AccountsReceivable, 'ap' => AccountSubtype::AccountsPayable] as $side => $subtype) {
+            $ids = Account::withoutGlobalScopes()
+                ->where('company_id', $cheque->company_id)
+                ->where('subtype', $subtype->value)
+                ->whereIn('id', $accountIds)
+                ->pluck('id');
+
+            foreach ($ids as $id) {
+                $sides[(int) $id] = $side;
+            }
+        }
+
+        return $sides;
+    }
+
     protected function lockRate(Cheque $cheque): string
     {
         if ($cheque->fx_rate !== null) {
@@ -350,7 +440,7 @@ class ChequePoster
     }
 
     /**
-     * @return list<array{account_id: int, class_id: ?int, location_id: ?int, cents: int}>
+     * @return list<array{account_id: int, class_id: ?int, location_id: ?int, contact_id: ?int, cents: int}>
      */
     protected function expenseByAccount(Cheque $cheque): array
     {
@@ -366,17 +456,37 @@ class ChequePoster
                 [$line->secondaryTaxCode, (int) $line->secondary_tax_cents],
             ]);
 
-            $key = $line->account_id.':'.($line->class_id ?? '').':'.($line->location_id ?? '');
+            // Resolve the contact BEFORE keying, never after: a line naming the payee
+            // explicitly and a line falling back to it must land on the SAME leg, or
+            // the entry grows two rows identical in every posted column.
+            $contactId = $this->lineContactId($cheque, $line);
+
+            $key = $line->account_id.':'.($line->class_id ?? '').':'.($line->location_id ?? '').':'.($contactId ?? '');
             $grouped[$key] ??= [
                 'account_id' => (int) $line->account_id,
                 'class_id' => $line->class_id,
                 'location_id' => $line->location_id,
+                'contact_id' => $contactId,
                 'cents' => 0,
             ];
             $grouped[$key]['cents'] += $cents;
         }
 
         return array_values($grouped);
+    }
+
+    /**
+     * The counterparty for one cheque line: its own customer / vendor when the
+     * line is coded to an AR/AP control account, else the cheque's payee. The
+     * two differ whenever the cheque is made out to someone other than the
+     * person whose balance it settles — refunding a beneficiary against a
+     * customer's account, say.
+     */
+    protected function lineContactId(Cheque $cheque, ChequeLine $line): ?int
+    {
+        $contactId = $line->contact_id ?: $cheque->payee_contact_id;
+
+        return $contactId === null ? null : (int) $contactId;
     }
 
     /**

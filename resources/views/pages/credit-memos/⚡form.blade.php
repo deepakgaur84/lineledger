@@ -3,6 +3,7 @@
 use App\Actions\Sales\SaveCreditMemo;
 use App\Enums\CreditMemoStatus;
 use App\Exceptions\Posting\PeriodLockedException;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Classification;
 use App\Models\Company;
@@ -20,6 +21,7 @@ use App\Services\Posting\TaxCalculator;
 use App\Support\Money;
 use App\Support\Quantity;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
@@ -27,6 +29,8 @@ use Livewire\Component;
 
 new #[Title('Credit memo')] class extends Component
 {
+    use GuardsEditLockedForm;
+
     public Company $company;
 
     public ?CreditMemo $creditMemo = null;
@@ -76,6 +80,11 @@ new #[Title('Credit memo')] class extends Component
      * }>
      */
     public array $lines = [];
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->creditMemo;
+    }
 
     public function mount(Company $company, ?CreditMemo $credit_memo = null): void
     {
@@ -639,6 +648,9 @@ new #[Title('Credit memo')] class extends Component
 }; ?>
 
 <section class="w-full">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <div class="mb-6 flex items-start justify-between gap-4">
         <flux:heading size="xl" level="1">{{ $creditMemo?->id ? __('Edit credit memo') : __('New credit memo') }}</flux:heading>
 
@@ -905,4 +917,5 @@ new #[Title('Credit memo')] class extends Component
             </div>
         </div>
     </form>
+    @endif
 </section>

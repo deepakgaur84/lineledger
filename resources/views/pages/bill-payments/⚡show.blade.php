@@ -3,17 +3,27 @@
 use App\Enums\BillPaymentStatus;
 use App\Enums\BillType;
 use App\Exceptions\Posting\PeriodLockedException;
+use App\Livewire\Attributes\GuardsEditLock;
+use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\BillPayment;
 use App\Models\Company;
 use App\Services\Posting\BillPaymentPoster;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Payment')] class extends Component {
+    use ShowsEditLock;
+
     public Company $company;
 
     public BillPayment $payment;
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->payment;
+    }
 
     public function mount(Company $company, BillPayment $payment): void
     {
@@ -21,6 +31,7 @@ new #[Title('Payment')] class extends Component {
         $this->payment = $payment->load('contact', 'paidFromAccount', 'applications.bill', 'journalEntry');
     }
 
+    #[GuardsEditLock]
     public function void(BillPaymentPoster $poster): void
     {
         try {
@@ -37,6 +48,8 @@ new #[Title('Payment')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    <x-edit-lock.banner :lock="$this->editLockBanner" />
+
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
             <flux:heading size="xl" level="1">{{ __('Payment') }} {{ $payment->payment_no }}</flux:heading>

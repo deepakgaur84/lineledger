@@ -2,6 +2,7 @@
 
 namespace App\Actions\Banking;
 
+use App\Actions\Charity\SaveDonationReceipt;
 use App\Enums\ChequeStatus;
 use App\Models\Cheque;
 use App\Models\Contact;
@@ -23,11 +24,16 @@ use Illuminate\Support\Facades\DB;
  *   cheque_date:      string
  *   payee_contact_id: ?int
  *   payee_name:       ?string  (null → resolved from payee contact)
+ *   payee_address:    ?array{line1,line2,city,region,postal_code,country}
  *   memo:             ?string
  *   lines: array<int, array{
- *     account_id: int, description: ?string, amount_cents: int, tax_code_id: ?int,
- *     tax_override_cents: ?int, class_id: ?int, location_id: ?int
+ *     account_id: int, contact_id: ?int, description: ?string, amount_cents: int,
+ *     tax_code_id: ?int, tax_override_cents: ?int, class_id: ?int, location_id: ?int
  *   }>
+ *
+ * contact_id is the customer (Accounts Receivable line) or vendor (Accounts
+ * Payable line) whose sub-ledger the line moves — distinct from the header
+ * payee, and what ChequePoster stamps on that GL leg.
  *
  * tax_override_cents, when non-null, is the exact tax the user typed and wins
  * over the tax code's computed amount.
@@ -47,6 +53,7 @@ final class SaveCheque
             }
 
             $header = [
+                ...$this->payeeAddress($data),
                 'bank_account_id' => $data['bank_account_id'],
                 'cheque_no' => $data['cheque_no'],
                 'cheque_date' => $data['cheque_date'],
@@ -87,6 +94,7 @@ final class SaveCheque
 
                 $cheque->lines()->create([
                     'account_id' => $line['account_id'],
+                    'contact_id' => $line['contact_id'] ?? null,
                     'description' => $line['description'] ?? null,
                     'amount_cents' => $amountCents,
                     'tax_code_id' => $taxCode?->id,
@@ -106,5 +114,40 @@ final class SaveCheque
 
             return $cheque;
         });
+    }
+
+    /**
+     * The address the cheque is mailed to, snapshotted onto the cheque itself.
+     * An explicit value wins; otherwise it defaults from the payee contact's
+     * billing address, the way {@see SaveDonationReceipt::donorSnapshot()}
+     * builds a donor snapshot. The snapshot is what prints, so a later edit to
+     * the contact never rewrites a cheque already written.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, ?string>
+     */
+    private function payeeAddress(array $data): array
+    {
+        $address = $data['payee_address'] ?? null;
+
+        $contact = $address === null && ! empty($data['payee_contact_id'])
+            ? Contact::find($data['payee_contact_id'])
+            : null;
+
+        $part = static function (string $key, string $column) use ($address, $contact): ?string {
+            $value = $address !== null ? ($address[$key] ?? null) : $contact?->{$column};
+            $value = trim((string) $value);
+
+            return $value !== '' ? $value : null;
+        };
+
+        return [
+            'payee_line1' => $part('line1', 'billing_line1'),
+            'payee_line2' => $part('line2', 'billing_line2'),
+            'payee_city' => $part('city', 'billing_city'),
+            'payee_region' => $part('region', 'billing_region'),
+            'payee_postal_code' => $part('postal_code', 'billing_postal_code'),
+            'payee_country' => ($c = $part('country', 'billing_country')) !== null ? mb_strtoupper($c) : null,
+        ];
     }
 }

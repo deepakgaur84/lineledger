@@ -3,6 +3,7 @@
 use App\Actions\Contacts\MergeContacts;
 use App\Enums\AccountType;
 use App\Enums\JurisdictionCapability;
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Account;
 use App\Models\Attachment;
 use App\Models\Company;
@@ -25,6 +26,7 @@ use Livewire\WithFileUploads;
 
 new #[Title('Vendors')] class extends Component
 {
+    use HoldsEditLock;
     use WithPagination;
     use WithFileUploads;
 
@@ -150,6 +152,7 @@ new #[Title('Vendors')] class extends Component
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->resetForm();
         Flux::modal('vendor-form')->show();
     }
@@ -157,6 +160,10 @@ new #[Title('Vendors')] class extends Component
     public function openEdit(int $id): void
     {
         $c = Contact::findOrFail($id);
+
+        if (! $this->acquireEditLock($c, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
 
         $this->editingId = $c->id;
         $this->f_display_name = $c->display_name;
@@ -198,7 +205,9 @@ new #[Title('Vendors')] class extends Component
 
         $this->validate(AttachmentService::uploadRules());
 
-        $service->upload($vendor, $this->newAttachments, Auth::id());
+        if (! $this->guardEditLockedWrite($vendor, fn () => $service->upload($vendor, $this->newAttachments, Auth::id()))) {
+            return;
+        }
 
         $this->newAttachments = [];
         unset($this->attachments);
@@ -213,7 +222,10 @@ new #[Title('Vendors')] class extends Component
         }
 
         $vendor = Contact::where('is_vendor', true)->findOrFail($this->editingId);
-        $service->remove(Attachment::findOrFail($id), $vendor);
+
+        if (! $this->guardEditLockedWrite($vendor, fn () => $service->remove(Attachment::findOrFail($id), $vendor))) {
+            return;
+        }
 
         unset($this->attachments);
 
@@ -222,6 +234,10 @@ new #[Title('Vendors')] class extends Component
 
     public function save(): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(Contact::class, $this->editingId)) {
+            return;
+        }
+
         $validated = $this->validate([
             'f_display_name' => ['required', 'string', 'max:255'],
             'f_company_name' => ['nullable', 'string', 'max:255'],
@@ -296,6 +312,7 @@ new #[Title('Vendors')] class extends Component
             Contact::create([...$payload, 'currency_code' => $currency, 'is_vendor' => true]);
         }
 
+        $this->completeEditLockSave();
         Flux::modal('vendor-form')->close();
         $this->resetForm();
 
@@ -307,7 +324,9 @@ new #[Title('Vendors')] class extends Component
         $vendor = Contact::where('is_vendor', true)->findOrFail($id);
         abort_unless($vendor->company_id === $this->company->id, 403);
 
-        $vendor->update(['is_active' => ! $vendor->is_active]);
+        if (! $this->guardEditLockedWrite($vendor, fn () => $vendor->update(['is_active' => ! $vendor->is_active]))) {
+            return;
+        }
 
         Flux::toast(variant: 'success', text: $vendor->is_active ? __('Vendor activated.') : __('Vendor deactivated.'));
     }
@@ -341,10 +360,14 @@ new #[Title('Vendors')] class extends Component
         $survivor = Contact::findOrFail((int) $this->mergeTargetId);
 
         try {
-            app(MergeContacts::class)->handle($loser, $survivor);
+            $merged = $this->guardEditLockedWrites([$loser, $survivor], fn () => app(MergeContacts::class)->handle($loser, $survivor));
         } catch (ValidationException $e) {
             $this->addError('mergeTargetId', collect($e->errors())->flatten()->first());
 
+            return;
+        }
+
+        if (! $merged) {
             return;
         }
 
@@ -595,8 +618,11 @@ new #[Title('Vendors')] class extends Component
 
     <div class="mt-4">{{ $this->vendors->links() }}</div>
 
-    <flux:modal name="vendor-form" class="max-w-xl">
+    <flux:modal name="vendor-form" class="max-w-xl" wire:close="releaseEditLock">
         <form wire:submit="save" class="space-y-6">
+            @if ($editLockToken)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg">{{ $editingId ? __('Edit vendor') : __('New vendor') }}</flux:heading>
 
             <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -765,4 +791,6 @@ new #[Title('Vendors')] class extends Component
             </div>
         </form>
     </flux:modal>
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

@@ -523,14 +523,18 @@ final class CashflowForecaster
             ->selectRaw('COALESCE(SUM(debit_cents - credit_cents), 0) AS s')
             ->value('s');
 
+        // A voided cheque and its reversal are not outstanding: neither ever
+        // reaches the bank.
         $payments = $base()
             ->whereNull('cleared_at')
+            ->withoutUnsettledVoids()
             ->where('credit_cents', '>', 0)
             ->selectRaw('COALESCE(SUM(credit_cents), 0) AS s, COUNT(*) AS n')
             ->first();
 
         $deposits = $base()
             ->whereNull('cleared_at')
+            ->withoutUnsettledVoids()
             ->where('debit_cents', '>', 0)
             ->selectRaw('COALESCE(SUM(debit_cents), 0) AS s, COUNT(*) AS n')
             ->first();

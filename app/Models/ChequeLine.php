@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 #[Fillable([
-    'cheque_id', 'account_id', 'description',
+    'cheque_id', 'account_id', 'contact_id', 'description',
     'amount_cents', 'tax_code_id', 'secondary_tax_code_id', 'secondary_tax_cents', 'secondary_tax_override_cents', 'tax_cents', 'tax_override_cents', 'line_order',
     'class_id', 'location_id', 'fund_id',
 ])]
@@ -27,6 +27,17 @@ class ChequeLine extends Model
     public function account(): BelongsTo
     {
         return $this->belongsTo(Account::class)->withoutGlobalScopes();
+    }
+
+    /**
+     * The customer (AR line) or vendor (AP line) this line belongs to. Null on an
+     * ordinary expense line, where the cheque's payee is the only counterparty.
+     *
+     * @return BelongsTo<Contact, $this>
+     */
+    public function contact(): BelongsTo
+    {
+        return $this->belongsTo(Contact::class)->withoutGlobalScopes();
     }
 
     /**

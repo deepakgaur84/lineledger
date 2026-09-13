@@ -6,6 +6,7 @@ use App\Enums\AccountType;
 use App\Enums\InvoiceStatus;
 use App\Enums\ItemType;
 use App\Exceptions\Posting\PeriodLockedException;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Classification;
 use App\Models\Company;
@@ -28,6 +29,7 @@ use App\Support\Money;
 use App\Support\Quantity;
 use Carbon\CarbonImmutable;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
@@ -35,6 +37,8 @@ use Livewire\Component;
 
 new #[Title('Invoice')] class extends Component
 {
+    use GuardsEditLockedForm;
+
     public Company $company;
 
     public ?Invoice $invoice = null;
@@ -112,6 +116,11 @@ new #[Title('Invoice')] class extends Component
      * @var array<string, bool>
      */
     public array $fieldVisibility = [];
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->invoice;
+    }
 
     public function mount(Company $company, ?Invoice $invoice = null): void
     {
@@ -1101,6 +1110,9 @@ new #[Title('Invoice')] class extends Component
 }; ?>
 
 <section class="w-full">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <div class="mb-6 flex items-start justify-between gap-4">
         <flux:heading size="xl" level="1">{{ $invoice?->id ? __('Edit invoice') : __('New invoice') }}</flux:heading>
 
@@ -1522,4 +1534,5 @@ new #[Title('Invoice')] class extends Component
             </div>
         </form>
     </flux:modal>
+    @endif
 </section>

@@ -5,6 +5,7 @@ use App\Enums\AccountSubtype;
 use App\Enums\AccountType;
 use App\Enums\DepositStatus;
 use App\Exceptions\Posting\PeriodLockedException;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Classification;
 use App\Models\Company;
@@ -22,6 +23,7 @@ use App\Services\Reporting\XlsxExporter;
 use App\Support\Banking\LastBankAccount;
 use App\Support\Money;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
@@ -32,6 +34,8 @@ use Livewire\Component;
 
 new #[Title('Make deposit')] class extends Component
 {
+    use GuardsEditLockedForm;
+
     public Company $company;
 
     public ?Deposit $deposit = null;
@@ -78,6 +82,11 @@ new #[Title('Make deposit')] class extends Component
      * @var array<int, array{account_id: ?int, contact_id: ?int, description: string, amount: string}>
      */
     public array $otherLines = [];
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->deposit;
+    }
 
     public function mount(Company $company, ?Deposit $deposit = null): void
     {
@@ -679,6 +688,9 @@ new #[Title('Make deposit')] class extends Component
 }; ?>
 
 <section class="w-full">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <flux:heading size="xl" level="1" class="mb-6">{{ $deposit ? __('Edit deposit') : __('Make deposit') }}</flux:heading>
 
     <form wire:submit="save" class="space-y-6">
@@ -851,4 +863,5 @@ new #[Title('Make deposit')] class extends Component
             @endif
         </div>
     </form>
+    @endif
 </section>

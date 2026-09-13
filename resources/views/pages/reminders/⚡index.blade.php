@@ -1,10 +1,13 @@
 <?php
 
 use App\Actions\Sales\SendInvoiceReminder;
+use App\Exceptions\EditLocks\RecordEditLockedException;
 use App\Models\Company;
 use App\Models\Contact;
 use App\Models\Invoice;
 use App\Models\ReminderTier;
+use App\Models\User;
+use App\Services\EditLocks\EditLockManager;
 use App\Services\Reminders\DueReminderResolver;
 use Carbon\CarbonImmutable;
 use Flux\Flux;
@@ -65,7 +68,27 @@ new #[Title('Payment Reminders')] class extends Component {
 
     public function disableReminders(int $contactId): void
     {
-        Contact::query()->whereKey($contactId)->update(['reminder_emails_enabled' => false]);
+        $contact = Contact::query()->find($contactId);
+
+        if ($contact === null) {
+            return;
+        }
+
+        $user = auth()->user();
+
+        // The customer's edit dialog writes the same flag — refuse while someone has it open.
+        try {
+            app(EditLockManager::class)->guardWrite(
+                $contact,
+                $user instanceof User ? $user : null,
+                fn () => Contact::query()->whereKey($contact->id)->update(['reminder_emails_enabled' => false]),
+            );
+        } catch (RecordEditLockedException $e) {
+            Flux::toast(variant: 'danger', text: $e->getMessage());
+
+            return;
+        }
+
         unset($this->dueItems);
         Flux::toast(variant: 'success', text: __('Automated reminders turned off for this customer.'));
     }

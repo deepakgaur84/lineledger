@@ -4,6 +4,7 @@ use App\Actions\Accounting\SaveRecurringJournalEntry;
 use App\Enums\RecurrenceDayAnchor;
 use App\Enums\RecurrenceEndType;
 use App\Enums\RecurrenceFrequency;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Classification;
 use App\Models\Company;
@@ -13,6 +14,7 @@ use App\Models\RecurringJournalEntry;
 use App\Rules\MoneyString;
 use App\Support\Money;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Computed;
@@ -21,6 +23,8 @@ use Livewire\Attributes\Url;
 use Livewire\Component;
 
 new #[Title('Recurring journal entry')] class extends Component {
+    use GuardsEditLockedForm;
+
     public Company $company;
 
     public ?RecurringJournalEntry $recurring = null;
@@ -50,6 +54,11 @@ new #[Title('Recurring journal entry')] class extends Component {
      * @var array<int, array{account_id: ?int, contact_id: ?int, debit: string, credit: string, memo: ?string, class_id: ?int, location_id: ?int}>
      */
     public array $lines = [];
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->recurring;
+    }
 
     public function mount(Company $company, ?RecurringJournalEntry $recurring = null): void
     {
@@ -284,6 +293,9 @@ new #[Title('Recurring journal entry')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <flux:heading size="xl" level="1" class="mb-6">
         {{ $recurring?->id ? __('Edit memorized journal entry') : __('New memorized journal entry') }}
     </flux:heading>
@@ -433,4 +445,5 @@ new #[Title('Recurring journal entry')] class extends Component {
             </div>
         </div>
     </form>
+    @endif
 </section>

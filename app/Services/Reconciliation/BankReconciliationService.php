@@ -144,6 +144,17 @@ class BankReconciliationService
                     ->update(['bank_reconciliation_id' => $rec->id]);
             }
 
+            // A service-charge or interest line is stamped with this
+            // reconciliation when it is posted. One that ended up unticked was
+            // not counted in the balance, so it must not stay cleared.
+            $this->unstamp($rec, JournalLine::query()
+                ->where('bank_reconciliation_id', $rec->id)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->diff($ids)
+                ->values()
+                ->all());
+
             $rec->forceFill([
                 'status' => BankReconciliationStatus::Completed->value,
                 'completed_at' => now(),
@@ -459,8 +470,9 @@ class BankReconciliationService
             $existing = $rec->serviceChargeEntry()->first();
 
             if ($existing) {
-                $bankLineIds = $existing->lines()->where('account_id', $account->id)->pluck('id')->all();
-                $marked = array_values(array_diff($marked, array_map('intval', $bankLineIds)));
+                $bankLineIds = array_map('intval', $existing->lines()->where('account_id', $account->id)->pluck('id')->all());
+                $marked = array_values(array_diff($marked, $bankLineIds));
+                $this->unstamp($rec, $bankLineIds);
 
                 if (! $existing->isVoided()) {
                     $this->journalPoster->void($existing, null, "Edit reconciliation #{$rec->id} — service charge replaced");
@@ -512,8 +524,9 @@ class BankReconciliationService
             $existing = $rec->interestEarnedEntry()->first();
 
             if ($existing) {
-                $bankLineIds = $existing->lines()->where('account_id', $account->id)->pluck('id')->all();
-                $marked = array_values(array_diff($marked, array_map('intval', $bankLineIds)));
+                $bankLineIds = array_map('intval', $existing->lines()->where('account_id', $account->id)->pluck('id')->all());
+                $marked = array_values(array_diff($marked, $bankLineIds));
+                $this->unstamp($rec, $bankLineIds);
 
                 if (! $existing->isVoided()) {
                     $this->journalPoster->void($existing, null, "Edit reconciliation #{$rec->id} — interest replaced");
@@ -540,6 +553,26 @@ class BankReconciliationService
 
             $marked[] = (int) $bankLineId;
         }
+    }
+
+    /**
+     * Take this reconciliation's cleared stamp back off lines it did not
+     * count — a replaced service charge or interest entry, or one left
+     * unticked — so the register's cleared balance and the reconciliation's
+     * detail agree with what was actually reconciled.
+     *
+     * @param  list<int>  $lineIds
+     */
+    protected function unstamp(BankReconciliation $rec, array $lineIds): void
+    {
+        if ($lineIds === []) {
+            return;
+        }
+
+        JournalLine::query()
+            ->whereIn('id', $lineIds)
+            ->where('bank_reconciliation_id', $rec->id)
+            ->update(['cleared_at' => null, 'bank_reconciliation_id' => null]);
     }
 
     /**

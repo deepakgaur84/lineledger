@@ -2,19 +2,29 @@
 
 use App\Actions\Membership\BillMemberDues;
 use App\Enums\RecurrenceFrequency;
+use App\Livewire\Attributes\GuardsEditLock;
+use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\Company;
 use App\Models\Member;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Member')] class extends Component {
+    use ShowsEditLock;
+
     public Company $company;
 
     public Member $member;
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->member;
+    }
 
     public function mount(Company $company, Member $member): void
     {
@@ -49,6 +59,7 @@ new #[Title('Member')] class extends Component {
         $this->redirectRoute('invoices.edit', ['company' => $this->company, 'invoice' => $invoice], navigate: true);
     }
 
+    #[GuardsEditLock]
     public function renew(): void
     {
         $frequency = $this->member->level?->billing_frequency ?? RecurrenceFrequency::Annual;
@@ -74,6 +85,8 @@ new #[Title('Member')] class extends Component {
 }; ?>
 
 <section class="mx-auto w-full max-w-3xl">
+    <x-edit-lock.banner :lock="$this->editLockBanner" />
+
     @php($status = $member->effectiveStatus())
     <div class="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>

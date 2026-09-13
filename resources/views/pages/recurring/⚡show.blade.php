@@ -1,19 +1,29 @@
 <?php
 
+use App\Livewire\Attributes\GuardsEditLock;
+use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\Bill;
 use App\Models\Company;
 use App\Models\Invoice;
 use App\Models\RecurringDocument;
 use App\Services\Recurring\RecurringDocumentGenerator;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Recurring schedule')] class extends Component {
+    use ShowsEditLock;
+
     public Company $company;
 
     public RecurringDocument $recurring;
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->recurring;
+    }
 
     public function mount(Company $company, RecurringDocument $recurring): void
     {
@@ -21,6 +31,7 @@ new #[Title('Recurring schedule')] class extends Component {
         $this->recurring = $recurring->load(['lines.account', 'lines.taxCode', 'contact', 'terms']);
     }
 
+    #[GuardsEditLock]
     public function pauseSchedule(): void
     {
         $this->recurring->update(['is_active' => false]);
@@ -28,6 +39,7 @@ new #[Title('Recurring schedule')] class extends Component {
         Flux::toast(variant: 'success', text: __('Schedule paused.'));
     }
 
+    #[GuardsEditLock]
     public function resumeSchedule(): void
     {
         $this->recurring->update(['is_active' => true, 'paused_reason' => null]);
@@ -35,6 +47,7 @@ new #[Title('Recurring schedule')] class extends Component {
         Flux::toast(variant: 'success', text: __('Schedule resumed.'));
     }
 
+    #[GuardsEditLock]
     public function generateNow(RecurringDocumentGenerator $generator): void
     {
         try {
@@ -56,6 +69,7 @@ new #[Title('Recurring schedule')] class extends Component {
         $this->redirectRoute('bills.edit', ['company' => $this->company->slug, 'bill' => $document->id], navigate: true);
     }
 
+    #[GuardsEditLock]
     public function deleteSchedule(): void
     {
         $this->recurring->delete();
@@ -81,6 +95,8 @@ new #[Title('Recurring schedule')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    <x-edit-lock.banner :lock="$this->editLockBanner" />
+
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
             <flux:heading size="xl" level="1">{{ $recurring->name ?: __('Untitled schedule') }}</flux:heading>

@@ -43,7 +43,11 @@ class StoreJournalEntryRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $validator->after(function (Validator $validator): void {
-            JournalEntryLineRules::validateContacts($validator, (array) $this->input('lines', []));
+            ControlAccountLineRules::validateContacts(
+                $validator,
+                (array) $this->input('lines', []),
+                ControlAccountLineRules::hasDebitOrCredit(...),
+            );
         });
     }
 }

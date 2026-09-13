@@ -1,7 +1,14 @@
 <?php
 
+use App\Actions\Sales\SaveInvoice;
+use App\Enums\AccountSubtype;
+use App\Enums\CompanyRole;
+use App\Models\Account;
 use App\Models\Company;
 use App\Models\CompanyApiKey;
+use App\Models\Contact;
+use App\Models\Invoice;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -67,4 +74,39 @@ function bindMcpTenant(Company $company, array $abilities = []): void
 
     app()->instance('current_company', $company);
     app()->instance('current_api_key', $key);
+}
+
+/**
+ * A user who is a member of $company with $role — for edit-lock tests, which
+ * need several people in one company.
+ */
+function editLockMember(Company $company, CompanyRole $role = CompanyRole::Accountant): User
+{
+    $user = User::factory()->create();
+    $company->members()->attach($user, ['role' => $role->value]);
+
+    return $user;
+}
+
+/**
+ * A draft invoice for $company, built through SaveInvoice. Binds the company
+ * as current (and leaves it bound) so scoped lookups work.
+ */
+function editLockDraftInvoice(Company $company): Invoice
+{
+    app()->instance('current_company', $company);
+
+    $income = Account::query()->where('subtype', AccountSubtype::Income->value)->orderBy('code')->firstOrFail();
+    $customer = Contact::query()->create(['display_name' => 'Edit Lock Customer '.uniqid(), 'is_customer' => true]);
+
+    return app(SaveInvoice::class)->handle([
+        'contact_id' => $customer->id,
+        'invoice_date' => '2026-06-01',
+        'due_date' => '2026-06-30',
+        'lines' => [[
+            'account_id' => $income->id,
+            'quantity' => '1',
+            'unit_price_cents' => 10000,
+        ]],
+    ]);
 }

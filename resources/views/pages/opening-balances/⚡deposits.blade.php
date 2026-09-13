@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\AccountSubtype;
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Livewire\Concerns\ImportsCsvList;
 use App\Livewire\Concerns\InteractsWithOpeningBalances;
 use App\Models\Account;
@@ -21,6 +22,7 @@ use Livewire\Component;
 use Livewire\WithFileUploads;
 
 new #[Title('Deposits in transit')] class extends Component {
+    use HoldsEditLock;
     use ImportsCsvList {
         runImport as baseRunImport;
     }
@@ -81,6 +83,7 @@ new #[Title('Deposits in transit')] class extends Component {
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->reset(['editingId', 'f_bank_account_id', 'f_description', 'f_amount', 'f_memo']);
         $this->f_deposit_date = $this->obState->asOf()->toDateString();
         Flux::modal('ob-deposit')->show();
@@ -89,6 +92,10 @@ new #[Title('Deposits in transit')] class extends Component {
     public function openEdit(int $id): void
     {
         $deposit = Deposit::query()->with('lines')->where('is_opening_balance', true)->findOrFail($id);
+
+        if (! $this->acquireEditLock($deposit, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
 
         $this->editingId = $deposit->id;
         $this->f_bank_account_id = (string) $deposit->bank_account_id;
@@ -102,6 +109,10 @@ new #[Title('Deposits in transit')] class extends Component {
 
     public function save(): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(Deposit::class, $this->editingId)) {
+            return;
+        }
+
         if (! $this->obEditable()) {
             return;
         }
@@ -142,6 +153,7 @@ new #[Title('Deposits in transit')] class extends Component {
             return;
         }
 
+        $this->completeEditLockSave();
         $this->obState->refresh();
         Flux::modal('ob-deposit')->close();
         unset($this->deposits, $this->footer);
@@ -157,10 +169,14 @@ new #[Title('Deposits in transit')] class extends Component {
         $deposit = Deposit::query()->where('is_opening_balance', true)->findOrFail($id);
 
         try {
-            app(DepositInTransitSync::class)->remove($this->obState, $deposit);
+            $removed = $this->guardEditLockedWrite($deposit, fn () => app(DepositInTransitSync::class)->remove($this->obState, $deposit));
         } catch (RuntimeException|\App\Exceptions\Posting\PeriodLockedException|\App\Exceptions\Posting\ReconciliationLockedException $e) {
             Flux::toast(variant: 'danger', text: $e->getMessage());
 
+            return;
+        }
+
+        if (! $removed) {
             return;
         }
 
@@ -249,8 +265,11 @@ new #[Title('Deposits in transit')] class extends Component {
         </div>
     </flux:card>
 
-    <flux:modal name="ob-deposit" class="max-w-lg">
+    <flux:modal name="ob-deposit" class="max-w-lg" wire:close="releaseEditLock">
         <div class="space-y-4">
+            @if ($editLockToken)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg">{{ $editingId ? __('Edit deposit in transit') : __('Add deposit in transit') }}</flux:heading>
 
             <flux:select wire:model="f_bank_account_id" :label="__('Bank account')" data-test="ob-deposit-bank">
@@ -282,4 +301,6 @@ new #[Title('Deposits in transit')] class extends Component {
         :creatable-count="$this->importCreatableCount"
         :has-file="(bool) $importFile"
     />
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

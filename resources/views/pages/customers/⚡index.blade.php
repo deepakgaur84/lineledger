@@ -2,6 +2,7 @@
 
 use App\Actions\Contacts\MergeContacts;
 use App\Actions\Sales\PostCustomerOpeningBalance;
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Attachment;
 use App\Models\Company;
 use App\Models\Contact;
@@ -24,6 +25,7 @@ use Livewire\WithPagination;
 use Livewire\WithFileUploads;
 
 new #[Title('Customers')] class extends Component {
+    use HoldsEditLock;
     use WithPagination;
     use WithFileUploads;
 
@@ -171,6 +173,7 @@ new #[Title('Customers')] class extends Component {
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->resetForm();
         $this->f_opening_balance_date = $this->company->currentDateTime()->toDateString();
         Flux::modal('customer-form')->show();
@@ -179,6 +182,10 @@ new #[Title('Customers')] class extends Component {
     public function openEdit(int $id): void
     {
         $c = Contact::findOrFail($id);
+
+        if (! $this->acquireEditLock($c, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
 
         $this->editingId = $c->id;
         $this->formTab = 'profile';
@@ -240,7 +247,9 @@ new #[Title('Customers')] class extends Component {
 
         $this->validate(AttachmentService::uploadRules('newAttachments', AttachmentService::CUSTOMER_MAX_KILOBYTES));
 
-        $service->upload($customer, $this->newAttachments, Auth::id());
+        if (! $this->guardEditLockedWrite($customer, fn () => $service->upload($customer, $this->newAttachments, Auth::id()))) {
+            return;
+        }
 
         $this->newAttachments = [];
         unset($this->attachments);
@@ -255,7 +264,10 @@ new #[Title('Customers')] class extends Component {
         }
 
         $customer = Contact::where('is_customer', true)->findOrFail($this->editingId);
-        $service->remove(Attachment::findOrFail($id), $customer);
+
+        if (! $this->guardEditLockedWrite($customer, fn () => $service->remove(Attachment::findOrFail($id), $customer))) {
+            return;
+        }
 
         unset($this->attachments);
 
@@ -264,6 +276,10 @@ new #[Title('Customers')] class extends Component {
 
     public function save(): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(Contact::class, $this->editingId)) {
+            return;
+        }
+
         $rules = [
             'f_display_name' => ['required', 'string', 'max:255'],
             'f_company_name' => ['nullable', 'string', 'max:255'],
@@ -393,6 +409,7 @@ new #[Title('Customers')] class extends Component {
             }
         }
 
+        $this->completeEditLockSave();
         Flux::modal('customer-form')->close();
         $this->resetForm();
 
@@ -404,7 +421,9 @@ new #[Title('Customers')] class extends Component {
         $customer = Contact::where('is_customer', true)->findOrFail($id);
         abort_unless($customer->company_id === $this->company->id, 403);
 
-        $customer->update(['is_active' => ! $customer->is_active]);
+        if (! $this->guardEditLockedWrite($customer, fn () => $customer->update(['is_active' => ! $customer->is_active]))) {
+            return;
+        }
 
         Flux::toast(variant: 'success', text: $customer->is_active ? __('Customer activated.') : __('Customer deactivated.'));
     }
@@ -438,10 +457,14 @@ new #[Title('Customers')] class extends Component {
         $survivor = Contact::findOrFail((int) $this->mergeTargetId);
 
         try {
-            app(MergeContacts::class)->handle($loser, $survivor);
+            $merged = $this->guardEditLockedWrites([$loser, $survivor], fn () => app(MergeContacts::class)->handle($loser, $survivor));
         } catch (ValidationException $e) {
             $this->addError('mergeTargetId', collect($e->errors())->flatten()->first());
 
+            return;
+        }
+
+        if (! $merged) {
             return;
         }
 
@@ -734,8 +757,11 @@ new #[Title('Customers')] class extends Component {
 
     <div class="mt-4">{{ $this->customers->links() }}</div>
 
-    <flux:modal name="customer-form" class="max-w-2xl">
+    <flux:modal name="customer-form" class="max-w-2xl" wire:close="releaseEditLock">
         <form wire:submit="save" class="flex max-h-[80vh] flex-col">
+            @if ($editLockToken)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg" class="mb-4">{{ $editingId ? __('Edit customer') : __('New customer') }}</flux:heading>
 
             {{-- Tab strip --}}
@@ -978,4 +1004,6 @@ new #[Title('Customers')] class extends Component {
     </flux:modal>
 
     <livewire:customer-statement-modal :company="$company" />
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

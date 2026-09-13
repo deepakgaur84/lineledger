@@ -1,6 +1,7 @@
 <?php
 
 use App\Actions\MasterData\SavePaymentTerm;
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Company;
 use App\Models\PaymentTerm;
 use Flux\Flux;
@@ -9,6 +10,8 @@ use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Payment terms')] class extends Component {
+    use HoldsEditLock;
+
     public Company $company;
 
     public ?int $editingId = null;
@@ -26,6 +29,7 @@ new #[Title('Payment terms')] class extends Component {
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->reset(['editingId', 'f_name', 'f_days']);
         $this->f_days = 30;
         $this->f_is_active = true;
@@ -35,6 +39,11 @@ new #[Title('Payment terms')] class extends Component {
     public function openEdit(int $id): void
     {
         $t = PaymentTerm::findOrFail($id);
+
+        if (! $this->acquireEditLock($t, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
+
         $this->editingId = $t->id;
         $this->f_name = $t->name;
         $this->f_days = (int) $t->days;
@@ -44,6 +53,10 @@ new #[Title('Payment terms')] class extends Component {
 
     public function save(): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(PaymentTerm::class, $this->editingId)) {
+            return;
+        }
+
         $validated = $this->validate([
             'f_name' => ['required', 'string', 'max:255'],
             'f_days' => ['required', 'integer', 'min:0', 'max:365'],
@@ -59,6 +72,7 @@ new #[Title('Payment terms')] class extends Component {
             'is_active' => $validated['f_is_active'],
         ], $editing);
 
+        $this->completeEditLockSave();
         Flux::modal('terms-form')->close();
         Flux::toast(variant: 'success', text: __('Term saved.'));
     }
@@ -102,8 +116,11 @@ new #[Title('Payment terms')] class extends Component {
         </div>
     </x-pages::settings.layout>
 
-    <flux:modal name="terms-form" class="max-w-lg">
+    <flux:modal name="terms-form" class="max-w-lg" wire:close="releaseEditLock">
         <form wire:submit="save" class="space-y-6">
+            @if ($editLockToken)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg">{{ $editingId ? __('Edit term') : __('New term') }}</flux:heading>
             <x-api-id-hint :id="$editingId" field="terms_id" />
             <flux:input wire:model="f_name" :label="__('Name')" required data-test="term-name" />
@@ -115,4 +132,6 @@ new #[Title('Payment terms')] class extends Component {
             </div>
         </form>
     </flux:modal>
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

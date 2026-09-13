@@ -8,7 +8,7 @@ namespace App\Services\Posting\Concerns;
  * converted document total. This nudges the largest leg so the entry balances
  * exactly in home cents (the GL invariant is a strict integer equality).
  *
- * @phpstan-type ConvertibleLeg array{account_id: int, class_id?: ?int, location_id?: ?int, foreign: int, home: int, memo: ?string}
+ * @phpstan-type ConvertibleLeg array{account_id: int, contact_id?: ?int, class_id?: ?int, location_id?: ?int, foreign: int, home: int, memo: ?string}
  */
 trait PlugsForeignRounding
 {
@@ -16,7 +16,7 @@ trait PlugsForeignRounding
      * Adjust the largest leg so the legs sum exactly to $targetHome. No-op when
      * already equal (always the case for the home currency, where every rate is 1).
      *
-     * @param  list<array{account_id: int, class_id?: ?int, location_id?: ?int, foreign: int, home: int, memo: ?string}>  $legs
+     * @param  list<array{account_id: int, contact_id?: ?int, class_id?: ?int, location_id?: ?int, foreign: int, home: int, memo: ?string}>  $legs
      */
     protected function applyRoundingPlug(array &$legs, int $targetHome): void
     {

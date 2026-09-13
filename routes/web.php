@@ -8,6 +8,7 @@ use App\Http\Controllers\ChartOfAccountsTemplateController;
 use App\Http\Controllers\Cheques\PrintChequeController as ChequesPrintChequeController;
 use App\Http\Controllers\CompanyBackupDownloadController;
 use App\Http\Controllers\Customers\CustomerStatementController;
+use App\Http\Controllers\EditLockController;
 use App\Http\Controllers\Estimates\PrintEstimateController;
 use App\Http\Controllers\Health\ExchangeRateHealthController;
 use App\Http\Controllers\HomeController;
@@ -84,6 +85,16 @@ Route::middleware(['auth'])->group(function () {
     // route middleware, so adding `verified` here would bounce a user who owes
     // legal acceptance between the two screens.
     Route::livewire('legal/accept', 'pages::legal.accept')->name('legal.accept');
+});
+
+// Edit-lock leases (resources/js/edit-lock.js): the open edit page's heartbeat
+// and its release beacon. Deliberately outside the {company} prefix —
+// EnsureCompanyMembership rewrites the user's current company on every request,
+// so a background heartbeat there would flip the current company of the user's
+// other tabs. A lease is addressed by its secret token and must be the user's own.
+Route::middleware(['auth', 'throttle:120,1'])->prefix('edit-locks')->name('edit-locks.')->group(function () {
+    Route::post('heartbeat', [EditLockController::class, 'heartbeat'])->name('heartbeat');
+    Route::post('release', [EditLockController::class, 'release'])->name('release');
 });
 
 // In-app support tickets. Platform-level (not tenant-scoped), so they live here

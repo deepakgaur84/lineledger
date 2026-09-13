@@ -53,6 +53,11 @@ class EnsureLegalAcceptance
             'login',
             'register',
             'register.store',
+            // Edit-lock heartbeats and release beacons from an open edit page
+            // are background JSON/beacon calls; a redirect would keep the lock
+            // alive and never release it. The next real page load still asks.
+            'edit-locks.heartbeat',
+            'edit-locks.release',
         )) {
             return true;
         }

@@ -52,6 +52,7 @@ X-Api-Key: YOUR_API_KEY</code></pre>
             <li>{{ __('PATCH edits a draft, or reposts a posted document in place where supported (invoices, credit memos, receipts, bills, bill payments, journal entries, deposits, cheques).') }}</li>
             <li>{{ __('Documents without in-place repost (stock adjustments, transfers, tax-return payments) return 409 if edited after posting — void and recreate.') }}</li>
             <li>{{ __('DELETE hard-deletes a draft, or voids a posted document with a reversing journal entry.') }}</li>
+            <li>{{ __('While someone has a record open for editing in the web app, PATCH, DELETE and actions such as /post on that record return 423 with a Retry-After header. Reads and creates are never refused.') }}</li>
             <li>{{ __('Amounts are integer cents; dates are YYYY-MM-DD.') }}</li>
         </ul>
 
@@ -73,6 +74,7 @@ X-Api-Key: YOUR_API_KEY</code></pre>
             <li><code>404</code> — {{ __('the resource was not found in this company.') }}</li>
             <li><code>409</code> — {{ __('the operation conflicts with the document\'s lifecycle (e.g. editing a posted, non-repostable document).') }}</li>
             <li><code>422</code> — {{ __('validation failed, period is locked, or the entry is unbalanced. The body carries a message and a field-keyed errors object.') }}</li>
+            <li><code>423</code> — {{ __('someone is editing the record in the web app right now. Nothing was written; wait the number of seconds in the Retry-After header, then try again. The message never names who is editing. Bank reconciliations, stock adjustments and tax-return payments never return 423.') }}</li>
             <li><code>429</code> — {{ __('rate limit exceeded. Requests are throttled per IP and per key — slow down and retry.') }}</li>
             <li><code>500</code> — {{ __('an internal error. The body is still a {"message": "..."} envelope so the same parser handles it.') }}</li>
         </ul>
@@ -91,6 +93,7 @@ X-Api-Key: YOUR_API_KEY</code></pre>
             <li>{{ __('Treat API keys like passwords — never check them into source control.') }}</li>
             <li>{{ __('Generate a separate, narrowly-scoped key per integration so you can revoke one without breaking the others.') }}</li>
             <li>{{ __('Handle 422 by surfacing the message to the operator; do not auto-retry.') }}</li>
+            <li>{{ __('Handle 423 by waiting for Retry-After and retrying a few times — not in a tight loop. If the record is still being edited, queue the change and try again later.') }}</li>
             <li>{{ __('Idempotency: posting the same invoice twice creates two invoices — deduplicate in your caller if upstream might retry.') }}</li>
         </ul>
 

@@ -5,6 +5,8 @@ use App\Actions\Sales\SendInvoiceToCustomer;
 use App\Enums\InvoiceStatus;
 use App\Enums\PaymentRequestType;
 use App\Exceptions\Posting\PeriodLockedException;
+use App\Livewire\Attributes\GuardsEditLock;
+use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\Attachment;
 use App\Models\Company;
 use App\Models\Invoice;
@@ -16,6 +18,7 @@ use App\Services\Posting\InvoicePoster;
 use App\Services\Posting\InvoiceReconciler;
 use Carbon\CarbonImmutable;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Computed;
@@ -24,6 +27,7 @@ use Livewire\Component;
 use Livewire\WithFileUploads;
 
 new #[Title('Invoice')] class extends Component {
+    use ShowsEditLock;
     use WithFileUploads;
 
     public Company $company;
@@ -73,6 +77,11 @@ new #[Title('Invoice')] class extends Component {
         'account_column' => 'show_account_column',
         'unit_column' => 'show_unit_column',
     ];
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->invoice;
+    }
 
     public function mount(Company $company, Invoice $invoice): void
     {
@@ -127,6 +136,7 @@ new #[Title('Invoice')] class extends Component {
         $this->milestones = array_values($this->milestones);
     }
 
+    #[GuardsEditLock]
     public function savePaymentSchedule(SaveInvoicePaymentRequests $action): void
     {
         $requests = collect($this->milestones)
@@ -246,6 +256,7 @@ new #[Title('Invoice')] class extends Component {
         return $emails->all();
     }
 
+    #[GuardsEditLock]
     public function void(InvoicePoster $poster): void
     {
         try {
@@ -277,6 +288,7 @@ new #[Title('Invoice')] class extends Component {
         return min($this->invoice->balanceCents(), $available);
     }
 
+    #[GuardsEditLock]
     public function reconcile(InvoiceReconciler $reconciler): void
     {
         $closed = $reconciler->reconcileInvoice($this->invoice);
@@ -322,6 +334,8 @@ new #[Title('Invoice')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    <x-edit-lock.banner :lock="$this->editLockBanner" />
+
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
             <flux:heading size="xl" level="1">{{ __('Invoice') }} {{ $invoice->invoice_no }}</flux:heading>

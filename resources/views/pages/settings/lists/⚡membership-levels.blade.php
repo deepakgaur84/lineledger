@@ -3,6 +3,7 @@
 use App\Actions\MasterData\SaveMembershipLevel;
 use App\Enums\AccountType;
 use App\Enums\RecurrenceFrequency;
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\MembershipLevel;
@@ -16,6 +17,8 @@ use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Membership levels')] class extends Component {
+    use HoldsEditLock;
+
     public Company $company;
 
     public ?int $editingId = null;
@@ -43,6 +46,7 @@ new #[Title('Membership levels')] class extends Component {
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->reset(['editingId', 'f_name', 'f_dues', 'f_billing_frequency', 'f_revenue_account_id', 'f_default_terms_id', 'f_default_tax_code_id', 'f_is_active']);
         $this->f_billing_frequency = RecurrenceFrequency::Annual->value;
         $this->f_is_active = true;
@@ -52,6 +56,11 @@ new #[Title('Membership levels')] class extends Component {
     public function openEdit(int $id): void
     {
         $level = MembershipLevel::findOrFail($id);
+
+        if (! $this->acquireEditLock($level, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
+
         $this->editingId = $level->id;
         $this->f_name = $level->name;
         $this->f_dues = $level->default_dues_cents ? (string) Money::fromCents($level->default_dues_cents) : '';
@@ -65,6 +74,10 @@ new #[Title('Membership levels')] class extends Component {
 
     public function save(): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(MembershipLevel::class, $this->editingId)) {
+            return;
+        }
+
         $validated = $this->validate([
             'f_name' => ['required', 'string', 'max:255'],
             'f_dues' => ['nullable', 'string'],
@@ -88,6 +101,7 @@ new #[Title('Membership levels')] class extends Component {
             'is_active' => $validated['f_is_active'],
         ], $editing);
 
+        $this->completeEditLockSave();
         Flux::modal('membership-level-form')->close();
         Flux::toast(variant: 'success', text: __('Membership level saved.'));
     }
@@ -157,8 +171,11 @@ new #[Title('Membership levels')] class extends Component {
         </div>
     </x-pages::settings.layout>
 
-    <flux:modal name="membership-level-form" class="max-w-lg">
+    <flux:modal name="membership-level-form" class="max-w-lg" wire:close="releaseEditLock">
         <form wire:submit="save" class="space-y-6">
+            @if ($editLockToken)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg">{{ $editingId ? __('Edit level') : __('New level') }}</flux:heading>
             <flux:input wire:model="f_name" :label="__('Name')" required data-test="membership-level-name" />
             <div class="grid grid-cols-2 gap-4">
@@ -196,4 +213,6 @@ new #[Title('Membership levels')] class extends Component {
             </div>
         </form>
     </flux:modal>
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

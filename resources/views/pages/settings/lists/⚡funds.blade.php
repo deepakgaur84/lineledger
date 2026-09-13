@@ -2,6 +2,7 @@
 
 use App\Actions\MasterData\SaveFund;
 use App\Enums\FundType;
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Company;
 use App\Models\Fund;
 use Flux\Flux;
@@ -11,6 +12,8 @@ use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Funds')] class extends Component {
+    use HoldsEditLock;
+
     public Company $company;
 
     public ?int $editingId = null;
@@ -28,6 +31,7 @@ new #[Title('Funds')] class extends Component {
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->reset(['editingId', 'f_name', 'f_fund_type', 'f_is_active']);
         $this->f_fund_type = FundType::Restricted->value;
         $this->f_is_active = true;
@@ -37,6 +41,11 @@ new #[Title('Funds')] class extends Component {
     public function openEdit(int $id): void
     {
         $f = Fund::findOrFail($id);
+
+        if (! $this->acquireEditLock($f, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
+
         $this->editingId = $f->id;
         $this->f_name = $f->name;
         $this->f_fund_type = $f->fund_type->value;
@@ -46,6 +55,10 @@ new #[Title('Funds')] class extends Component {
 
     public function save(): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(Fund::class, $this->editingId)) {
+            return;
+        }
+
         $validated = $this->validate([
             'f_name' => ['required', 'string', 'max:255'],
             'f_fund_type' => ['required', Rule::enum(FundType::class)],
@@ -61,6 +74,7 @@ new #[Title('Funds')] class extends Component {
             'is_active' => $validated['f_is_active'],
         ], $editing);
 
+        $this->completeEditLockSave();
         Flux::modal('funds-form')->close();
         Flux::toast(variant: 'success', text: __('Fund saved.'));
     }
@@ -113,8 +127,11 @@ new #[Title('Funds')] class extends Component {
         </div>
     </x-pages::settings.layout>
 
-    <flux:modal name="funds-form" class="max-w-lg">
+    <flux:modal name="funds-form" class="max-w-lg" wire:close="releaseEditLock">
         <form wire:submit="save" class="space-y-6">
+            @if ($editLockToken)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg">{{ $editingId ? __('Edit fund') : __('New fund') }}</flux:heading>
             <flux:input wire:model="f_name" :label="__('Name')" required data-test="fund-name" />
             <flux:select wire:model="f_fund_type" :label="__('Type')" data-test="fund-type">
@@ -129,4 +146,6 @@ new #[Title('Funds')] class extends Component {
             </div>
         </form>
     </flux:modal>
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

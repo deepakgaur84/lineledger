@@ -406,7 +406,7 @@ it('removes a service charge when edited to zero, voiding the entry and unmarkin
     expect($updated->markedLineIds())->not->toContain($oldBankLineId);
 });
 
-it('offers both halves of a replaced service charge on the reconcile screen', function () {
+it('leaves both halves of a replaced service charge off the reconcile screen', function () {
     $user = User::factory()->create();
     $this->company->members()->attach($user, ['role' => CompanyRole::Owner->value]);
     $this->actingAs($user);
@@ -429,35 +429,133 @@ it('offers both halves of a replaced service charge on the reconcile screen', fu
     $component = Livewire\Livewire::test('pages::banking.reconcile', ['company' => $this->company])
         ->set('account_id', $this->bank->id);
 
-    // The replaced charge and its reversal are real postings on the bank, so
-    // both are offered alongside the live one — exactly as the register shows.
+    // The replaced 1500 charge was voided, so neither it nor its reversal ever
+    // reaches the bank: only the live 2000 charge is offered.
     $payments = $component->instance()->availableLines('payments');
     $deposits = $component->instance()->availableLines('deposits');
 
     expect($payments->pluck('credit_cents')->map(fn ($c) => (int) $c)->all())
-        ->toEqualCanonicalizing([1500, 2000])
-        // The reversal of the replaced 1500 charge lands on the deposit side.
-        ->and($deposits->pluck('debit_cents')->map(fn ($c) => (int) $c)->all())
-        ->toEqualCanonicalizing([1500]);
+        ->toEqualCanonicalizing([2000])
+        ->and($deposits)->toBeEmpty();
 
-    // The replaced pair nets to zero, so leaving it untouched still balances:
-    // only the live 2000 charge is marked.
+    // The replaced pair nets to zero, so the rec balances without it.
     $rec = $rec->fresh();
     expect($this->service->clearedBalanceCents($rec))->toBe(-2000)
         ->and($this->service->differenceCents($rec))->toBe(0);
 });
 
-it('offers a voided transaction and its reversal for ticking, so the register can be reconciled in full', function () {
+it('un-clears a replaced service charge, so the register agrees with the completed reconciliation', function () {
     $user = User::factory()->create();
     $this->company->members()->attach($user, ['role' => CompanyRole::Owner->value]);
     $this->actingAs($user);
 
-    // A cheque that was written and later voided: both halves hit the bank and
-    // both show in the register, so both must be reconcilable.
-    $payment = makeBankEntry($this->bank, $this->expense, debitOnBankCents: 0, creditOnBankCents: 4000, date: '2026-04-10');
-    app(JournalPoster::class)->void($payment->fresh(), CarbonImmutable::parse('2026-04-20'));
+    $rec = $this->service->begin(
+        $this->bank,
+        Carbon::parse('2026-04-30'),
+        endingBalanceCents: -1500,
+        serviceCharge: ['cents' => 1500, 'date' => Carbon::parse('2026-04-30'), 'account_id' => $this->expense->id],
+    );
 
-    $this->service->begin($this->bank, Carbon::parse('2026-04-30'), 0);
+    $oldBankLine = JournalEntry::with('lines')->find($rec->service_charge_entry_id)->lines->firstWhere('account_id', $this->bank->id);
+
+    $rec = $this->service->updateDetails(
+        $rec,
+        Carbon::parse('2026-04-30'),
+        endingBalanceCents: -2000,
+        beginningBalanceCents: 0,
+        serviceCharge: ['cents' => 2000, 'date' => Carbon::parse('2026-04-30'), 'account_id' => $this->expense->id],
+    );
+
+    // The replaced charge loses the stamp it was posted with the moment it is replaced.
+    expect($oldBankLine->fresh()->cleared_at)->toBeNull()
+        ->and($oldBankLine->fresh()->bank_reconciliation_id)->toBeNull();
+
+    $completed = $this->service->complete($rec);
+
+    // The register's cleared balance is exactly what was reconciled.
+    Livewire\Livewire::test('pages::banking.register', ['company' => $this->company])
+        ->set('account_id', $this->bank->id)
+        ->assertSeeHtml('data-test="cleared-balance">-20.00<');
+
+    expect(JournalLine::query()->where('bank_reconciliation_id', $completed->id)->sum('credit_cents'))->toEqual(2000);
+
+    // And the next reconciliation is not handed the replaced charge's reversal
+    // as a phantom deposit.
+    $this->service->begin($this->bank, Carbon::parse('2026-05-31'), -2000);
+
+    $component = Livewire\Livewire::test('pages::banking.reconcile', ['company' => $this->company])
+        ->set('account_id', $this->bank->id);
+
+    expect($component->instance()->availableLines('payments'))->toBeEmpty()
+        ->and($component->instance()->availableLines('deposits'))->toBeEmpty();
+});
+
+it('un-clears a service charge left unticked when the reconciliation is completed', function () {
+    $rec = $this->service->begin(
+        $this->bank,
+        Carbon::parse('2026-04-30'),
+        endingBalanceCents: 0,
+        serviceCharge: ['cents' => 1500, 'date' => Carbon::parse('2026-04-30'), 'account_id' => $this->expense->id],
+    );
+
+    $bankLine = JournalEntry::with('lines')->find($rec->service_charge_entry_id)->lines->firstWhere('account_id', $this->bank->id);
+
+    // The statement did not carry the charge after all, so it is unticked.
+    $rec = $this->service->toggleMark($rec, $bankLine->id);
+    $this->service->complete($rec);
+
+    expect($bankLine->fresh()->cleared_at)->toBeNull()
+        ->and($bankLine->fresh()->bank_reconciliation_id)->toBeNull();
+});
+
+it('keeps a replaced service charge off the reconcile screen even with a stamp left over from before the fix', function () {
+    $user = User::factory()->create();
+    $this->company->members()->attach($user, ['role' => CompanyRole::Owner->value]);
+    $this->actingAs($user);
+
+    $rec = $this->service->begin(
+        $this->bank,
+        Carbon::parse('2026-04-30'),
+        endingBalanceCents: -2000,
+        serviceCharge: ['cents' => 1500, 'date' => Carbon::parse('2026-04-30'), 'account_id' => $this->expense->id],
+    );
+
+    $oldBankLine = JournalEntry::with('lines')->find($rec->service_charge_entry_id)->lines->firstWhere('account_id', $this->bank->id);
+
+    $this->service->updateDetails(
+        $rec,
+        Carbon::parse('2026-04-30'),
+        endingBalanceCents: -2000,
+        beginningBalanceCents: 0,
+        serviceCharge: ['cents' => 2000, 'date' => Carbon::parse('2026-04-30'), 'account_id' => $this->expense->id],
+    );
+
+    // What an in-progress reconciliation edited before the fix looks like.
+    $oldBankLine->fresh()->forceFill(['cleared_at' => now(), 'bank_reconciliation_id' => $rec->id])->save();
+    expect($oldBankLine->fresh()->bank_reconciliation_id)->toBe($rec->id);
+
+    $component = Livewire\Livewire::test('pages::banking.reconcile', ['company' => $this->company])
+        ->set('account_id', $this->bank->id);
+
+    expect($component->instance()->availableLines('payments')->pluck('credit_cents')->all())->toBe([2000])
+        ->and($component->instance()->availableLines('deposits'))->toBeEmpty();
+});
+
+it('leaves a voided cheque and its reversal off the reconcile screen', function () {
+    $user = User::factory()->create();
+    $this->company->members()->attach($user, ['role' => CompanyRole::Owner->value]);
+    $this->actingAs($user);
+
+    // A cheque that was written and later voided was never cashed, so neither
+    // it nor the reversing entry is on the statement.
+    $voided = makeBankEntry($this->bank, $this->expense, debitOnBankCents: 0, creditOnBankCents: 4000, date: '2026-04-10');
+    app(JournalPoster::class)->void($voided->fresh(), CarbonImmutable::parse('2026-04-20'));
+
+    // A live cheque alongside it is still offered.
+    $live = makeBankEntry($this->bank, $this->expense, debitOnBankCents: 0, creditOnBankCents: 1000, date: '2026-04-12');
+    $liveLineId = $live->lines->firstWhere('account_id', $this->bank->id)->id;
+
+    $this->service->begin($this->bank, Carbon::parse('2026-04-30'), -1000);
 
     $component = Livewire\Livewire::test('pages::banking.reconcile', ['company' => $this->company])
         ->set('account_id', $this->bank->id);
@@ -465,18 +563,58 @@ it('offers a voided transaction and its reversal for ticking, so the register ca
     $payments = $component->instance()->availableLines('payments');
     $deposits = $component->instance()->availableLines('deposits');
 
-    // The original credit is still offered...
-    expect($payments->pluck('credit_cents')->map(fn ($c) => (int) $c))->toContain(4000)
-        // ...and so is the reversing debit.
-        ->and($deposits->pluck('debit_cents')->map(fn ($c) => (int) $c))->toContain(4000);
+    expect($payments->pluck('id')->all())->toBe([$liveLineId])
+        ->and($deposits)->toBeEmpty();
 
-    // Ticking both nets to zero, so the reconciliation still balances.
-    $rec = $this->service->markLines(
-        BankReconciliation::query()->forAccount($this->bank->id)->inProgress()->firstOrFail(),
-        [...$payments->pluck('id')->all(), ...$deposits->pluck('id')->all()],
-    );
+    // Mark all cannot sweep the hidden pair in either.
+    $component->call('markAll', 'payments')->call('markAll', 'deposits');
 
-    expect($this->service->differenceCents($rec))->toBe(0);
+    $rec = BankReconciliation::query()->forAccount($this->bank->id)->inProgress()->firstOrFail();
+
+    expect($rec->markedLineIds())->toBe([$liveLineId])
+        ->and($this->service->differenceCents($rec))->toBe(0);
+});
+
+it('keeps both halves of a void on the reconcile screen once either half is ticked', function () {
+    $user = User::factory()->create();
+    $this->company->members()->attach($user, ['role' => CompanyRole::Owner->value]);
+    $this->actingAs($user);
+
+    $voided = makeBankEntry($this->bank, $this->expense, debitOnBankCents: 0, creditOnBankCents: 4000, date: '2026-04-10');
+    $reversal = app(JournalPoster::class)->void($voided->fresh(), CarbonImmutable::parse('2026-04-20'));
+
+    $originalLineId = $voided->lines->firstWhere('account_id', $this->bank->id)->id;
+    $reversalLineId = $reversal->lines->firstWhere('account_id', $this->bank->id)->id;
+
+    // The reversal was ticked before the rule existed (or matched by a
+    // statement import) — it must stay visible to untick, and its partner
+    // must stay visible to net against it.
+    $rec = $this->service->begin($this->bank, Carbon::parse('2026-04-30'), 0);
+    $this->service->toggleMark($rec, $reversalLineId);
+
+    $component = Livewire\Livewire::test('pages::banking.reconcile', ['company' => $this->company])
+        ->set('account_id', $this->bank->id);
+
+    expect($component->instance()->availableLines('payments')->pluck('id')->all())->toBe([$originalLineId])
+        ->and($component->instance()->availableLines('deposits')->pluck('id')->all())->toBe([$reversalLineId]);
+});
+
+it('keeps both halves of a void on the reconcile screen when one was cleared in the legacy register', function () {
+    $user = User::factory()->create();
+    $this->company->members()->attach($user, ['role' => CompanyRole::Owner->value]);
+    $this->actingAs($user);
+
+    $voided = makeBankEntry($this->bank, $this->expense, debitOnBankCents: 0, creditOnBankCents: 4000, date: '2026-04-10');
+    $voided->lines->firstWhere('account_id', $this->bank->id)->update(['cleared_at' => now()]);
+    $reversal = app(JournalPoster::class)->void($voided->fresh(), CarbonImmutable::parse('2026-04-20'));
+
+    $this->service->begin($this->bank, Carbon::parse('2026-04-30'), 0);
+
+    $component = Livewire\Livewire::test('pages::banking.reconcile', ['company' => $this->company])
+        ->set('account_id', $this->bank->id);
+
+    expect($component->instance()->availableLines('deposits')->pluck('id')->all())
+        ->toBe([$reversal->lines->firstWhere('account_id', $this->bank->id)->id]);
 });
 
 it('refuses a second in-progress reconciliation on the same account', function () {

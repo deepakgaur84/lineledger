@@ -4,6 +4,7 @@ use App\Actions\MasterData\SaveTaxAgency;
 use App\Actions\MasterData\SaveTaxCode;
 use App\Enums\AccountSubtype;
 use App\Enums\TaxAppliesTo;
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\TaxAgency;
@@ -16,6 +17,8 @@ use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Tax codes')] class extends Component {
+    use HoldsEditLock;
+
     public Company $company;
 
     public ?int $editingId = null;
@@ -56,6 +59,7 @@ new #[Title('Tax codes')] class extends Component {
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->resetForm();
         Flux::modal('tax-code-form')->show();
     }
@@ -63,6 +67,10 @@ new #[Title('Tax codes')] class extends Component {
     public function openEdit(int $id): void
     {
         $t = TaxCode::findOrFail($id);
+
+        if (! $this->acquireEditLock($t, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
 
         $this->editingId = $t->id;
         $this->f_code = $t->code;
@@ -80,6 +88,10 @@ new #[Title('Tax codes')] class extends Component {
 
     public function save(): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(TaxCode::class, $this->editingId)) {
+            return;
+        }
+
         $companyId = $this->company->id;
 
         $validated = $this->validate([
@@ -108,6 +120,7 @@ new #[Title('Tax codes')] class extends Component {
             'is_active' => $validated['f_is_active'],
         ], $editing);
 
+        $this->completeEditLockSave();
         Flux::modal('tax-code-form')->close();
         $this->resetForm();
         Flux::toast(variant: 'success', text: __('Tax code saved.'));
@@ -115,6 +128,7 @@ new #[Title('Tax codes')] class extends Component {
 
     public function openAgencyCreate(): void
     {
+        $this->releaseAgencyEditLock();
         $this->resetAgencyForm();
         Flux::modal('tax-agency-form')->show();
     }
@@ -122,6 +136,10 @@ new #[Title('Tax codes')] class extends Component {
     public function openAgencyEdit(int $id): void
     {
         $a = TaxAgency::findOrFail($id);
+
+        if (! $this->acquireEditLock($a, reopen: 'openAgencyEdit', reopenArgs: [$id])) {
+            return;
+        }
 
         $this->editingAgencyId = $a->id;
         $this->a_name = $a->name;
@@ -131,6 +149,19 @@ new #[Title('Tax codes')] class extends Component {
         $this->a_account_name = '';
 
         Flux::modal('tax-agency-form')->show();
+    }
+
+    /**
+     * The page holds one lock at a time, but the agency dialog can open on top
+     * of the tax-code dialog (its inline "New authority" button). Closing or
+     * opening the agency dialog therefore lets go only of an agency's lock,
+     * never the tax code still being edited underneath.
+     */
+    public function releaseAgencyEditLock(): void
+    {
+        if ($this->editLockType === TaxAgency::class) {
+            $this->releaseEditLock();
+        }
     }
 
     /**
@@ -148,6 +179,10 @@ new #[Title('Tax codes')] class extends Component {
 
     public function saveAgency(): void
     {
+        if ($this->editingAgencyId !== null && ! $this->ensureEditLockForSave(TaxAgency::class, $this->editingAgencyId)) {
+            return;
+        }
+
         $companyId = $this->company->id;
 
         $validated = $this->validate([
@@ -169,6 +204,10 @@ new #[Title('Tax codes')] class extends Component {
             'payable_account_name' => $validated['a_account_name'] ?: null,
             'is_active' => true,
         ], $editing);
+
+        if ($editing !== null) {
+            $this->completeEditLockSave();
+        }
 
         Flux::modal('tax-agency-form')->close();
         $this->resetAgencyForm();
@@ -309,8 +348,11 @@ new #[Title('Tax codes')] class extends Component {
         </div>
     </x-pages::settings.layout>
 
-    <flux:modal name="tax-code-form" class="max-w-lg">
+    <flux:modal name="tax-code-form" class="max-w-lg" wire:close="releaseEditLock">
         <form wire:submit="save" class="space-y-6">
+            @if ($editLockToken && $editLockType === TaxCode::class)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg">{{ $editingId ? __('Edit tax code') : __('New tax code') }}</flux:heading>
             <x-api-id-hint :id="$editingId" field="tax_code_id" />
 
@@ -357,8 +399,11 @@ new #[Title('Tax codes')] class extends Component {
         </form>
     </flux:modal>
 
-    <flux:modal name="tax-agency-form" class="max-w-lg">
+    <flux:modal name="tax-agency-form" class="max-w-lg" wire:close="releaseAgencyEditLock">
         <form wire:submit="saveAgency" class="space-y-6">
+            @if ($editLockToken && $editLockType === TaxAgency::class)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg">{{ $editingAgencyId ? __('Edit agency') : __('New agency') }}</flux:heading>
             {{-- Agencies are their own API resource (/api/v1/tax-agencies), so the
                  id a tax code references as `agency_id` belongs here too. --}}
@@ -407,4 +452,6 @@ new #[Title('Tax codes')] class extends Component {
             </div>
         </form>
     </flux:modal>
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

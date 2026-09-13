@@ -1,6 +1,7 @@
 <?php
 
 use App\Actions\MasterData\SaveClassification;
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Classification;
 use App\Models\Company;
 use Flux\Flux;
@@ -9,6 +10,8 @@ use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Classes')] class extends Component {
+    use HoldsEditLock;
+
     public Company $company;
 
     public ?int $editingId = null;
@@ -24,6 +27,7 @@ new #[Title('Classes')] class extends Component {
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->reset(['editingId', 'f_name', 'f_is_active']);
         $this->f_is_active = true;
         Flux::modal('classifications-form')->show();
@@ -32,6 +36,11 @@ new #[Title('Classes')] class extends Component {
     public function openEdit(int $id): void
     {
         $c = Classification::findOrFail($id);
+
+        if (! $this->acquireEditLock($c, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
+
         $this->editingId = $c->id;
         $this->f_name = $c->name;
         $this->f_is_active = $c->is_active;
@@ -40,6 +49,10 @@ new #[Title('Classes')] class extends Component {
 
     public function save(): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(Classification::class, $this->editingId)) {
+            return;
+        }
+
         $validated = $this->validate([
             'f_name' => ['required', 'string', 'max:255'],
             'f_is_active' => ['boolean'],
@@ -53,6 +66,7 @@ new #[Title('Classes')] class extends Component {
             'is_active' => $validated['f_is_active'],
         ], $editing);
 
+        $this->completeEditLockSave();
         Flux::modal('classifications-form')->close();
         Flux::toast(variant: 'success', text: __('Class saved.'));
     }
@@ -98,8 +112,11 @@ new #[Title('Classes')] class extends Component {
         </div>
     </x-pages::settings.layout>
 
-    <flux:modal name="classifications-form" class="max-w-lg">
+    <flux:modal name="classifications-form" class="max-w-lg" wire:close="releaseEditLock">
         <form wire:submit="save" class="space-y-6">
+            @if ($editLockToken)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg">{{ $editingId ? __('Edit class') : __('New class') }}</flux:heading>
             <flux:input wire:model="f_name" :label="__('Name')" required data-test="class-name" />
             <flux:switch wire:model="f_is_active" :label="__('Active')" />
@@ -109,4 +126,6 @@ new #[Title('Classes')] class extends Component {
             </div>
         </form>
     </flux:modal>
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

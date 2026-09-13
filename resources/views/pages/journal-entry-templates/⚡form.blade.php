@@ -1,6 +1,7 @@
 <?php
 
 use App\Actions\Accounting\SaveJournalEntryTemplate;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Classification;
 use App\Models\Company;
@@ -10,12 +11,15 @@ use App\Models\Location;
 use App\Rules\MoneyString;
 use App\Support\Money;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Journal entry template')] class extends Component {
+    use GuardsEditLockedForm;
+
     public Company $company;
 
     public ?JournalEntryTemplate $journalEntryTemplate = null;
@@ -28,6 +32,11 @@ new #[Title('Journal entry template')] class extends Component {
      * @var array<int, array{account_id: ?int, debit: string, credit: string, memo: ?string, class_id: ?int, location_id: ?int, fund_id: ?int}>
      */
     public array $lines = [];
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->journalEntryTemplate;
+    }
 
     public function mount(Company $company, ?JournalEntryTemplate $journalEntryTemplate = null): void
     {
@@ -191,6 +200,9 @@ new #[Title('Journal entry template')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <flux:heading size="xl" level="1" class="mb-6">
         {{ $journalEntryTemplate?->id ? __('Edit journal entry template') : __('New journal entry template') }}
     </flux:heading>
@@ -312,4 +324,5 @@ new #[Title('Journal entry template')] class extends Component {
             </div>
         </div>
     </form>
+    @endif
 </section>

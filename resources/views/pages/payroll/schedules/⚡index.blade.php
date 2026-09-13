@@ -2,6 +2,7 @@
 
 use App\Actions\Payroll\SavePayrollSchedule;
 use App\Enums\PayFrequency;
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Company;
 use App\Models\PayrollSchedule;
 use Flux\Flux;
@@ -10,6 +11,8 @@ use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Pay schedules')] class extends Component {
+    use HoldsEditLock;
+
     public Company $company;
 
     public ?int $editingId = null;
@@ -35,6 +38,7 @@ new #[Title('Pay schedules')] class extends Component {
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->resetForm();
         Flux::modal('schedule-form')->show();
     }
@@ -42,6 +46,10 @@ new #[Title('Pay schedules')] class extends Component {
     public function openEdit(int $id): void
     {
         $schedule = PayrollSchedule::findOrFail($id);
+
+        if (! $this->acquireEditLock($schedule, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
 
         $this->editingId = $schedule->id;
         $this->f_name = $schedule->name;
@@ -55,6 +63,10 @@ new #[Title('Pay schedules')] class extends Component {
 
     public function save(SavePayrollSchedule $action): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(PayrollSchedule::class, $this->editingId)) {
+            return;
+        }
+
         $validated = $this->validate([
             'f_name' => ['required', 'string', 'max:255'],
             'f_frequency' => ['required', 'in:'.implode(',', array_column(PayFrequency::cases(), 'value'))],
@@ -73,6 +85,7 @@ new #[Title('Pay schedules')] class extends Component {
             'is_active' => $validated['f_is_active'],
         ], $schedule);
 
+        $this->completeEditLockSave();
         Flux::modal('schedule-form')->close();
         $this->resetForm();
 
@@ -147,8 +160,11 @@ new #[Title('Pay schedules')] class extends Component {
         </table>
     </div>
 
-    <flux:modal name="schedule-form" class="max-w-lg">
+    <flux:modal name="schedule-form" class="max-w-lg" wire:close="releaseEditLock">
         <form wire:submit="save" class="space-y-6">
+            @if ($editLockToken)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg">{{ $editingId ? __('Edit pay schedule') : __('New pay schedule') }}</flux:heading>
 
             <flux:input wire:model="f_name" :label="__('Name')" required data-test="schedule-name" />
@@ -173,4 +189,6 @@ new #[Title('Pay schedules')] class extends Component {
             </div>
         </form>
     </flux:modal>
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

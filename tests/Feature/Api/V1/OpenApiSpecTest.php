@@ -27,3 +27,19 @@ it('serves a valid dereferenced OpenAPI spec without auth', function () {
         ->and($spec['paths']['/invoices']['post']['summary'])->toBe('Create (and post) an invoice')
         ->and(count($spec['paths']))->toBeGreaterThan(40);
 });
+
+it('documents the 423 edit-lock response on lockable writes only', function () {
+    $spec = $this->getJson('/api/v1/openapi.json')->assertStatus(200)->json();
+
+    expect($spec['components']['responses'])->toHaveKey('Locked')
+        ->and($spec['components']['responses']['Locked']['headers'])->toHaveKey('Retry-After')
+        ->and($spec['paths']['/invoices/{invoice}']['patch']['responses'])->toHaveKey('423')
+        ->and($spec['paths']['/invoices/{invoice}']['patch']['responses']['423']['$ref'])->toBe('#/components/responses/Locked')
+        // Inlined shared fragments carry it too…
+        ->and($spec['paths']['/bills/{bill}/post']['post']['responses'])->toHaveKey('423')
+        ->and($spec['paths']['/customers/{contact}']['delete']['responses'])->toHaveKey('423')
+        // …but resources with no web editor never answer 423.
+        ->and($spec['paths']['/stock-adjustments/{stockAdjustment}/post']['post']['responses'])->not->toHaveKey('423')
+        ->and($spec['paths']['/tax-return-payments/{taxReturnPayment}']['delete']['responses'])->not->toHaveKey('423')
+        ->and($spec['paths']['/bank-reconciliations/{bankReconciliation}']['patch']['responses'])->not->toHaveKey('423');
+});

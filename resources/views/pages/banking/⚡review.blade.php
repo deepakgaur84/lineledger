@@ -24,6 +24,7 @@ use App\Services\Banking\Import\BankRuleEngine;
 use App\Services\Banking\Import\OpenBillMatcher;
 use App\Services\Banking\TransferPairMatcher;
 use App\Services\Classification\CategorySuggester;
+use App\Services\EditLocks\EditLockManager;
 use App\Support\Money;
 use Flux\Flux;
 use Illuminate\Support\Collection;
@@ -429,6 +430,12 @@ new #[Title('For Review')] class extends Component {
             Flux::toast(variant: 'danger', text: collect($e->errors())->flatten()->first() ?? $e->getMessage());
 
             return;
+        }
+
+        // Re-running for the same payee updates the existing rule; make an open
+        // bank-rule edit dialog notice rather than save over it.
+        if (! $rule->wasRecentlyCreated) {
+            app(EditLockManager::class)->touch($rule);
         }
 
         unset($this->rows, $this->ruleCoveredLines, $this->billCandidates, $this->contactNames);

@@ -2,6 +2,7 @@
 
 use App\Actions\Fundraising\SaveGrant;
 use App\Enums\AccountType;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\Contact;
@@ -9,12 +10,15 @@ use App\Models\Fund;
 use App\Models\Grant;
 use App\Support\Money;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Grant')] class extends Component {
+    use GuardsEditLockedForm;
+
     public Company $company;
 
     public ?Grant $grant = null;
@@ -44,6 +48,11 @@ new #[Title('Grant')] class extends Component {
     public string $recognition_method = 'manual';
 
     public string $notes = '';
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->grant;
+    }
 
     public function mount(Company $company, ?Grant $grant = null): void
     {
@@ -151,6 +160,9 @@ new #[Title('Grant')] class extends Component {
 }; ?>
 
 <section class="mx-auto w-full max-w-2xl">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <flux:heading size="xl" level="1" data-test="page-title">{{ $grant?->exists ? __('Edit grant') : __('New grant') }}</flux:heading>
     <flux:subheading class="mb-6">{{ __('Drafts can be edited until the award is posted.') }}</flux:subheading>
 
@@ -222,4 +234,5 @@ new #[Title('Grant')] class extends Component {
             <flux:button variant="primary" type="submit" data-test="grant-save-button">{{ __('Save draft') }}</flux:button>
         </div>
     </form>
+    @endif
 </section>

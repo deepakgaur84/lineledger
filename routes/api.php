@@ -54,11 +54,13 @@ Route::middleware(['throttle:api', 'auth.api_key'])
             Route::get($uri, [$controller, 'index'])->name("{$uri}.index")->middleware("api.ability:{$uri}:read");
             Route::get("{$uri}/{{$param}}", [$controller, 'show'])->name("{$uri}.show")->middleware("api.ability:{$uri}:read");
             Route::post($uri, [$controller, 'store'])->name("{$uri}.store")->middleware("api.ability:{$uri}:write");
-            Route::match(['put', 'patch'], "{$uri}/{{$param}}", [$controller, 'update'])->name("{$uri}.update")->middleware("api.ability:{$uri}:write");
-            Route::delete("{$uri}/{{$param}}", [$controller, 'destroy'])->name("{$uri}.destroy")->middleware("api.ability:{$uri}:write");
+            // Writes to an existing record also answer 423 while someone is
+            // editing it in the web app (RejectEditLockedRecords).
+            Route::match(['put', 'patch'], "{$uri}/{{$param}}", [$controller, 'update'])->name("{$uri}.update")->middleware(["api.ability:{$uri}:write", 'api.edit_lock']);
+            Route::delete("{$uri}/{{$param}}", [$controller, 'destroy'])->name("{$uri}.destroy")->middleware(["api.ability:{$uri}:write", 'api.edit_lock']);
 
             foreach ($actions as $action) {
-                Route::post("{$uri}/{{$param}}/{$action}", [$controller, $action])->name("{$uri}.{$action}")->middleware("api.ability:{$uri}:write");
+                Route::post("{$uri}/{{$param}}/{$action}", [$controller, $action])->name("{$uri}.{$action}")->middleware(["api.ability:{$uri}:write", 'api.edit_lock']);
             }
         };
 

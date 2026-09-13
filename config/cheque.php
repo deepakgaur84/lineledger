@@ -33,6 +33,17 @@ return [
     /* Star-fill width for the amount-in-words line ("****One Hundred..."). */
     'amount_words_pad_width' => 60,
 
+    /*
+     * Payee address block, drawn under the payee name. The band between the
+     * payee (y 151.4) and the memo (y 202.4) is ~51 pt, which four lines only
+     * clear at a smaller face and a tighter step — measured against the
+     * worst case, a foreign payee (the country line is suppressed domestically).
+     * Addresses are conventionally set smaller than the payee line anyway.
+     */
+    'address_font_size' => 8,
+    'address_line_height' => 9.0,
+    'address_max_lines' => 4,
+
     /* Detail rows on the vouchers step down by this much per row. */
     'voucher_line_height' => 14.0,
 
@@ -63,6 +74,7 @@ return [
         'cheque_amount_words' => [72.0, 109.4],
         'cheque_amount_numeric' => [495.0, 109.4],
         'cheque_payee' => [72.0, 151.4],
+        'cheque_payee_address' => [72.0, 164.0],
         'cheque_memo_label' => [40.0, 202.4],
         'cheque_memo' => [72.0, 202.4],
 

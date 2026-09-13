@@ -16,6 +16,7 @@ use App\Models\JournalLine;
 use App\Models\User;
 use App\Services\Insights\Detectors\CashflowRunwayDetector;
 use App\Services\Insights\Detectors\CashflowShortfallDetector;
+use App\Services\Posting\JournalPoster;
 use App\Services\Reporting\CashflowForecaster;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Carbon;
@@ -287,6 +288,26 @@ it('ties book cash to the bank: cleared balance, uncleared cheques, deposits in 
         ->and($position['outstanding_payments_count'])->toBe(1)
         ->and($position['deposits_in_transit_cents'])->toBe(0)
         ->and($position['other_cash_cents'])->toBe(0);
+});
+
+it('does not count a voided cheque or its reversal as outstanding', function () {
+    $bank = fcAccount($this->company, AccountSubtype::Bank);
+
+    JournalLine::query()->where('account_id', $bank->id)->update(['cleared_at' => now()]);
+    fcPost($this->company, '2026-06-10', [
+        ['account' => fcAccount($this->company, AccountSubtype::Expense), 'debit' => 360268],
+        ['account' => $bank, 'credit' => 360268],
+    ]);
+
+    app(JournalPoster::class)->void(JournalEntry::query()->latest('id')->firstOrFail(), CarbonImmutable::parse('2026-06-12'));
+
+    $position = app(CashflowForecaster::class)->forecast($this->company, 'week', 13, 0)['cash_position'];
+
+    expect($position['cleared_cents'])->toBe(500000)
+        ->and($position['outstanding_payments_cents'])->toBe(0)
+        ->and($position['outstanding_payments_count'])->toBe(0)
+        ->and($position['deposits_in_transit_cents'])->toBe(0)
+        ->and($position['deposits_in_transit_count'])->toBe(0);
 });
 
 it('reports the cash position as untracked when no bank line has ever been cleared', function () {

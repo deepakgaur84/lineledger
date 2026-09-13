@@ -21,6 +21,7 @@ use App\Models\CustomerReceipt;
 use App\Models\Deposit;
 use App\Models\Invoice;
 use App\Models\JournalEntry;
+use App\Support\Accounting\ControlAccountRoles;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Auth;
@@ -434,6 +435,7 @@ class QuickBooksDocumentReconstructor
         foreach ($bodyLines as $item) {
             $cheque->lines()->create([
                 'account_id' => $item['account']->id,
+                'contact_id' => $this->subledgerLineContact($entry->company_id, $item['account'], $item['line']['name'] ?? null),
                 'description' => $item['line']['memo'] ?? $item['line']['name'] ?? null,
                 'amount_cents' => (int) $item['line']['debit_cents'],
                 'tax_cents' => 0,
@@ -442,6 +444,34 @@ class QuickBooksDocumentReconstructor
         }
 
         return $cheque;
+    }
+
+    /**
+     * The customer / vendor named on a QuickBooks line, but only for a line coded
+     * to an Accounts Receivable / Payable control account and only when the matched
+     * contact already holds the role that account requires. Never creates one — the
+     * GL rows this reconstructs already carry their own contact, so this is purely
+     * so the rebuilt document matches them and arrives at the cheque form already
+     * attributed rather than demanding a customer on first open.
+     */
+    protected function subledgerLineContact(int $companyId, Account $account, ?string $name): ?int
+    {
+        $role = ControlAccountRoles::map($companyId)[(int) $account->id] ?? null;
+
+        if ($role === null || $name === null) {
+            return null;
+        }
+
+        $contactId = $this->resolveContact($companyId, $name, $role, create: false);
+
+        if ($contactId === null) {
+            return null;
+        }
+
+        return Contact::withoutGlobalScopes()
+            ->whereKey($contactId)
+            ->where(ControlAccountRoles::roleColumn($role), true)
+            ->exists() ? $contactId : null;
     }
 
     /**

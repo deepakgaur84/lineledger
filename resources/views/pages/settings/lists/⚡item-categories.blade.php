@@ -1,6 +1,7 @@
 <?php
 
 use App\Actions\MasterData\SaveItemCategory;
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Livewire\Concerns\ImportsCsvList;
 use App\Models\Company;
 use App\Models\ItemCategory;
@@ -14,6 +15,7 @@ use Livewire\Component;
 use Livewire\WithFileUploads;
 
 new #[Title('Item categories')] class extends Component {
+    use HoldsEditLock;
     use ImportsCsvList;
     use WithFileUploads;
 
@@ -49,6 +51,7 @@ new #[Title('Item categories')] class extends Component {
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->reset(['editingId', 'f_name', 'f_parent_id', 'f_is_active']);
         $this->f_is_active = true;
         Flux::modal('item-category-form')->show();
@@ -57,6 +60,11 @@ new #[Title('Item categories')] class extends Component {
     public function openEdit(int $id): void
     {
         $c = ItemCategory::findOrFail($id);
+
+        if (! $this->acquireEditLock($c, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
+
         $this->editingId = $c->id;
         $this->f_name = $c->name;
         $this->f_parent_id = $c->parent_id;
@@ -66,6 +74,10 @@ new #[Title('Item categories')] class extends Component {
 
     public function save(): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(ItemCategory::class, $this->editingId)) {
+            return;
+        }
+
         $validated = $this->validate([
             'f_name' => ['required', 'string', 'max:255'],
             'f_parent_id' => ['nullable', 'integer', Rule::exists('item_categories', 'id')->where('company_id', $this->company->id)],
@@ -88,6 +100,7 @@ new #[Title('Item categories')] class extends Component {
             'is_active' => $validated['f_is_active'],
         ], $editing);
 
+        $this->completeEditLockSave();
         Flux::modal('item-category-form')->close();
         Flux::toast(variant: 'success', text: __('Category saved.'));
     }
@@ -146,8 +159,11 @@ new #[Title('Item categories')] class extends Component {
         </div>
     </x-pages::settings.layout>
 
-    <flux:modal name="item-category-form" class="max-w-lg">
+    <flux:modal name="item-category-form" class="max-w-lg" wire:close="releaseEditLock">
         <form wire:submit="save" class="space-y-6">
+            @if ($editLockToken)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg">{{ $editingId ? __('Edit category') : __('New category') }}</flux:heading>
             <flux:input wire:model="f_name" :label="__('Name')" required data-test="item-category-name" />
             <flux:select wire:model="f_parent_id" :label="__('Parent category (optional)')">
@@ -179,4 +195,6 @@ new #[Title('Item categories')] class extends Component {
             <p class="mt-2">{{ __('To nest a category, put its parent\'s name in "parent_name" and list the parent before its children.') }}</p>
         </x-slot:help>
     </x-csv-import-modal>
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

@@ -11,6 +11,7 @@ use App\Models\CreditMemo;
 use App\Models\CustomerReceipt;
 use App\Models\JournalLine;
 use App\Models\User;
+use App\Services\EditLocks\EditLockManager;
 use App\Services\Posting\ChequePoster;
 use App\Services\Posting\CreditMemoPoster;
 use App\Services\Posting\ReceiptPoster;
@@ -324,4 +325,32 @@ it('rejects a positive refund receipt and a zero receipt', function () {
 
     expect(fn () => app(ReceiptPoster::class)->post($zero))
         ->toThrow(RuntimeException::class, 'Receipt amount cannot be zero.');
+});
+
+it('refuses removing a refund cheque someone has open, and removes it once they are done', function () {
+    $memo = postedCreditMemo(10000);
+
+    Livewire::test('pages::credit-memos.show', ['company' => $this->company, 'credit_memo' => $memo])
+        ->call('openRefund')
+        ->set('refundMethod', 'cheque')
+        ->call('submitRefund');
+
+    $cheque = Cheque::where('credit_memo_id', $memo->id)->firstOrFail();
+
+    $bookkeeper = User::factory()->create();
+    $this->company->members()->attach($bookkeeper, ['role' => CompanyRole::Accountant->value]);
+    $lease = app(EditLockManager::class)->acquire($cheque, $bookkeeper);
+
+    Livewire::test('pages::credit-memos.show', ['company' => $this->company, 'credit_memo' => $memo->fresh()])
+        ->call('deleteRefundCheque', $cheque->id)
+        ->assertDispatched('toast-show');
+
+    expect(Cheque::find($cheque->id))->not->toBeNull();
+
+    app(EditLockManager::class)->release($lease->token, $bookkeeper);
+
+    Livewire::test('pages::credit-memos.show', ['company' => $this->company, 'credit_memo' => $memo->fresh()])
+        ->call('deleteRefundCheque', $cheque->id);
+
+    expect(Cheque::find($cheque->id))->toBeNull();
 });

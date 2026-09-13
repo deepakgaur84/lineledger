@@ -2,10 +2,14 @@
 
 use App\Actions\Portal\SetOwnPortalPassword;
 use App\Actions\Portal\UpdateOwnEmployeeInfo;
+use App\Exceptions\EditLocks\EditLockLostException;
+use App\Exceptions\EditLocks\RecordEditLockedException;
 use App\Models\Company;
 use App\Models\Contact;
+use App\Services\EditLocks\EditLockManager;
 use Flux\Flux;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
@@ -14,6 +18,18 @@ new #[Layout('layouts.employee-portal')] #[Title('Edit my info')] class extends 
     public Company $company;
 
     public Contact $employee;
+
+    /**
+     * The employee record's edit-lock version when this page loaded. Staff edit
+     * the same Contact in the web app; a save is refused while they hold it, or
+     * if it changed since this page read it.
+     */
+    #[Locked]
+    public ?string $editLockVersion = null;
+
+    /** When this page read the record — a staff save after this refuses the portal save. */
+    #[Locked]
+    public int $editLockLoadedAtMs = 0;
 
     // Account & security (portal password)
     public bool $hasPassword = false;
@@ -40,6 +56,8 @@ new #[Layout('layouts.employee-portal')] #[Title('Edit my info')] class extends 
         $this->company = $company;
         $this->employee = auth('customer')->user();
         $this->hasPassword = $this->employee->portal_password !== null;
+        $this->editLockLoadedAtMs = app(EditLockManager::class)->nowMs();
+        $this->editLockVersion = app(EditLockManager::class)->currentVersion($this->employee);
 
         $this->billing_line1 = (string) ($this->employee->billing_line1 ?? '');
         $this->billing_line2 = (string) ($this->employee->billing_line2 ?? '');
@@ -72,7 +90,7 @@ new #[Layout('layouts.employee-portal')] #[Title('Edit my info')] class extends 
             'td1_provincial_code' => ['nullable', 'string', 'max:10'],
         ]);
 
-        $action->handle($this->employee, [
+        $data = [
             'billing_line1' => $validated['billing_line1'] ?? null,
             'billing_line2' => $validated['billing_line2'] ?? null,
             'billing_city' => $validated['billing_city'] ?? null,
@@ -83,7 +101,24 @@ new #[Layout('layouts.employee-portal')] #[Title('Edit my info')] class extends 
             'td1_federal_code' => $validated['td1_federal_code'] ?? null,
             'td1_provincial_claim_cents' => (int) round((float) $validated['td1_provincial_claim'] * 100),
             'td1_provincial_code' => $validated['td1_provincial_code'] ?? null,
-        ]);
+        ];
+
+        $locks = app(EditLockManager::class);
+
+        try {
+            $locks->guardWriteAtVersion($this->employee, null, $this->editLockVersion, fn () => $action->handle($this->employee, $data), $this->editLockLoadedAtMs);
+        } catch (RecordEditLockedException) {
+            $this->addError('save', __('Your employer is updating your details right now. Please try again in a few minutes.'));
+
+            return;
+        } catch (EditLockLostException) {
+            $this->addError('save', __('Your details were opened or updated by your employer while this page was open. Reload to see the latest before saving.'));
+
+            return;
+        }
+
+        $this->editLockVersion = $locks->currentVersion($this->employee);
+        $this->editLockLoadedAtMs = $locks->nowMs();
 
         Flux::toast(__('Your info has been updated.'), variant: 'success');
 
@@ -145,6 +180,8 @@ new #[Layout('layouts.employee-portal')] #[Title('Edit my info')] class extends 
                 <flux:input wire:model="td1_provincial_code" :label="__('Provincial claim code')" />
             </div>
         </flux:card>
+
+        <flux:error name="save" data-test="info-save-error" />
 
         <div class="flex justify-end">
             <flux:button variant="primary" type="submit" data-test="info-save">{{ __('Save changes') }}</flux:button>

@@ -27,7 +27,7 @@ new #[Title('Documentation — Banking')] class extends Component {}; ?>
         />
 
         <flux:text>
-            {{ __('The register is read-only: a green tick means the row has been cleared, and rows are ticked off during reconciliation rather than here, so there is nothing to keep in step by hand. Toggle Show cleared to hide the rows you have already accounted for. When you are ready to work through the statement, choose Reconcile from the Actions menu.') }}
+            {{ __('The register is read-only: a green tick means the row has been cleared, and rows are ticked off during reconciliation rather than here, so there is nothing to keep in step by hand. Toggle Show cleared to hide the rows you have already accounted for. A voided cheque and the reversing entry its void posted are greyed out with a void mark instead of a box: they cancel each other out and never reach the bank, so they are not waiting to clear, and hiding cleared rows hides them too. When you are ready to work through the statement, choose Reconcile from the Actions menu.') }}
         </flux:text>
 
         {{-- ───────────────────────── Import a statement ───────────────────────── --}}
@@ -189,12 +189,16 @@ new #[Title('Documentation — Banking')] class extends Component {}; ?>
             {{ __('A reconciliation balances only when the Difference is 0.00 — that means every cleared transaction adds up to the statement balance you entered. If you cannot get there, look for a transaction you forgot to record, or one cleared by mistake.') }}
         </x-docs.callout>
 
+        <x-docs.callout type="note" heading="{{ __('Voided cheques are left off') }}">
+            {{ __('A voided cheque was never cashed, so it is not on your statement — the reconcile list leaves out both the voided cheque and the reversing entry the void posted. They cancel each other out in the books. The one exception: if either half was already ticked or cleared before the void, both stay on the list so you can settle them. Statement import will not match a voided cheque or its reversal either, and the cash-flow forecast does not count them as outstanding.') }}
+        </x-docs.callout>
+
         <x-docs.callout type="warning" heading="{{ __('Completing a reconciliation locks the period') }}">
             {{ __('When you complete a reconciliation it locks the account through the statement date: the app will refuse to post or void any cheque, receipt, bill payment, or transfer dated inside the reconciled window, so a finished reconciliation can never drift. To change something in that window, use “Undo last reconciliation” first.') }}
         </x-docs.callout>
 
         <x-docs.callout type="tip" heading="{{ __('Edit the starting figures mid-reconciliation') }}">
-            {{ __('Caught a typo in the statement date or opening balance after you have already ticked off twenty transactions? Select Edit details on the reconciliation panel and change the statement date, opening balance, service charge, or interest in place — your cleared ticks are kept. Saving without touching the service charge or interest leaves those entries exactly as they are — no reversal, no re-post. Change an amount, date or account and the app voids the old adjustment entry and posts a new one so the books stay correct; the voided entry and its reversal both stay on the reconcile list, where they cancel each other out. Only the date wrong? You can also open the adjustment’s journal entry from the bank register and edit its date, number, or memo there — the accounts and amounts stay locked to the reconciliation.') }}
+            {{ __('Caught a typo in the statement date or opening balance after you have already ticked off twenty transactions? Select Edit details on the reconciliation panel and change the statement date, opening balance, service charge, or interest in place — your cleared ticks are kept. Saving without touching the service charge or interest leaves those entries exactly as they are — no reversal, no re-post. Change an amount, date or account and the app voids the old adjustment entry and posts a new one so the books stay correct; the voided entry and its reversal never reach the bank, so they drop off the reconcile list. Only the date wrong? You can also open the adjustment’s journal entry from the bank register and edit its date, number, or memo there — the accounts and amounts stay locked to the reconciliation.') }}
         </x-docs.callout>
 
         <x-docs.figure
@@ -256,8 +260,10 @@ new #[Title('Documentation — Banking')] class extends Component {}; ?>
             <li>{{ __('Open Banking → Cheques, then select Write cheque.') }}</li>
             <li>{{ __('Choose the Bank account it is drawn on. The Cheque # fills in automatically.') }}</li>
             <li>{{ __('Set the Date. In Pay to the order of, start typing and pick the vendor, customer or employee. For a one-off payee choose Add … as Other name — it is created on the spot. To set up a full vendor, customer or employee record instead, choose Create … as a new …, which opens that page in a new tab; come back and pick the new name.') }}</li>
+            <li>{{ __('Check the Address. It fills in from the payee\'s record and prints on the cheque, so it can be mailed in a window envelope. Edit it for a one-off delivery — a care-of address, an estate — and the cheque keeps your version. If the change looks like a correction, saving offers to update the payee\'s record too; the cheque keeps its own copy either way, so reprinting an old cheque always shows the address it was actually mailed to.') }}</li>
             <li>{{ __('On each line, choose the Account, type a Description, and enter the Amount (add a Tax code if needed).') }}</li>
             <li>{{ __('Select Add line for more than one expense, and check the Total.') }}</li>
+            <li>{{ __('If you code a line to Accounts Receivable or Accounts Payable, a Customer or Vendor picker appears under the account — fill it in before posting. That line moves one person\'s balance, and it is often not the payee: refunding a beneficiary on a client\'s account, the cheque is made out to the beneficiary while the receivable belongs to the client. Whoever you pick is who the amount shows against on AR/AP Aging, their statement, and their balance in the Customers or Vendors list. When the payee already holds the right role, it is filled in for you.') }}</li>
             <li>{{ __('Select Post cheque to finalize it, or Save draft to keep working on it later.') }}</li>
             <li>{{ __('The bank account you pick is remembered — the next cheque, deposit, register or reconciliation you open starts on that same account.') }}</li>
             <li>{{ __('To print, open the posted cheque and use the Print action — it renders a cheque-formatted PDF for pre-printed stock.') }}</li>

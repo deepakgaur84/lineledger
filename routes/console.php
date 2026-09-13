@@ -39,6 +39,9 @@ Schedule::command('rates:health')->dailyAt('08:30')->withoutOverlapping()->onOne
     ->onFailure(SchedulerFailureAlert::for('rates:health'));
 Schedule::command('backups:prune-expired')->daily()->onOneServer()
     ->onFailure(SchedulerFailureAlert::for('backups:prune-expired'));
+// Drop released edit-lock rows nobody has held or changed for a week.
+Schedule::command('edit-locks:prune')->daily()->onOneServer()
+    ->onFailure(SchedulerFailureAlert::for('edit-locks:prune'));
 // Nightly proof the books reconcile (hash chain + GL balance + balance cache).
 // Emails ops on any failure; the run history is SOC 2 Type II monitoring evidence.
 Schedule::command('integrity:check')->dailyAt('04:00')->withoutOverlapping()->onOneServer()

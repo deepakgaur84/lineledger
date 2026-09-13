@@ -1,17 +1,27 @@
 <?php
 
 use App\Enums\BillStatus;
+use App\Livewire\Attributes\GuardsEditLock;
+use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\Bill;
 use App\Models\Company;
 use App\Services\Posting\BillPoster;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Reimbursement')] class extends Component {
+    use ShowsEditLock;
+
     public Company $company;
 
     public Bill $bill;
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->bill;
+    }
 
     public function mount(Company $company, Bill $bill): void
     {
@@ -19,6 +29,7 @@ new #[Title('Reimbursement')] class extends Component {
         $this->bill = $bill->load('lines.account', 'lines.taxCode', 'lines.secondaryTaxCode', 'contact', 'journalEntry');
     }
 
+    #[GuardsEditLock]
     public function void(BillPoster $poster): void
     {
         try {
@@ -33,6 +44,7 @@ new #[Title('Reimbursement')] class extends Component {
         $this->redirectRoute('reimbursements.index', ['company' => $this->company->slug], navigate: true);
     }
 
+    #[GuardsEditLock]
     public function deleteDraft(): void
     {
         if ($this->bill->journal_entry_id) {
@@ -50,6 +62,8 @@ new #[Title('Reimbursement')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    <x-edit-lock.banner :lock="$this->editLockBanner" />
+
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
             <flux:heading size="xl" level="1">{{ __('Reimbursement') }} {{ $bill->bill_no }}</flux:heading>

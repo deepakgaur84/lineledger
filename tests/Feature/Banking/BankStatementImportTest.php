@@ -179,6 +179,20 @@ it('flags re-uploaded transactions as duplicates so nothing clears twice', funct
         ->and($second->lines()->first()->match_status)->toBe(StatementLineMatchStatus::Duplicate);
 });
 
+it('does not match a statement line to a voided cheque or the reversal its void posted', function () {
+    $voided = postedBankEntry($this->bank, $this->expense, -1520000, '2026-08-27');
+    app(JournalPoster::class)->void($voided->fresh(), CarbonImmutable::parse('2026-08-29'));
+
+    // Neither half reaches the bank, so a same-amount withdrawal or deposit on
+    // the statement is something else and must not be paired with either.
+    $csv = "Date,Description,Amount\n2026-08-27,TXINS 6636340,-15200.00\n2026-08-29,REFUND,15200.00\n";
+    $import = makeImport($this->bank, $csv);
+    app(StatementImportProcessor::class)->process($import);
+
+    expect($import->lines()->count())->toBe(2)
+        ->and($import->lines()->whereNotNull('matched_journal_line_id')->count())->toBe(0);
+});
+
 it('proposes a suggestion when the amount matches but the date is off', function () {
     postedBankEntry($this->bank, $this->revenue, 50000, '2026-01-20'); // booked 12 days later
 

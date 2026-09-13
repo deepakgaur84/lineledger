@@ -129,6 +129,35 @@ new #[Title('Documentation — Settings')] class extends Component {}; ?>
             {{ __('Lowering someone’s role or removing them takes effect immediately — their active sessions and API keys for the company are revoked on the spot, so access never outlives the change. Pending invitations expire after 3 days; you can cancel one any time before it is accepted.') }}
         </x-docs.callout>
 
+        {{-- ─────────────────── Edit locks (one editor at a time) ─────────────────── --}}
+        <flux:heading size="lg" class="mt-8">{{ __('Edit locks (one editor at a time)') }}</flux:heading>
+        <flux:text>
+            {{ __('When several teammates work in the same company, only one person can edit a record at a time — an invoice, bill, cheque, journal entry, customer, account, item, and so on. Whoever opens the record for editing first holds it until they save and leave, so nobody’s changes quietly overwrite someone else’s. There is nothing to switch on; it works for every member.') }}
+        </flux:text>
+
+        <p><strong>{{ __('What your teammates see while you are editing:') }}</strong></p>
+        <ul class="list-disc ps-6 space-y-1">
+            <li>{{ __('Anyone who opens the same edit page sees who is editing and when they were last active, instead of the form. They can view the record or try again, and the page offers Start editing as soon as you are done — it never takes the record on its own.') }}</li>
+            <li>{{ __('On the record’s own page, a notice says who is editing, and actions that change the record — voiding, posting, deleting and the like — are refused until you are done.') }}</li>
+            <li>{{ __('Edit dialogs on list pages — accounts, customers, vendors, employees, items, tax codes, bank rules and the other lists — behave the same way: opening a record someone else has open shows who is editing instead of the dialog, and making it inactive, merging or deleting it is refused.') }}</li>
+            <li>{{ __('If a record changes after you opened it — a teammate took it over, or it was updated from somewhere else — your page says so and asks you to reload rather than saving over the newer version.') }}</li>
+        </ul>
+
+        <p><strong>{{ __('To take over a record someone else is editing (Owners and Admins only):') }}</strong></p>
+        <ol class="list-decimal ps-6 space-y-1">
+            <li>{{ __('Open the record, or its edit page or dialog.') }}</li>
+            <li>{{ __('Select Take over editing and confirm.') }}</li>
+            <li>{{ __('The editor opens for you. The other person’s page tells them you took over, and anything they had not saved can no longer be saved.') }}</li>
+        </ol>
+
+        <x-docs.callout type="note" heading="{{ __('When a lock is released') }}">
+            {{ __('Saving and leaving the page releases the record straight away. If someone closes the tab, loses their connection or their computer goes to sleep, the lock expires on its own about 2 minutes after the page was closed. A page left open without any typing or clicking pauses editing after 15 minutes, so the record is free for others; select Continue editing to pick up where you left off, as long as nobody else opened or changed the record in the meantime.') }}
+        </x-docs.callout>
+
+        <flux:text>
+            {{ __('The same rule applies outside the web app. Integrations using the API get a 423 response while a record is being edited and should retry a little later, and never see who is editing — see the API documentation. Employees updating their address or TD1 amounts in the employee portal are asked to try again in a few minutes while someone is editing their employee record, or to reload if it was opened or changed by someone else while their page was open.') }}
+        </flux:text>
+
         {{-- ───────────────────────── Feature toggles ─────────────────────── --}}
         <flux:heading size="lg" class="mt-8">{{ __('Feature toggles') }}</flux:heading>
         <flux:text>
@@ -153,6 +182,9 @@ new #[Title('Documentation — Settings')] class extends Component {}; ?>
         <flux:heading size="lg" class="mt-8">{{ __('Period lock (closing the books)') }}</flux:heading>
         <flux:text>
             {{ __('Owners and admins can set a closing date that freezes every transaction on or before it, so a finished period cannot be changed by accident. Setting or clearing the lock requires your password and is recorded in the audit log. The control lives in the Close the books section of the company edit page — see Accounting → Period locking for exactly what it protects.') }}
+        </flux:text>
+        <flux:text>
+            {{ __('A period lock is not the same as an edit lock: the period lock freezes every transaction dated on or before the closing date for everyone until an owner or admin moves the date, while an edit lock only stops two people changing the same record at the same moment and clears itself when the editor is done.') }}
         </flux:text>
 
         {{-- ──────────────────── Country and jurisdiction ──────────────────── --}}

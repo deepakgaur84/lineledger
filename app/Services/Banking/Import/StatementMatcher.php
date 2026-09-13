@@ -119,7 +119,8 @@ class StatementMatcher
 
     /**
      * Uncleared, posted, non-voided journal lines on the bank account, grouped by
-     * their signed book-delta for O(1) amount lookups.
+     * their signed book-delta for O(1) amount lookups. The reversal a void posted
+     * is left out too: like the voided cheque, it never reaches the bank.
      *
      * @return array<int, list<array{id: int, date: CarbonImmutable}>> keyed by signed cents
      */
@@ -131,6 +132,7 @@ class StatementMatcher
             ->whereNull('cleared_at')
             ->whereNull('bank_reconciliation_id')
             ->whereHas('journalEntry', fn ($q) => $q->where('is_posted', true)->whereNull('voided_at'))
+            ->withoutUnsettledVoids()
             ->get(['id', 'entry_date', 'debit_cents', 'credit_cents']);
 
         $byAmount = [];

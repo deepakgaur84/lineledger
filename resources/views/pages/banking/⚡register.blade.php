@@ -53,10 +53,28 @@ new #[Title('Bank register')] class extends Component {
     {
         return $this->linesQuery()
             ->with(['journalEntry'])
-            ->when(! $this->showCleared, fn ($q) => $q->whereNull('cleared_at'))
+            // Hiding cleared rows leaves what is still outstanding, and a
+            // voided cheque and its reversal never are: neither reaches the bank.
+            ->when(! $this->showCleared, fn ($q) => $q->whereNull('cleared_at')->withoutUnsettledVoids())
             ->orderBy('entry_date')
             ->orderBy('id')
             ->get();
+    }
+
+    /**
+     * Ids of the rows that are one half of a void nobody has cleared, so the
+     * register can mark them void rather than as waiting to clear.
+     *
+     * @return array<int, true>
+     */
+    #[Computed]
+    public function voidLineIds(): array
+    {
+        return $this->linesQuery()
+            ->unsettledVoids()
+            ->pluck('id')
+            ->mapWithKeys(fn ($id) => [(int) $id => true])
+            ->all();
     }
 
     #[Computed]
@@ -147,10 +165,13 @@ new #[Title('Bank register')] class extends Component {
                 @php $running = 0; @endphp
                 @forelse ($this->lines as $line)
                     @php $running += (int) $line->debit_cents - (int) $line->credit_cents; @endphp
-                    <tr data-test="register-row" class="@if ($line->cleared_at) bg-green-50 dark:bg-green-900/10 @endif">
+                    @php $isVoid = isset($this->voidLineIds[$line->id]); @endphp
+                    <tr data-test="register-row" class="@if ($line->cleared_at) bg-green-50 dark:bg-green-900/10 @elseif ($isVoid) text-muted-foreground @endif">
                         <td class="px-3 py-2 text-center">
                             @if ($line->cleared_at)
                                 <flux:icon name="check" variant="micro" class="size-4 text-green-600" title="{{ __('Cleared') }}" data-test="register-cleared-mark" />
+                            @elseif ($isVoid)
+                                <flux:icon name="no-symbol" variant="micro" class="size-4 text-muted-foreground" title="{{ __('Voided — this and its reversal cancel out and never reach the bank') }}" data-test="register-void-mark" />
                             @else
                                 <span class="inline-block size-4 rounded border border-border" title="{{ __('Not cleared') }}"></span>
                             @endif

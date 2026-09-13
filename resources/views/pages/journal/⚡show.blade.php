@@ -3,6 +3,8 @@
 use App\Actions\Accounting\ReverseJournalEntry;
 use App\Enums\AccountSubtype;
 use App\Exceptions\Posting\PeriodLockedException;
+use App\Livewire\Attributes\GuardsEditLock;
+use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\Company;
 use App\Models\JournalEntry;
 use App\Models\TaxCode;
@@ -10,11 +12,14 @@ use App\Services\Posting\JournalPoster;
 use App\Support\Reporting\SourceLinkResolver;
 use Carbon\CarbonImmutable;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Journal entry')] class extends Component {
+    use ShowsEditLock;
+
     public Company $company;
 
     public JournalEntry $entry;
@@ -26,6 +31,11 @@ new #[Title('Journal entry')] class extends Component {
     public string $sourceLabel = '';
 
     public ?string $duplicateUrl = null;
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->entry;
+    }
 
     public function mount(Company $company, JournalEntry $entry): void
     {
@@ -80,6 +90,7 @@ new #[Title('Journal entry')] class extends Component {
         return TaxCode::withoutGlobalScopes()->whereIn('id', $ids)->pluck('code', 'id')->all();
     }
 
+    #[GuardsEditLock]
     public function void(JournalPoster $poster): void
     {
         abort_if($this->isSourceLinked(), 403);
@@ -100,6 +111,7 @@ new #[Title('Journal entry')] class extends Component {
      * Create a draft accrual reversal of this posted entry and open it for review.
      * The original stays posted (this is not a void).
      */
+    #[GuardsEditLock]
     public function reverse(ReverseJournalEntry $action): void
     {
         abort_unless($this->entry->isPosted() && ! $this->entry->isVoided(), 403);
@@ -115,6 +127,8 @@ new #[Title('Journal entry')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    <x-edit-lock.banner :lock="$this->editLockBanner" />
+
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
             <flux:heading size="xl" level="1">{{ __('Entry') }} {{ $entry->entry_no }}</flux:heading>

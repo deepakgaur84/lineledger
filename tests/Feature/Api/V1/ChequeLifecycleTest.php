@@ -6,6 +6,7 @@ use App\Models\Account;
 use App\Models\Cheque;
 use App\Models\Company;
 use App\Models\CompanyApiKey;
+use App\Models\Contact;
 use App\Models\JournalLine;
 
 beforeEach(function () {
@@ -161,4 +162,99 @@ it('forbids writes with a banking:read key', function () {
 
     $this->postJson('/api/v1/cheques', chequePayload(), ['Authorization' => "Bearer {$readPlain}"])
         ->assertStatus(403);
+});
+
+/**
+ * An Accounts Receivable / Payable line carries its own customer or vendor —
+ * the payee is who the cheque is made out to, not necessarily whose balance it
+ * settles. Mirrors the Livewire form's rule (ChequeLineContactTest).
+ */
+it('stamps a line contact on the AR leg and the payee on the bank leg', function () {
+    app()->instance('current_company', $this->company);
+    $ar = Account::query()->where('subtype', AccountSubtype::AccountsReceivable->value)->orderBy('code')->firstOrFail();
+    $payee = Contact::factory()->vendor()->create(['company_id' => $this->company->id]);
+    $customer = Contact::factory()->customer()->create(['company_id' => $this->company->id]);
+    app()->forgetInstance('current_company');
+
+    $response = $this->withHeaders(chequeAuthHeader())->postJson('/api/v1/cheques', chequePayload([
+        'payee_contact_id' => $payee->id,
+        'lines' => [[
+            'account_id' => $ar->id,
+            'contact_id' => $customer->id,
+            'description' => 'Refund on account',
+            'amount_cents' => 100000,
+        ]],
+    ]));
+
+    $response->assertCreated()->assertJsonPath('data.lines.0.contact_id', $customer->id);
+
+    expect((int) JournalLine::query()->where('account_id', $ar->id)->value('contact_id'))->toBe($customer->id)
+        ->and((int) JournalLine::query()->where('account_id', $this->bank->id)->value('contact_id'))->toBe($payee->id);
+});
+
+it('rejects posting an Accounts Receivable line with no customer', function () {
+    app()->instance('current_company', $this->company);
+    $ar = Account::query()->where('subtype', AccountSubtype::AccountsReceivable->value)->orderBy('code')->firstOrFail();
+    app()->forgetInstance('current_company');
+
+    $this->withHeaders(chequeAuthHeader())
+        ->postJson('/api/v1/cheques', chequePayload([
+            'lines' => [['account_id' => $ar->id, 'amount_cents' => 100000]],
+        ]))
+        ->assertStatus(422)
+        ->assertJsonValidationErrors('lines.0.contact_id');
+
+    expect(Cheque::query()->count())->toBe(0);
+});
+
+it('accepts an unattributed Accounts Receivable line on a draft', function () {
+    app()->instance('current_company', $this->company);
+    $ar = Account::query()->where('subtype', AccountSubtype::AccountsReceivable->value)->orderBy('code')->firstOrFail();
+    app()->forgetInstance('current_company');
+
+    $this->withHeaders(chequeAuthHeader())
+        ->postJson('/api/v1/cheques', chequePayload([
+            'post' => false,
+            'lines' => [['account_id' => $ar->id, 'amount_cents' => 100000]],
+        ]))
+        ->assertCreated()
+        ->assertJsonPath('data.status', ChequeStatus::Draft->value);
+});
+
+/**
+ * The mailing address is snapshotted onto the cheque: an explicit payee_address
+ * wins, and omitting it defaults from the payee contact's billing address.
+ */
+it('stores an explicit payee address and echoes it back', function () {
+    $response = $this->withHeaders(chequeAuthHeader())->postJson('/api/v1/cheques', chequePayload([
+        'payee_address' => [
+            'line1' => '500 New Avenue',
+            'city' => 'Winnipeg',
+            'region' => 'MB',
+            'postal_code' => 'R3C 1A1',
+            'country' => 'ca',
+        ],
+    ]));
+
+    $response->assertCreated()
+        ->assertJsonPath('data.payee_address.line1', '500 New Avenue')
+        ->assertJsonPath('data.payee_address.country', 'CA');
+
+    expect(Cheque::query()->firstOrFail()->payee_city)->toBe('Winnipeg');
+});
+
+it('defaults the payee address from the linked contact', function () {
+    app()->instance('current_company', $this->company);
+    $vendor = Contact::factory()->vendor()->create([
+        'company_id' => $this->company->id,
+        'billing_line1' => '12 Old Street',
+        'billing_city' => 'Brandon',
+    ]);
+    app()->forgetInstance('current_company');
+
+    $this->withHeaders(chequeAuthHeader())
+        ->postJson('/api/v1/cheques', chequePayload(['payee_contact_id' => $vendor->id]))
+        ->assertCreated()
+        ->assertJsonPath('data.payee_address.line1', '12 Old Street')
+        ->assertJsonPath('data.payee_address.city', 'Brandon');
 });

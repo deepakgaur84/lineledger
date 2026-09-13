@@ -5,6 +5,7 @@ use App\Actions\Payroll\SavePayRun;
 use App\Enums\AccountSubtype;
 use App\Enums\PayBasis;
 use App\Enums\PayRunStatus;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\Contact;
@@ -15,11 +16,14 @@ use App\Support\Money;
 use App\Support\Payroll\EarningTypeCatalogue;
 use Carbon\CarbonImmutable;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Pay run')] class extends Component {
+    use GuardsEditLockedForm;
+
     public Company $company;
 
     public ?PayRun $payRun = null;
@@ -42,6 +46,11 @@ new #[Title('Pay run')] class extends Component {
 
     /** @var array<int, array{selected: bool, name: string, pay_basis: string, hours: string, manual_earnings: array<int, array{code: string, value: string}>}> */
     public array $rows = [];
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->payRun;
+    }
 
     public function mount(Company $company, ?PayRun $payRun = null): void
     {
@@ -393,6 +402,9 @@ new #[Title('Pay run')] class extends Component {
 }; ?>
 
 <section class="mx-auto w-full max-w-4xl">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <div class="mb-6">
         <flux:button variant="ghost" size="sm" icon="arrow-left" :href="route('pay-runs.index')" wire:navigate>
             {{ __('Back to pay runs') }}
@@ -497,4 +509,5 @@ new #[Title('Pay run')] class extends Component {
             <flux:button variant="primary" icon="calculator" wire:click="calculate" data-test="pay-run-calculate">{{ __('Calculate') }}</flux:button>
         </div>
     </div>
+    @endif
 </section>

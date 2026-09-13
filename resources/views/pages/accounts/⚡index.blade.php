@@ -8,6 +8,7 @@ use App\Enums\AccountType;
 use App\Enums\CashFlowActivity;
 use App\Enums\JurisdictionCapability;
 use App\Exceptions\Posting\PeriodLockedException;
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\GridPreference;
@@ -29,6 +30,7 @@ use Livewire\Component;
 use Livewire\WithFileUploads;
 
 new #[Title('Chart of Accounts')] class extends Component {
+    use HoldsEditLock;
     use WithFileUploads;
 
     /** Toggleable grid columns, in display order. Code + Name are always shown. */
@@ -129,6 +131,7 @@ new #[Title('Chart of Accounts')] class extends Component {
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->resetForm();
         $this->editingId = null;
         $this->form_opening_balance_as_of = $this->company->currentDateTime()->toDateString();
@@ -138,6 +141,10 @@ new #[Title('Chart of Accounts')] class extends Component {
     public function openEdit(int $id): void
     {
         $account = Account::findOrFail($id);
+
+        if (! $this->acquireEditLock($account, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
 
         $this->editingId = $account->id;
         $this->form_code = $account->code;
@@ -181,6 +188,10 @@ new #[Title('Chart of Accounts')] class extends Component {
 
     public function save(): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(Account::class, $this->editingId)) {
+            return;
+        }
+
         $editing = $this->editingId
             ? $this->company->accounts()->findOrFail($this->editingId)
             : null;
@@ -268,6 +279,7 @@ new #[Title('Chart of Accounts')] class extends Component {
             return;
         }
 
+        $this->completeEditLockSave();
         Flux::modal('account-form')->close();
         $this->resetForm();
 
@@ -357,7 +369,10 @@ new #[Title('Chart of Accounts')] class extends Component {
     {
         $account = Account::findOrFail($id);
         abort_unless($account->company_id === $this->company->id, 403);
-        $account->update(['is_active' => ! $account->is_active]);
+
+        if (! $this->guardEditLockedWrite($account, fn () => $account->update(['is_active' => ! $account->is_active]))) {
+            return;
+        }
 
         Flux::toast(variant: 'success', text: $account->is_active ? __('Account activated.') : __('Account deactivated.'));
     }
@@ -392,10 +407,14 @@ new #[Title('Chart of Accounts')] class extends Component {
         $survivor = Account::findOrFail((int) $this->mergeTargetId);
 
         try {
-            app(MergeAccounts::class)->handle($loser, $survivor);
+            $merged = $this->guardEditLockedWrites([$loser, $survivor], fn () => app(MergeAccounts::class)->handle($loser, $survivor));
         } catch (ValidationException $e) {
             $this->addError('mergeTargetId', collect($e->errors())->flatten()->first());
 
+            return;
+        }
+
+        if (! $merged) {
             return;
         }
 
@@ -1029,8 +1048,11 @@ new #[Title('Chart of Accounts')] class extends Component {
         @endforelse
     </div>
 
-    <flux:modal name="account-form" class="max-w-xl">
+    <flux:modal name="account-form" class="max-w-xl" wire:close="releaseEditLock">
         <form wire:submit="save" class="space-y-6">
+            @if ($editLockToken)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <div>
                 <flux:heading size="lg">{{ $editingId ? __('Edit account') : __('New account') }}</flux:heading>
                 @if ($this->isSystemBeingEdited())
@@ -1319,4 +1341,6 @@ new #[Title('Chart of Accounts')] class extends Component {
             </div>
         </div>
     </flux:modal>
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

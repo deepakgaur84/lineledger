@@ -6,6 +6,7 @@ use App\Enums\AccountType;
 use App\Enums\ItemType;
 use App\Enums\SalesReceiptStatus;
 use App\Exceptions\Posting\PeriodLockedException;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\Contact;
@@ -20,12 +21,15 @@ use App\Services\Posting\TaxCalculator;
 use App\Support\Money;
 use App\Support\Quantity;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Sales receipt')] class extends Component {
+    use GuardsEditLockedForm;
+
     public Company $company;
 
     public ?SalesReceipt $receipt = null;
@@ -54,6 +58,11 @@ new #[Title('Sales receipt')] class extends Component {
      * @var array<int, array{item_id: ?int, account_id: ?int, description: string, quantity: string, unit_price: string, discount_pct: string, tax_code_id: ?int, subtotal: int, tax: int, total: int}>
      */
     public array $lines = [];
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->receipt;
+    }
 
     public function mount(Company $company, ?SalesReceipt $receipt = null): void
     {
@@ -517,6 +526,9 @@ new #[Title('Sales receipt')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <flux:heading size="xl" level="1" class="mb-6">{{ $receipt?->id ? __('Edit sales receipt') : __('New sales receipt') }}</flux:heading>
 
     <form wire:submit="post" class="space-y-6">
@@ -706,4 +718,5 @@ new #[Title('Sales receipt')] class extends Component {
             </div>
         </div>
     </form>
+    @endif
 </section>

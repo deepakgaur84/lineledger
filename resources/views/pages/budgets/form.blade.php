@@ -3,6 +3,7 @@
 use App\Actions\Budgeting\BuildBudgetFromActuals;
 use App\Actions\Budgeting\SaveBudget;
 use App\Enums\AccountType;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Budget;
 use App\Models\Classification;
@@ -11,12 +12,15 @@ use App\Models\Location;
 use App\Rules\MoneyString;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Budget')] class extends Component {
+    use GuardsEditLockedForm;
+
     public Company $company;
 
     public ?Budget $budget = null;
@@ -40,6 +44,11 @@ new #[Title('Budget')] class extends Component {
     public string $seedMode = 'blank';
 
     public ?int $copyFromBudgetId = null;
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->budget;
+    }
 
     public function mount(Company $company, ?Budget $budget = null): void
     {
@@ -303,6 +312,9 @@ new #[Title('Budget')] class extends Component {
 }; ?>
 
 <section class="w-full space-y-6">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <flux:heading size="xl" level="1">{{ $budget ? __('Edit budget') : __('New budget') }}</flux:heading>
 
     <form wire:submit="save" class="space-y-6">
@@ -391,4 +403,5 @@ new #[Title('Budget')] class extends Component {
             </div>
         </div>
     </form>
+    @endif
 </section>

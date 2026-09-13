@@ -3,6 +3,7 @@
 use App\Enums\AccountSubtype;
 use App\Enums\AccountType;
 use App\Enums\AssetStatus;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Asset;
 use App\Models\AssetCategory;
@@ -12,12 +13,15 @@ use App\Services\Assets\AssetSourcePrefiller;
 use App\Services\Posting\DocumentNumberGenerator;
 use App\Support\Money;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Asset')] class extends Component {
+    use GuardsEditLockedForm;
+
     public Company $company;
 
     public ?Asset $asset = null;
@@ -65,6 +69,11 @@ new #[Title('Asset')] class extends Component {
     public ?string $source_type = null;
 
     public ?int $source_id = null;
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->asset;
+    }
 
     public function mount(Company $company, ?Asset $asset = null): void
     {
@@ -238,6 +247,9 @@ new #[Title('Asset')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <flux:heading size="xl" level="1" class="mb-6">{{ $asset?->id ? __('Edit asset') : __('New asset') }}</flux:heading>
 
     <form wire:submit="save" class="space-y-6">
@@ -357,4 +369,5 @@ new #[Title('Asset')] class extends Component {
             <flux:button variant="primary" type="submit" data-test="asset-save-button">{{ __('Save asset') }}</flux:button>
         </div>
     </form>
+    @endif
 </section>

@@ -1,6 +1,7 @@
 <?php
 
 use App\Actions\MasterData\SavePaymentMethod;
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Company;
 use App\Models\PaymentMethod;
 use Flux\Flux;
@@ -9,6 +10,8 @@ use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Payment methods')] class extends Component {
+    use HoldsEditLock;
+
     public Company $company;
 
     public ?int $editingId = null;
@@ -26,6 +29,7 @@ new #[Title('Payment methods')] class extends Component {
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->reset(['editingId', 'f_name', 'f_is_cheque', 'f_is_active']);
         $this->f_is_active = true;
         Flux::modal('payment-methods-form')->show();
@@ -34,6 +38,11 @@ new #[Title('Payment methods')] class extends Component {
     public function openEdit(int $id): void
     {
         $m = PaymentMethod::findOrFail($id);
+
+        if (! $this->acquireEditLock($m, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
+
         $this->editingId = $m->id;
         $this->f_name = $m->name;
         $this->f_is_cheque = $m->is_cheque;
@@ -43,6 +52,10 @@ new #[Title('Payment methods')] class extends Component {
 
     public function save(): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(PaymentMethod::class, $this->editingId)) {
+            return;
+        }
+
         $validated = $this->validate([
             'f_name' => ['required', 'string', 'max:255'],
             'f_is_cheque' => ['boolean'],
@@ -58,6 +71,7 @@ new #[Title('Payment methods')] class extends Component {
             'is_active' => $validated['f_is_active'],
         ], $editing);
 
+        $this->completeEditLockSave();
         Flux::modal('payment-methods-form')->close();
         Flux::toast(variant: 'success', text: __('Payment method saved.'));
     }
@@ -106,8 +120,11 @@ new #[Title('Payment methods')] class extends Component {
         </div>
     </x-pages::settings.layout>
 
-    <flux:modal name="payment-methods-form" class="max-w-lg">
+    <flux:modal name="payment-methods-form" class="max-w-lg" wire:close="releaseEditLock">
         <form wire:submit="save" class="space-y-6">
+            @if ($editLockToken)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg">{{ $editingId ? __('Edit payment method') : __('New payment method') }}</flux:heading>
             <flux:input wire:model="f_name" :label="__('Name')" required data-test="method-name" />
             <flux:switch wire:model="f_is_cheque" :label="$j->chequeLabel('method')" :description="__('Enables the :action action on bill payments using this method.', ['action' => $j->chequeLabel('print')])" data-test="method-is-cheque" />
@@ -124,4 +141,6 @@ new #[Title('Payment methods')] class extends Component {
             </div>
         </form>
     </flux:modal>
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

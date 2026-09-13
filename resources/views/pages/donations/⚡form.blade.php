@@ -3,6 +3,7 @@
 use App\Actions\Fundraising\SaveDonation;
 use App\Enums\AccountType;
 use App\Enums\GiftType;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\Contact;
@@ -10,12 +11,15 @@ use App\Models\Donation;
 use App\Models\Fund;
 use App\Support\Money;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Donation')] class extends Component {
+    use GuardsEditLockedForm;
+
     public Company $company;
 
     public ?Donation $donation = null;
@@ -43,6 +47,11 @@ new #[Title('Donation')] class extends Component {
     public bool $issue_receipt = false;
 
     public string $notes = '';
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->donation;
+    }
 
     public function mount(Company $company, ?Donation $donation = null): void
     {
@@ -151,6 +160,9 @@ new #[Title('Donation')] class extends Component {
 }; ?>
 
 <section class="mx-auto w-full max-w-2xl">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <flux:heading size="xl" level="1" data-test="page-title">{{ $donation?->exists ? __('Edit donation') : __('Record donation') }}</flux:heading>
     <flux:subheading class="mb-6">{{ __('Records the gift to the general ledger. Drafts can be edited until posted.') }}</flux:subheading>
 
@@ -221,4 +233,5 @@ new #[Title('Donation')] class extends Component {
             <flux:button variant="primary" type="submit" data-test="donation-save-button">{{ __('Save draft') }}</flux:button>
         </div>
     </form>
+    @endif
 </section>

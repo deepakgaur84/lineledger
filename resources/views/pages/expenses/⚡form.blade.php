@@ -5,6 +5,7 @@ use App\Enums\AccountSubtype;
 use App\Enums\AccountType;
 use App\Enums\ExpenseStatus;
 use App\Exceptions\Posting\PeriodLockedException;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Livewire\Concerns\ManagesPayeeCombo;
 use App\Models\Account;
 use App\Models\Attachment;
@@ -21,6 +22,7 @@ use App\Services\Posting\ExpensePoster;
 use App\Support\Banking\LastBankAccount;
 use App\Support\Money;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
@@ -30,6 +32,7 @@ use Livewire\WithFileUploads;
 
 new #[Title('Expense')] class extends Component
 {
+    use GuardsEditLockedForm;
     use ManagesPayeeCombo;
     use WithFileUploads;
 
@@ -58,6 +61,11 @@ new #[Title('Expense')] class extends Component
 
     /** @var array<int, mixed> */
     public array $newAttachments = [];
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->expense;
+    }
 
     public function mount(Company $company, ?Expense $expense = null): void
     {
@@ -451,6 +459,9 @@ new #[Title('Expense')] class extends Component
 }; ?>
 
 <section class="w-full">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <flux:heading size="xl" level="1" class="mb-6">{{ $expense?->id ? __('Edit expense') : __('New expense') }}</flux:heading>
 
     <form wire:submit="postExpense" class="space-y-6">
@@ -673,4 +684,5 @@ new #[Title('Expense')] class extends Component
             </div>
         </div>
     </form>
+    @endif
 </section>

@@ -734,16 +734,13 @@ new #[Title('Reconcile')] class extends Component {
         $lines = JournalLine::query()
             ->with('journalEntry')
             ->where('account_id', $rec->account_id)
+            // Rows a *different* completed reconciliation already claimed are
+            // held back; undo that reconciliation to get them back.
             ->where(fn ($q) => $q->whereNull('bank_reconciliation_id')->orWhere('bank_reconciliation_id', $rec->id))
-            // Everything the bank register shows is reconcilable — no
-            // exceptions. A voided transaction and its reversal both hit the
-            // statement, and so does a service charge this reconciliation
-            // later replaced, so all of them have to be tickable; each pair
-            // nets to zero, which is exactly what the bank shows. The only
-            // rows held back are the ones a *different* completed
-            // reconciliation already claimed (the clause above); undo that
-            // reconciliation to get them back.
             ->whereHas('journalEntry', fn ($q) => $q->where('is_posted', true))
+            // A voided cheque and its reversal never reach the bank, so the
+            // pair is left off until either half is ticked or cleared.
+            ->withoutUnsettledVoids($rec)
             ->when($side === 'payments', fn ($q) => $q->where('credit_cents', '>', 0))
             ->when($side === 'deposits', fn ($q) => $q->where('debit_cents', '>', 0))
             ->orderBy('id')

@@ -1,17 +1,27 @@
 <?php
 
+use App\Livewire\Attributes\GuardsEditLock;
+use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\Company;
 use App\Models\Donation;
 use App\Services\Fundraising\DonationPoster;
 use App\Support\Money;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Donation')] class extends Component {
+    use ShowsEditLock;
+
     public Company $company;
 
     public Donation $donation;
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->donation;
+    }
 
     public function mount(Company $company, Donation $donation): void
     {
@@ -23,6 +33,7 @@ new #[Title('Donation')] class extends Component {
         $this->donation = $donation->load('contact', 'fund', 'journalEntry', 'depositToAccount', 'donationReceipt');
     }
 
+    #[GuardsEditLock]
     public function post(): void
     {
         try {
@@ -37,6 +48,7 @@ new #[Title('Donation')] class extends Component {
         Flux::toast(variant: 'success', text: __('Donation posted.'));
     }
 
+    #[GuardsEditLock]
     public function void(): void
     {
         try {
@@ -53,6 +65,8 @@ new #[Title('Donation')] class extends Component {
 }; ?>
 
 <section class="mx-auto w-full max-w-2xl">
+    <x-edit-lock.banner :lock="$this->editLockBanner" />
+
     <div class="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
             <div class="flex items-center gap-3">

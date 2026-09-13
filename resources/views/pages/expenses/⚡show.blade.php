@@ -1,6 +1,8 @@
 <?php
 
 use App\Enums\ExpenseStatus;
+use App\Livewire\Attributes\GuardsEditLock;
+use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\Attachment;
 use App\Models\Company;
 use App\Models\Expense;
@@ -8,6 +10,7 @@ use App\Services\AttachmentService;
 use App\Services\Posting\ExpensePoster;
 use App\Support\Contacts\ContactLinkResolver;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
@@ -15,6 +18,7 @@ use Livewire\Component;
 use Livewire\WithFileUploads;
 
 new #[Title('Expense')] class extends Component {
+    use ShowsEditLock;
     use WithFileUploads;
 
     public Company $company;
@@ -23,6 +27,11 @@ new #[Title('Expense')] class extends Component {
 
     /** @var array<int, mixed> */
     public array $newAttachments = [];
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->expense;
+    }
 
     public function mount(Company $company, Expense $expense): void
     {
@@ -73,6 +82,7 @@ new #[Title('Expense')] class extends Component {
             : null;
     }
 
+    #[GuardsEditLock]
     public function void(ExpensePoster $poster): void
     {
         try {
@@ -89,6 +99,8 @@ new #[Title('Expense')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    <x-edit-lock.banner :lock="$this->editLockBanner" />
+
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
             <flux:heading size="xl" level="1">{{ __('Expense') }}{{ $expense->reference ? ' #'.$expense->reference : '' }}</flux:heading>

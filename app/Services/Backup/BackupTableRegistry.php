@@ -425,6 +425,10 @@ final class BackupTableRegistry
             // triage context. Not exported per company. (support_ticket_messages has
             // no company_id, so the arch test doesn't require it here.)
             ['table' => 'support_tickets', 'reason' => 'platform-level support tickets; owned by a user, not accounting truth'],
+
+            // Edit-lock leases (who is editing which record right now). Short-lived
+            // coordination state keyed by record ids that change on restore.
+            ['table' => 'edit_locks', 'reason' => 'ephemeral edit-lock leases'],
         ];
     }
 }

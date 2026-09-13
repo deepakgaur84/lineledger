@@ -2,6 +2,7 @@
 
 use App\Enums\AccountSubtype;
 use App\Enums\AccountType;
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Account;
 use App\Models\AssetCategory;
 use App\Models\Company;
@@ -12,6 +13,8 @@ use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Asset categories')] class extends Component {
+    use HoldsEditLock;
+
     public Company $company;
 
     public ?int $editingId = null;
@@ -39,6 +42,7 @@ new #[Title('Asset categories')] class extends Component {
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->reset([
             'editingId', 'f_name', 'f_description',
             'f_default_asset_account_id', 'f_default_accumulated_depreciation_account_id',
@@ -51,6 +55,11 @@ new #[Title('Asset categories')] class extends Component {
     public function openEdit(int $id): void
     {
         $c = AssetCategory::findOrFail($id);
+
+        if (! $this->acquireEditLock($c, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
+
         $this->editingId = $c->id;
         $this->f_name = $c->name;
         $this->f_description = $c->description ?? '';
@@ -65,6 +74,10 @@ new #[Title('Asset categories')] class extends Component {
 
     public function save(): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(AssetCategory::class, $this->editingId)) {
+            return;
+        }
+
         $companyId = $this->company->id;
 
         $validated = $this->validate([
@@ -97,6 +110,7 @@ new #[Title('Asset categories')] class extends Component {
 
         abort_if($editingCategory !== null && $editingCategory->company_id !== $this->company->id, 403);
 
+        $this->completeEditLockSave();
         unset($this->categories);
 
         Flux::modal('asset-categories-form')->close();
@@ -176,8 +190,11 @@ new #[Title('Asset categories')] class extends Component {
         </div>
     </x-pages::settings.layout>
 
-    <flux:modal name="asset-categories-form" class="max-w-xl">
+    <flux:modal name="asset-categories-form" class="max-w-xl" wire:close="releaseEditLock">
         <form wire:submit="save" class="space-y-6">
+            @if ($editLockToken)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg">{{ $editingId ? __('Edit asset category') : __('New asset category') }}</flux:heading>
 
             <flux:input wire:model="f_name" :label="__('Name')" required data-test="asset-category-name" />
@@ -223,4 +240,6 @@ new #[Title('Asset categories')] class extends Component {
             </div>
         </form>
     </flux:modal>
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

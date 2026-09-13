@@ -9,6 +9,7 @@ use App\Enums\Country;
 use App\Enums\PayBasis;
 use App\Enums\RoeReason;
 use App\Enums\VacationPolicy;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\Contact;
@@ -21,11 +22,14 @@ use App\Support\Money;
 use App\Support\Payroll\Constants\PayrollConstantsRepository;
 use App\Support\Payroll\PayrollItemType;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Employee payroll setup')] class extends Component {
+    use GuardsEditLockedForm;
+
     public Company $company;
 
     public Contact $contact;
@@ -133,6 +137,11 @@ new #[Title('Employee payroll setup')] class extends Component {
     public string $opening_qpip_employee = '0';
 
     public string $opening_qpip_insurable = '0';
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->contact;
+    }
 
     public function mount(Company $company, Contact $contact): void
     {
@@ -662,6 +671,9 @@ new #[Title('Employee payroll setup')] class extends Component {
 }; ?>
 
 <section class="mx-auto w-full max-w-3xl">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <div class="mb-6">
         <flux:button variant="ghost" size="sm" icon="arrow-left" :href="route('payroll.employees.index')" wire:navigate>
             {{ __('Back to employee setup') }}
@@ -1067,4 +1079,5 @@ new #[Title('Employee payroll setup')] class extends Component {
             </div>
         </form>
     </flux:modal>
+    @endif
 </section>

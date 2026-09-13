@@ -2,17 +2,27 @@
 
 use App\Enums\SalesReceiptStatus;
 use App\Exceptions\Posting\PeriodLockedException;
+use App\Livewire\Attributes\GuardsEditLock;
+use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\Company;
 use App\Models\SalesReceipt;
 use App\Services\Posting\SalesReceiptPoster;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Sales receipt')] class extends Component {
+    use ShowsEditLock;
+
     public Company $company;
 
     public SalesReceipt $receipt;
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->receipt;
+    }
 
     public function mount(Company $company, SalesReceipt $receipt): void
     {
@@ -20,6 +30,7 @@ new #[Title('Sales receipt')] class extends Component {
         $this->receipt = $receipt->load('contact', 'depositToAccount', 'paymentMethod', 'lines.account', 'lines.taxCode', 'lines.secondaryTaxCode', 'journalEntry');
     }
 
+    #[GuardsEditLock]
     public function void(SalesReceiptPoster $poster): void
     {
         try {
@@ -34,6 +45,7 @@ new #[Title('Sales receipt')] class extends Component {
         $this->redirectRoute('sales-receipts.index', ['company' => $this->company->slug], navigate: true);
     }
 
+    #[GuardsEditLock]
     public function deleteDraft(): void
     {
         if ($this->receipt->journal_entry_id) {
@@ -50,6 +62,8 @@ new #[Title('Sales receipt')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    <x-edit-lock.banner :lock="$this->editLockBanner" />
+
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
             <flux:heading size="xl" level="1">{{ __('Sales receipt') }} {{ $receipt->sales_receipt_no }}</flux:heading>

@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\AccountSubtype;
+use App\Livewire\Concerns\HoldsEditLock;
 use App\Livewire\Concerns\ImportsCsvList;
 use App\Livewire\Concerns\InteractsWithOpeningBalances;
 use App\Models\Account;
@@ -21,6 +22,7 @@ use Livewire\Component;
 use Livewire\WithFileUploads;
 
 new #[Title('Outstanding cheques')] class extends Component {
+    use HoldsEditLock;
     use ImportsCsvList {
         runImport as baseRunImport;
     }
@@ -84,6 +86,7 @@ new #[Title('Outstanding cheques')] class extends Component {
 
     public function openCreate(): void
     {
+        $this->releaseEditLock();
         $this->reset(['editingId', 'f_bank_account_id', 'f_cheque_no', 'f_payee_name', 'f_amount', 'f_memo']);
         $this->f_cheque_date = $this->obState->asOf()->toDateString();
         Flux::modal('ob-cheque')->show();
@@ -92,6 +95,10 @@ new #[Title('Outstanding cheques')] class extends Component {
     public function openEdit(int $id): void
     {
         $cheque = Cheque::query()->where('is_opening_balance', true)->findOrFail($id);
+
+        if (! $this->acquireEditLock($cheque, reopen: 'openEdit', reopenArgs: [$id])) {
+            return;
+        }
 
         $this->editingId = $cheque->id;
         $this->f_bank_account_id = (string) $cheque->bank_account_id;
@@ -106,6 +113,10 @@ new #[Title('Outstanding cheques')] class extends Component {
 
     public function save(): void
     {
+        if ($this->editingId !== null && ! $this->ensureEditLockForSave(Cheque::class, $this->editingId)) {
+            return;
+        }
+
         if (! $this->obEditable()) {
             return;
         }
@@ -141,6 +152,7 @@ new #[Title('Outstanding cheques')] class extends Component {
             return;
         }
 
+        $this->completeEditLockSave();
         $this->obState->refresh();
         Flux::modal('ob-cheque')->close();
         unset($this->cheques, $this->footer);
@@ -156,10 +168,14 @@ new #[Title('Outstanding cheques')] class extends Component {
         $cheque = Cheque::query()->where('is_opening_balance', true)->findOrFail($id);
 
         try {
-            app(OutstandingChequeSync::class)->remove($this->obState, $cheque);
+            $removed = $this->guardEditLockedWrite($cheque, fn () => app(OutstandingChequeSync::class)->remove($this->obState, $cheque));
         } catch (RuntimeException|\App\Exceptions\Posting\PeriodLockedException|\App\Exceptions\Posting\ReconciliationLockedException $e) {
             Flux::toast(variant: 'danger', text: $e->getMessage());
 
+            return;
+        }
+
+        if (! $removed) {
             return;
         }
 
@@ -278,8 +294,11 @@ new #[Title('Outstanding cheques')] class extends Component {
         </flux:card>
     @endif
 
-    <flux:modal name="ob-cheque" class="max-w-lg">
+    <flux:modal name="ob-cheque" class="max-w-lg" wire:close="releaseEditLock">
         <div class="space-y-4">
+            @if ($editLockToken)
+                <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
+            @endif
             <flux:heading size="lg">{{ $editingId ? __('Edit outstanding cheque') : __('Add outstanding cheque') }}</flux:heading>
 
             <flux:select wire:model="f_bank_account_id" :label="__('Bank account')" data-test="ob-cheque-bank">
@@ -315,4 +334,6 @@ new #[Title('Outstanding cheques')] class extends Component {
         :creatable-count="$this->importCreatableCount"
         :has-file="(bool) $importFile"
     />
+
+    <x-edit-lock.takeover-modal :pending="$editLockPendingTakeover" />
 </section>

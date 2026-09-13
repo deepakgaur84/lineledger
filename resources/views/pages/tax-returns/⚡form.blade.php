@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\TaxReturnStatus;
+use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Company;
 use App\Models\TaxAgency;
 use App\Models\TaxReturn;
@@ -9,12 +10,15 @@ use App\Services\Tax\TaxReturnBuilder;
 use App\Services\Tax\TaxReturnFiler;
 use Carbon\CarbonImmutable;
 use Flux\Flux;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Tax return')] class extends Component {
+    use GuardsEditLockedForm;
+
     public Company $company;
 
     public ?TaxReturn $taxReturn = null;
@@ -39,6 +43,11 @@ new #[Title('Tax return')] class extends Component {
      * @var int[]
      */
     public array $excludedLineIds = [];
+
+    protected function editLockRecord(): ?Model
+    {
+        return $this->taxReturn;
+    }
 
     public function mount(Company $company, ?TaxReturn $tax_return = null): void
     {
@@ -176,6 +185,9 @@ new #[Title('Tax return')] class extends Component {
 }; ?>
 
 <section class="w-full">
+    @if ($editLockBlocked) <x-edit-lock.blocked :lock="$this->editLockView" /> @else
+    <x-edit-lock.status :lock="$this->editLockView" />
+
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
             <flux:heading size="xl" level="1">{{ $taxReturn ? __('Edit tax return') : __('File a tax return') }}</flux:heading>
@@ -270,4 +282,5 @@ new #[Title('Tax return')] class extends Component {
         <flux:button variant="filled" wire:click="saveDraft" data-test="save-draft-button">{{ __('Save draft') }}</flux:button>
         <flux:button variant="primary" wire:click="fileReturn" wire:confirm="{{ __('File this return? The snapshot is permanent and the period will be locked for this agency.') }}" data-test="file-return-button">{{ __('File return') }}</flux:button>
     </div>
+    @endif
 </section>
