@@ -453,6 +453,11 @@ Route::prefix('{company}')
             ->where('step', '[a-z_]+')
             ->name('migration.template');
 
+        // Bulk import — standalone, repeatable CSV import (vendors,
+        // customers, …), distinct from the one-time QuickBooks migration
+        // wizard above. See app/Services/BulkImport/.
+        Route::livewire('bulk-import', 'pages::tools.bulk-import')->name('tools.bulk-import');
+
         // Opening balances workspace (owner only): the continuously-editable
         // post-setup home for the draft trial balance and its sub-ledger detail.
         Route::livewire('opening-balances', 'pages::opening-balances.index')
