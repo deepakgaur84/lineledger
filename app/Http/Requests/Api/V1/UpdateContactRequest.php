@@ -58,6 +58,24 @@ class UpdateContactRequest extends FormRequest
             'default_tax_code_id' => ['nullable', 'integer', $belongsToCompany('tax_codes')->where('is_active', true)],
             'default_income_account_id' => ['nullable', 'integer', $belongsToCompany('accounts')->where('is_active', true)->where('type', AccountType::Income->value)],
             'default_expense_account_id' => ['nullable', 'integer', $belongsToCompany('accounts')->where('is_active', true)->where('type', AccountType::Expense->value)],
+
+            // Null/omitted means home currency. Restricted to currencies the
+            // company has already enabled (Settings > Currencies) — same
+            // convention as Store/UpdateAccountRequest. Locked once the
+            // contact has posted transactions; see Contact::canChangeCurrency(),
+            // which SaveContact already checks before applying this.
+            'currency_code' => ['nullable', 'string', Rule::in($this->enabledForeignCurrencyCodes($company))],
         ];
+    }
+
+    /** @return array<int, string> */
+    private function enabledForeignCurrencyCodes(Company $company): array
+    {
+        return $company->currencies()
+            ->where('is_home', false)
+            ->where('is_active', true)
+            ->pluck('currency_code')
+            ->map(fn ($c) => mb_strtoupper((string) $c))
+            ->all();
     }
 }

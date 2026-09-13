@@ -53,6 +53,26 @@ class StoreBillRequest extends FormRequest
             'lines.*.item_id' => ['nullable', 'integer', $inCompany('items')],
             'lines.*.tax_code_id' => ['nullable', 'integer', $inCompany('tax_codes')],
             'lines.*.secondary_tax_code_id' => ['nullable', 'integer', $inCompany('tax_codes')],
+
+            // Both default to the vendor's own currency/an auto-fetched rate
+            // when omitted — see SaveBill::resolveCurrencyCode() and
+            // BillPoster::lockRate(). An explicit fx_rate matters for
+            // importing already-known historical transactions, where
+            // re-deriving today's rate would misstate what was actually
+            // agreed/paid at the time.
+            'currency_code' => ['nullable', 'string', Rule::in($this->enabledForeignCurrencyCodes($company))],
+            'fx_rate' => ['nullable', 'numeric', 'gt:0'],
         ];
+    }
+
+    /** @return array<int, string> */
+    private function enabledForeignCurrencyCodes(Company $company): array
+    {
+        return $company->currencies()
+            ->where('is_home', false)
+            ->where('is_active', true)
+            ->pluck('currency_code')
+            ->map(fn ($c) => mb_strtoupper((string) $c))
+            ->all();
     }
 }
