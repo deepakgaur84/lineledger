@@ -51,7 +51,27 @@ class StoreBillPaymentRequest extends FormRequest
             'applications' => ['nullable', 'array', 'max:1000'],
             'applications.*.bill_id' => ['required', 'integer', $inCompany('bills')],
             'applications.*.amount_cents' => ['required', 'integer', 'min:1', 'max:999999999999'],
+
+            // Both default to the vendor's own currency/an auto-fetched rate
+            // when omitted — see SaveBillPayment::resolveCurrencyCode() and
+            // BillPaymentPoster::lockPaymentRate(). An explicit fx_rate
+            // matters for importing already-known historical transactions,
+            // where re-deriving today's rate would misstate what was
+            // actually paid at the time.
+            'currency_code' => ['nullable', 'string', Rule::in($this->enabledForeignCurrencyCodes($company))],
+            'fx_rate' => ['nullable', 'numeric', 'gt:0'],
         ];
+    }
+
+    /** @return array<int, string> */
+    private function enabledForeignCurrencyCodes(Company $company): array
+    {
+        return $company->currencies()
+            ->where('is_home', false)
+            ->where('is_active', true)
+            ->pluck('currency_code')
+            ->map(fn ($c) => mb_strtoupper((string) $c))
+            ->all();
     }
 
     public function withValidator(Validator $validator): void
