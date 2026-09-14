@@ -3,6 +3,7 @@
 namespace App\Services\BulkImport;
 
 use App\Services\BulkImport\Importers\CustomerImporter;
+use App\Services\BulkImport\Importers\ItemImporter;
 use App\Services\BulkImport\Importers\VendorImporter;
 
 /**
@@ -18,6 +19,7 @@ class BulkImportRegistry
         return [
             app(VendorImporter::class),
             app(CustomerImporter::class),
+            app(ItemImporter::class),
         ];
     }
 
