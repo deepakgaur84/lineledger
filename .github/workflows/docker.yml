@@ -62,5 +62,12 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Deliberately no cache-from/cache-to: this repo saw several
+          # incidents where a genuinely changed file didn't seem to show up
+          # in the published :edge image despite a green build. The GHA
+          # remote cache backend is the one remaining source of doubt we
+          # couldn't fully rule out (versus the concurrency race above,
+          # which was confirmed and fixed). Every build now compiles from
+          # scratch — slower, but removes that class of uncertainty
+          # entirely. Revisit if build times become a real problem.
+          no-cache: true
