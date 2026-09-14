@@ -44,7 +44,18 @@ abstract class AbstractContactImporter implements ImporterDefinition
             'account_no' => ['nullable', 'string', 'max:100'],
             'tax_number' => ['nullable', 'string', 'max:255'],
             'currency_code' => ['nullable', 'string', Rule::in($this->enabledForeignCurrencyCodes($company))],
-            'is_active' => ['nullable', 'in:true,false,1,0,'],
+            'is_active' => [
+                'nullable',
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    // Case-insensitive on purpose: Excel silently capitalizes
+                    // 'false' to 'FALSE' on some locale/autocorrect settings,
+                    // and a strict in:true,false,1,0 rule was rejecting an
+                    // otherwise-valid row over that alone.
+                    if ($value !== null && $value !== '' && ! in_array(mb_strtolower(trim((string) $value)), ['true', 'false', '1', '0'], true)) {
+                        $fail(__('The :attribute must be true, false, 1, or 0.', ['attribute' => $attribute]));
+                    }
+                },
+            ],
         ];
 
         $validator = Validator::make($row, $rules);
