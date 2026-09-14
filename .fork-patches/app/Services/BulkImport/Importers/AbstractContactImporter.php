@@ -4,6 +4,7 @@ namespace App\Services\BulkImport\Importers;
 
 use App\Actions\Contacts\SaveContact;
 use App\Models\Company;
+use App\Models\Contact;
 use App\Services\BulkImport\ImporterDefinition;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -63,15 +64,52 @@ abstract class AbstractContactImporter implements ImporterDefinition
         return $validator->fails() ? $validator->errors()->all() : [];
     }
 
-    public function summarize(array $row): array
+    public function summarize(array $row, Company $company): array
     {
         $currency = $this->normalizedCurrency($row);
 
-        return [
+        $summary = [
             'Name' => (string) ($row['display_name'] ?? ''),
             'Email' => (string) ($row['email'] ?? '—'),
             'Currency' => $currency ?? 'Home',
         ];
+
+        if (($duplicateOf = $this->findLikelyDuplicate($row, $company)) !== null) {
+            // A warning, not a validation error: the app itself enforces no
+            // uniqueness on contact names or account numbers, so a genuine
+            // intentional duplicate is allowed — this just makes an
+            // accidental one (e.g. re-uploading the same file) visible
+            // before committing, instead of silently creating a second copy.
+            $summary['⚠ Possible duplicate'] = __('Matches existing contact #:id (:name)', [
+                'id' => $duplicateOf->id,
+                'name' => $duplicateOf->display_name,
+            ]);
+        }
+
+        return $summary;
+    }
+
+    private function findLikelyDuplicate(array $row, Company $company): ?Contact
+    {
+        $name = trim((string) ($row['display_name'] ?? ''));
+        $accountNo = trim((string) ($row['account_no'] ?? ''));
+
+        if ($name === '' && $accountNo === '') {
+            return null;
+        }
+
+        return Contact::query()
+            ->where('company_id', $company->id)
+            ->where($this->role(), true)
+            ->where(function ($query) use ($name, $accountNo): void {
+                if ($name !== '') {
+                    $query->orWhereRaw('LOWER(display_name) = ?', [mb_strtolower($name)]);
+                }
+                if ($accountNo !== '') {
+                    $query->orWhere('account_no', $accountNo);
+                }
+            })
+            ->first();
     }
 
     public function commit(array $row, Company $company): void
