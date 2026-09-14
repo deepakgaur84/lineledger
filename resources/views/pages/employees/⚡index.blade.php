@@ -1,9 +1,11 @@
 <?php
 
 use App\Livewire\Concerns\HoldsEditLock;
+use App\Models\Account;
 use App\Models\Company;
 use App\Models\Contact;
 use Flux\Flux;
+use Illuminate\Support\Facades\DB;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
@@ -171,6 +173,32 @@ new #[Title('Employees')] class extends Component {
     #[Computed]
     public function employees()
     {
+        // ap_balance_cents (used for vendors elsewhere) only ever sums
+        // AccountsPayable-subtype accounts — see
+        // Contact::recomputeApBalance(). Employee reimbursements post
+        // against a CurrentLiability-subtype account instead (see
+        // Account::scopeEmployeeReimbursementsPayable), which that method
+        // never looks at, so it silently cached 0 for every employee
+        // regardless of their real reimbursement balance. Computed live
+        // here instead of adding a second cached column, so there's no
+        // new recalculation trigger to wire up (and risk missing) at
+        // every place a reimbursement can be posted or voided.
+        $reimbursementAccountId = Account::query()
+            ->where('company_id', $this->company->id)
+            ->employeeReimbursementsPayable()
+            ->value('id');
+
+        $balanceSelect = DB::table('journal_lines as jl')
+            ->join('journal_entries as je', 'je.id', '=', 'jl.journal_entry_id')
+            ->whereColumn('jl.contact_id', 'contacts.id')
+            ->where('je.is_posted', true)
+            // No employeeReimbursementsPayable account yet (e.g. the
+            // employees feature was only just enabled) — match nothing
+            // rather than every line, so this stays a correlated subquery
+            // Eloquent can bind the same way either way.
+            ->where('jl.account_id', $reimbursementAccountId ?? -1)
+            ->selectRaw('COALESCE(SUM(jl.credit_cents - jl.debit_cents), 0)');
+
         return Contact::query()
             ->where('is_employee', true)
             ->when(! $this->showInactive, fn ($q) => $q->where('is_active', true))
@@ -178,6 +206,7 @@ new #[Title('Employees')] class extends Component {
                 $q->where('display_name', 'like', '%'.$this->search.'%')
                     ->orWhere('email', 'like', '%'.$this->search.'%');
             }))
+            ->addSelect(['reimbursement_balance_cents' => $balanceSelect])
             ->orderBy('display_name')
             ->paginate(25);
     }
@@ -216,7 +245,7 @@ new #[Title('Employees')] class extends Component {
             <div wire:click="openEdit({{ $employee->id }})" class="block cursor-pointer rounded-lg border border-border p-4 @if(! $employee->is_active) opacity-50 @endif" data-test="employee-card">
                 <div class="flex items-center justify-between gap-2">
                     <span class="font-medium">{{ $employee->display_name }}</span>
-                    <div class="text-right"><div class="font-mono font-semibold">{{ number_format($employee->ap_balance_cents / 100, 2) }}</div></div>
+                    <div class="text-right"><div class="font-mono font-semibold">{{ number_format($employee->reimbursement_balance_cents / 100, 2) }}</div></div>
                 </div>
                 <div class="mt-1 text-sm text-muted-foreground">{{ $employee->email }}</div>
             </div>
@@ -242,7 +271,7 @@ new #[Title('Employees')] class extends Component {
                         <td class="px-4 py-2">{{ $employee->display_name }}</td>
                         <td class="px-4 py-2 text-muted-foreground">{{ $employee->email }}</td>
                         <td class="px-4 py-2 text-muted-foreground">{{ $employee->phone }}</td>
-                        <td class="px-4 py-2 text-right font-mono">{{ number_format($employee->ap_balance_cents / 100, 2) }}</td>
+                        <td class="px-4 py-2 text-right font-mono">{{ number_format($employee->reimbursement_balance_cents / 100, 2) }}</td>
                         <td class="px-4 py-2 text-right">
                             <flux:button variant="ghost" size="sm" icon="pencil" wire:click="openEdit({{ $employee->id }})" />
                         </td>
