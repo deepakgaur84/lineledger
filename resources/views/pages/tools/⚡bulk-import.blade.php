@@ -233,7 +233,11 @@ new #[Title('Bulk Import')] class extends Component {
             <flux:input type="file" wire:model="upload" :label="__('CSV file')" accept=".csv,text/csv" />
             @error('upload') <flux:text class="text-red-600">{{ $message }}</flux:text> @enderror
 
-            <flux:button wire:click="validateUpload" variant="primary" :disabled="! $upload">
+            <flux:text wire:loading wire:target="upload" class="text-muted-foreground text-sm">
+                {{ __('Uploading...') }}
+            </flux:text>
+
+            <flux:button wire:click="validateUpload" variant="primary" :disabled="! $upload" wire:loading.attr="disabled" wire:target="upload">
                 {{ __('Validate') }}
             </flux:button>
         </flux:card>
