@@ -24,11 +24,17 @@ validation and business rules to one entered by hand — including currency.
   valid/invalid + why) → confirm → commit. Invalid rows are always
   skipped, never partially imported.
 
-## Currently shipped: Vendors, Customers
+## Currently shipped: Vendors, Customers, Items
 
-Both are flat entities — no reference resolution, no nested line items.
-That's *why* these two shipped first; see "Not yet built" below for what a
-Bills/Payments importer would additionally need.
+Vendors/Customers are flat entities — no reference resolution, no nested
+line items. Items add the first reference to resolve: an income account,
+identified in the CSV by its `code` (via `Rule::exists('accounts',
+'code')`), not a database id a spreadsheet author has no reason to know.
+Deliberately scoped down from what `SaveItem` actually supports: no
+inventory tracking (adds two more required accounts and an
+opening-balance stock adjustment), no default tax code — every imported
+item is a plain, non-tracked service/product item. See "Not yet built"
+below for what Bills/Payments would additionally need.
 
 ## The FC (foreign currency) logic — read this before adding Bills/Payments
 
@@ -97,15 +103,12 @@ required finding the underlying `BillPaymentPoster` posting bug (a missing
 foreign-amount field on the bank line, now fixed), then reposting every
 affected transaction by hand.
 
-## Not yet built: Items, Bills, Payments
+## Not yet built: Bills, Payments
 
-- **Items** need at minimum one reference resolution (`income_account_id`
-  is required) — a CSV import needs to resolve an account *name or code*
-  to an ID, and decide what happens when it doesn't match anything.
-- **Bills** additionally need: resolving a vendor name to `contact_id`,
-  and a convention for representing multiple line items in a flat CSV
-  (e.g. repeated header fields across rows sharing a "Bill Reference"
-  column, grouped into one `commit()` call).
+- **Bills** need: resolving a vendor name to `contact_id`, and a
+  convention for representing multiple line items in a flat CSV (e.g.
+  repeated header fields across rows sharing a "Bill Reference" column,
+  grouped into one `commit()` call).
 - **Payments** additionally need: resolving which bill(s) a payment
   applies to, and validating the application amounts don't exceed the
   payment total (`StoreBillPaymentRequest`'s own `withValidator()` already
