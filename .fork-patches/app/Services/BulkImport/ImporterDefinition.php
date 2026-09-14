@@ -51,13 +51,17 @@ interface ImporterDefinition
 
     /**
      * A handful of key facts about this row for the preview table — not
-     * every field, just enough to recognise the record and confirm the
-     * important decisions (e.g. which currency will actually be applied).
+     * every field, just enough to recognise the record, confirm the
+     * important decisions (e.g. which currency will actually be applied),
+     * and flag anything worth a second look before committing (e.g. a
+     * likely duplicate of an existing record — the app itself enforces no
+     * uniqueness on contact names/account numbers, so this is the only
+     * place that catches an accidental double-import).
      *
      * @param  array<string, ?string>  $row
      * @return array<string, string>
      */
-    public function summarize(array $row): array;
+    public function summarize(array $row, Company $company): array;
 
     /**
      * Create the record. Only ever called for rows that already passed
