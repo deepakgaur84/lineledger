@@ -84,16 +84,34 @@ new #[Title('Bulk Import')] class extends Component {
         $preview = [];
         $validCount = 0;
         $invalidCount = 0;
+        $seenInThisUpload = [];
 
         foreach ($rows as $i => $row) {
             $errors = $importer->validate($row, $this->company);
             $isValid = $errors === [];
             $isValid ? $validCount++ : $invalidCount++;
 
+            $data = $isValid ? $importer->summarize($row, $this->company) : [];
+
+            if ($isValid && isset($data['Name']) && $data['Name'] !== '') {
+                $key = mb_strtolower(trim($data['Name']));
+
+                // Distinct from summarize()'s own against-the-database check —
+                // this catches the same name appearing twice within THIS
+                // upload (e.g. the same vendor accidentally listed on two
+                // rows), which no database lookup would ever see since
+                // neither row exists yet at validation time.
+                if (isset($seenInThisUpload[$key]) && ! isset($data['⚠ Possible duplicate'])) {
+                    $data['⚠ Possible duplicate'] = __('Also appears on row :row of this file', ['row' => $seenInThisUpload[$key]]);
+                }
+
+                $seenInThisUpload[$key] ??= $i + 2;
+            }
+
             $preview[] = [
                 'row' => $i + 2, // +1 for zero-index, +1 for the header row
                 'status' => $isValid ? 'valid' : 'invalid',
-                'data' => $isValid ? $importer->summarize($row) : [],
+                'data' => $data,
                 'errors' => $errors,
                 'raw' => $row,
             ];
@@ -233,9 +251,9 @@ new #[Title('Bulk Import')] class extends Component {
             <flux:input type="file" wire:model="upload" :label="__('CSV file')" accept=".csv,text/csv" />
             @error('upload') <flux:text class="text-red-600">{{ $message }}</flux:text> @enderror
 
-            <flux:text wire:loading wire:target="upload" class="text-muted-foreground text-sm">
+            <p wire:loading wire:target="upload" class="text-muted-foreground text-sm">
                 {{ __('Uploading...') }}
-            </flux:text>
+            </p>
 
             <flux:button wire:click="validateUpload" variant="primary" :disabled="! $upload" wire:loading.attr="disabled" wire:target="upload">
                 {{ __('Validate') }}
