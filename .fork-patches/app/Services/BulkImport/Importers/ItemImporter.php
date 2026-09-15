@@ -3,25 +3,29 @@
 namespace App\Services\BulkImport\Importers;
 
 use App\Actions\MasterData\SaveItem;
+use App\Enums\ItemType;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\Item;
+use App\Models\ItemCategory;
 use App\Services\BulkImport\ImporterDefinition;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 
 /**
- * Items — the first importer with a reference to resolve: an income
- * account, identified in the CSV by its code (not a database id, which a
- * spreadsheet author has no reason to know). Deliberately scoped down from
- * what the real API/UI support (see SaveItem's own docblock for the full
- * shape): no inventory tracking (adds two more required accounts and an
- * opening-balance stock adjustment — real additional complexity, not this
- * importer's job yet), no default tax code. Every item this creates is a
- * plain, non-tracked service/product item.
+ * Items — matches the field set on the Settings > Items page (SaveItem),
+ * with one deliberate exclusion: Bundle items, which reference OTHER items
+ * as components. A flat CSV row has no clean way to represent "this item is
+ * made of these N other items and quantities" — same reasoning as Bills
+ * being excluded until there's a convention for multi-row nested structures
+ * (see the README). Every other type — Service, Non-inventory, Other
+ * charge, Inventory (with full opening-balance support) — is supported.
  */
 class ItemImporter implements ImporterDefinition
 {
+    /** Types this importer accepts — Bundle is deliberately excluded, see class docblock. */
+    private const ALLOWED_TYPES = ['service', 'non_inventory', 'other_charge', 'inventory'];
+
     public function key(): string
     {
         return 'items';
@@ -38,19 +42,33 @@ class ItemImporter implements ImporterDefinition
             'name' => 'Required.',
             'sku' => 'Optional.',
             'description' => 'Optional.',
-            'income_account_code' => 'Required. The code of an existing income account (see your Chart of Accounts), e.g. 4000 — not the account name.',
+            'type' => "Optional, defaults to 'service'. One of: service, non_inventory, other_charge, inventory. (Bundle items aren't supported by this importer — they reference other items as components, which a flat CSV row can't represent.)",
+            'item_category_name' => 'Optional. Must match an existing category exactly (see Settings > Item Categories) — not created automatically.',
+            'income_account_code' => 'Required. The code of an existing income account, e.g. 4000 — not the account name.',
             'expense_account_code' => 'Optional. Same as above, for the purchase/expense side. Falls back to the income account if left blank.',
             'default_price' => 'Optional. Plain decimal, e.g. 19.99 — not cents.',
             'is_active' => "Optional. 'true'/'false', defaults to true.",
+            'inventory_asset_account_code' => "Required if type is 'inventory'.",
+            'cogs_account_code' => "Required if type is 'inventory'.",
+            'reorder_point' => "Optional. Only meaningful if type is 'inventory'.",
+            'opening_qty' => "Optional. Only meaningful if type is 'inventory' — posts a one-time opening-balance stock adjustment, same as the Settings page does.",
+            'opening_cost' => "Optional. Plain decimal per unit — pairs with opening_qty.",
         ];
     }
 
     public function validate(array $row, Company $company): array
     {
+        $isInventory = mb_strtolower(trim((string) ($row['type'] ?? ''))) === 'inventory';
+
         $rules = [
             'name' => ['required', 'string', 'max:255'],
             'sku' => ['nullable', 'string', 'max:100'],
             'description' => ['nullable', 'string'],
+            'type' => ['nullable', 'string', Rule::in(self::ALLOWED_TYPES)],
+            'item_category_name' => [
+                'nullable', 'string',
+                Rule::exists('item_categories', 'name')->where('company_id', $company->id),
+            ],
             'income_account_code' => [
                 'required', 'string',
                 Rule::exists('accounts', 'code')->where('company_id', $company->id),
@@ -68,6 +86,17 @@ class ItemImporter implements ImporterDefinition
                     }
                 },
             ],
+            'inventory_asset_account_code' => [
+                $isInventory ? 'required' : 'nullable', 'string',
+                Rule::exists('accounts', 'code')->where('company_id', $company->id),
+            ],
+            'cogs_account_code' => [
+                $isInventory ? 'required' : 'nullable', 'string',
+                Rule::exists('accounts', 'code')->where('company_id', $company->id),
+            ],
+            'reorder_point' => ['nullable', 'numeric', 'min:0'],
+            'opening_qty' => ['nullable', 'numeric'],
+            'opening_cost' => ['nullable', 'numeric', 'min:0'],
         ];
 
         $validator = Validator::make($row, $rules);
@@ -79,6 +108,7 @@ class ItemImporter implements ImporterDefinition
     {
         $summary = [
             'Name' => (string) ($row['name'] ?? ''),
+            'Type' => $row['type'] ?: 'service',
             'Income account' => (string) ($row['income_account_code'] ?? ''),
             'Price' => $row['default_price'] !== null && $row['default_price'] !== ''
                 ? number_format((float) $row['default_price'], 2)
@@ -86,10 +116,6 @@ class ItemImporter implements ImporterDefinition
         ];
 
         if (($duplicateOf = $this->findLikelyDuplicate($row, $company)) !== null) {
-            // Same reasoning as AbstractContactImporter's own duplicate
-            // check: a warning, not a validation error — the app enforces
-            // no uniqueness on item names, so this only makes an
-            // accidental re-import visible, never blocks an intentional one.
             $summary['⚠ Possible duplicate'] = __('Matches existing item #:id (:name)', [
                 'id' => $duplicateOf->id,
                 'name' => $duplicateOf->name,
@@ -101,22 +127,38 @@ class ItemImporter implements ImporterDefinition
 
     public function commit(array $row, Company $company): void
     {
-        $incomeAccountId = $this->resolveAccountId((string) $row['income_account_code'], $company);
-        $expenseAccountId = filled($row['expense_account_code'] ?? null)
-            ? $this->resolveAccountId((string) $row['expense_account_code'], $company)
+        $type = mb_strtolower(trim((string) ($row['type'] ?? ''))) ?: 'service';
+        $isInventory = $type === 'inventory';
+
+        $categoryId = filled($row['item_category_name'] ?? null)
+            ? ItemCategory::query()->where('company_id', $company->id)->where('name', $row['item_category_name'])->value('id')
             : null;
 
         app(SaveItem::class)->handle([
             'name' => $row['name'],
             'sku' => $row['sku'] ?: null,
             'description' => $row['description'] ?: null,
-            'income_account_id' => $incomeAccountId,
-            'expense_account_id' => $expenseAccountId,
+            'type' => ItemType::from($type),
+            'item_category_id' => $categoryId,
+            'income_account_id' => $this->resolveAccountId((string) $row['income_account_code'], $company),
+            'expense_account_id' => filled($row['expense_account_code'] ?? null)
+                ? $this->resolveAccountId((string) $row['expense_account_code'], $company)
+                : null,
             'default_price_cents' => filled($row['default_price'] ?? null)
                 ? (int) round(((float) $row['default_price']) * 100)
                 : 0,
             'is_active' => $this->normalizedBoolean($row['is_active'] ?? null) ?? true,
-            'track_inventory' => false,
+            'inventory_asset_account_id' => $isInventory && filled($row['inventory_asset_account_code'] ?? null)
+                ? $this->resolveAccountId((string) $row['inventory_asset_account_code'], $company)
+                : null,
+            'cogs_account_id' => $isInventory && filled($row['cogs_account_code'] ?? null)
+                ? $this->resolveAccountId((string) $row['cogs_account_code'], $company)
+                : null,
+            'reorder_point' => $isInventory ? ($row['reorder_point'] ?: null) : null,
+            'opening_qty' => $isInventory ? (float) ($row['opening_qty'] ?? 0) : 0,
+            'opening_cost_cents' => $isInventory && filled($row['opening_cost'] ?? null)
+                ? (int) round(((float) $row['opening_cost']) * 100)
+                : 0,
         ]);
     }
 
