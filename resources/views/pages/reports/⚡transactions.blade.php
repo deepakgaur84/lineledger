@@ -284,6 +284,10 @@ new #[Title('Transactions')] class extends Component {
         $sourceFqcn = $this->sourceTypeMap()[$this->sourceType] ?? null;
 
         return JournalLine::query()
+            // journal_lines has no company_id and JournalLine no CompanyScope, so
+            // confine to this company's entries — otherwise every tenant's lines
+            // in the range match, and a foreign ?account=/?contact= id reads them.
+            ->whereHas('journalEntry', fn ($jq) => $jq->where('journal_entries.company_id', $this->company->id))
             ->where('journal_lines.is_posted', true)
             ->whereBetween('journal_lines.entry_date', [$this->startDate, $this->endDate])
             ->when($this->accountId !== null, fn ($q) => $q->where('journal_lines.account_id', $this->accountId))

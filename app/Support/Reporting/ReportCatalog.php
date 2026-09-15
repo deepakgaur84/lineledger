@@ -148,6 +148,7 @@ class ReportCatalog
                 'reports' => [
                     ['key' => 'reports.ap-aging', 'label' => 'AP Aging', 'description' => 'Outstanding vendor balances bucketed by how overdue they are.', 'icon' => 'clock', 'route' => 'reports.ap-aging', 'companyScoped' => true],
                     ['key' => 'reports.open-bills', 'label' => 'Open Bills', 'description' => 'Every unpaid vendor bill and its outstanding balance.', 'icon' => 'document-text', 'route' => 'reports.open-bills', 'companyScoped' => true],
+                    ['key' => 'reports.vendor-activity', 'label' => 'Vendor Activity', 'description' => 'Every transaction with a vendor — bills, payments, cheques, and expenses — including payments that never went through Accounts Payable.', 'icon' => 'list-bullet', 'route' => 'reports.vendor-activity', 'companyScoped' => true],
                     ['key' => 'reports.form-1099', 'label' => '1099 Summary', 'description' => 'Yearly payments to vendors flagged for 1099-NEC reporting.', 'icon' => 'identification', 'route' => 'reports.form-1099', 'companyScoped' => true],
                 ],
             ],

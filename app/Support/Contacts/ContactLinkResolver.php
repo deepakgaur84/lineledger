@@ -68,7 +68,7 @@ class ContactLinkResolver
      */
     public function transactionsUrl(Contact|int $contact, Company $company): string
     {
-        return route('reports.transactions', $this->transactionsParams($contact, $company));
+        return route('reports.transactions', $this->allTimeParams($contact, $company));
     }
 
     /**
@@ -78,6 +78,26 @@ class ContactLinkResolver
     {
         return $this->viewerCanReach('reports.transactions', $company, $viewer)
             ? $this->transactionsUrl($contact, $company)
+            : null;
+    }
+
+    /**
+     * The Vendor Activity report for one vendor over an all-time range — every
+     * posted transaction with them, including cheques and expenses that never
+     * touch Accounts Payable and so never reach their AP statement.
+     */
+    public function vendorActivityUrl(Contact|int $contact, Company $company): string
+    {
+        return route('reports.vendor-activity', $this->allTimeParams($contact, $company));
+    }
+
+    /**
+     * Same as vendorActivityUrl(), or null when the viewer cannot open reports.
+     */
+    public function vendorActivityUrlForViewer(Contact|int $contact, Company $company, ?User $viewer): ?string
+    {
+        return $this->viewerCanReach('reports.vendor-activity', $company, $viewer)
+            ? $this->vendorActivityUrl($contact, $company)
             : null;
     }
 
@@ -164,13 +184,16 @@ class ContactLinkResolver
             return ['employees.index', ['company' => $company->slug, 'edit' => $contact->id]];
         }
 
-        return ['reports.transactions', $this->transactionsParams($contact, $company)];
+        return ['reports.transactions', $this->allTimeParams($contact, $company)];
     }
 
     /**
+     * Route params filtering a period report to one contact over an all-time
+     * range; shared by the Transactions and Vendor Activity reports.
+     *
      * @return array<string, mixed>
      */
-    protected function transactionsParams(Contact|int $contact, Company $company): array
+    protected function allTimeParams(Contact|int $contact, Company $company): array
     {
         [$start, $end] = ReportDatePresets::resolve('all', (int) ($company->fiscal_year_start_month ?: 1), $company->currentDateTime());
 

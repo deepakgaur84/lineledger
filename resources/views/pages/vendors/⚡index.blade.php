@@ -11,6 +11,7 @@ use App\Models\Contact;
 use App\Models\PaymentTerm;
 use App\Models\TaxCode;
 use App\Services\AttachmentService;
+use App\Support\Contacts\ContactLinkResolver;
 use App\Support\Currency;
 use Flux\Flux;
 use Illuminate\Support\Facades\Auth;
@@ -467,6 +468,27 @@ new #[Title('Vendors')] class extends Component
             ->paginate(25);
     }
 
+    /**
+     * The Name and Open balance drills both land in Reports (Vendor Activity and
+     * the AP statement), which a Vendors-only member can't open — so they render
+     * as plain text for that viewer instead of links that would 403.
+     */
+    #[Computed]
+    public function canViewReports(): bool
+    {
+        return app(ContactLinkResolver::class)->viewerCanReach('reports.vendor-activity', $this->company, Auth::user());
+    }
+
+    public function activityUrl(Contact $vendor): string
+    {
+        return app(ContactLinkResolver::class)->vendorActivityUrl($vendor, $this->company);
+    }
+
+    public function statementUrl(Contact $vendor): string
+    {
+        return route('reports.contact-statement', ['company' => $this->company->slug, 'contact' => $vendor->id, 'kind' => 'ap']);
+    }
+
     #[Computed]
     public function termsOptions()
     {
@@ -537,10 +559,14 @@ new #[Title('Vendors')] class extends Component
     {{-- Mobile: stacked cards --}}
     <div class="space-y-3 lg:hidden">
         @forelse ($this->vendors as $vendor)
-            <a href="{{ route('reports.contact-statement', ['company' => $company->slug, 'contact' => $vendor->id, 'kind' => 'ap']) }}" class="block rounded-lg border border-border p-4 @if(! $vendor->is_active) opacity-50 @endif" data-test="vendor-card">
+            <div class="rounded-lg border border-border p-4 @if(! $vendor->is_active) opacity-50 @endif" data-test="vendor-card">
                 <div class="flex items-end justify-between gap-2">
                     <div>
-                        <div class="font-medium">{{ $vendor->display_name }}</div>
+                        @if ($this->canViewReports)
+                            <a href="{{ $this->activityUrl($vendor) }}" class="font-medium hover:underline" data-test="vendor-card-activity-link">{{ $vendor->display_name }}</a>
+                        @else
+                            <div class="font-medium">{{ $vendor->display_name }}</div>
+                        @endif
                         @if ($vendor->company_name)
                             <div class="text-xs text-muted-foreground">{{ $vendor->company_name }}</div>
                         @endif
@@ -551,9 +577,13 @@ new #[Title('Vendors')] class extends Component
                             <div class="text-sm text-muted-foreground">{{ $vendor->phone }}</div>
                         @endif
                     </div>
-                    <div class="text-right font-mono font-semibold">{{ number_format($vendor->ap_balance_cents / 100, 2) }}</div>
+                    @if ($this->canViewReports)
+                        <a href="{{ $this->statementUrl($vendor) }}" class="text-right font-mono font-semibold hover:underline" data-test="vendor-card-statement-link">{{ number_format($vendor->ap_balance_cents / 100, 2) }}</a>
+                    @else
+                        <div class="text-right font-mono font-semibold">{{ number_format($vendor->ap_balance_cents / 100, 2) }}</div>
+                    @endif
                 </div>
-            </a>
+            </div>
         @empty
             <flux:text class="block py-8 text-center text-muted-foreground">{{ __('No vendors yet.') }}</flux:text>
         @endforelse
@@ -582,18 +612,28 @@ new #[Title('Vendors')] class extends Component
                 @forelse ($this->vendors as $vendor)
                     <tr data-test="vendor-row" class="@if(! $vendor->is_active) opacity-50 @endif">
                         <td class="px-4 py-2">
-                            <a
-                                href="{{ route('reports.contact-statement', ['company' => $company->slug, 'contact' => $vendor->id, 'kind' => 'ap']) }}"
-                                class="hover:underline"
-                                data-test="vendor-statement-link"
-                            >{{ $vendor->display_name }}</a>
+                            @if ($this->canViewReports)
+                                <a
+                                    href="{{ $this->activityUrl($vendor) }}"
+                                    class="hover:underline"
+                                    data-test="vendor-activity-link"
+                                >{{ $vendor->display_name }}</a>
+                            @else
+                                {{ $vendor->display_name }}
+                            @endif
                             @if ($vendor->company_name)
                                 <flux:text class="text-xs text-muted-foreground">{{ $vendor->company_name }}</flux:text>
                             @endif
                         </td>
                         <td class="px-4 py-2 text-muted-foreground">{{ $vendor->email }}</td>
                         <td class="px-4 py-2 text-muted-foreground">{{ $vendor->phone }}</td>
-                        <td class="px-4 py-2 text-right font-mono">{{ number_format($vendor->ap_balance_cents / 100, 2) }}</td>
+                        <td class="px-4 py-2 text-right font-mono">
+                            @if ($this->canViewReports)
+                                <a href="{{ $this->statementUrl($vendor) }}" class="hover:underline" data-test="vendor-statement-link">{{ number_format($vendor->ap_balance_cents / 100, 2) }}</a>
+                            @else
+                                {{ number_format($vendor->ap_balance_cents / 100, 2) }}
+                            @endif
+                        </td>
                         <td class="px-4 py-2 text-right">
                             <flux:dropdown align="end">
                                 <flux:button variant="ghost" size="sm" icon="ellipsis-horizontal" data-test="vendor-actions-button" />
