@@ -45,6 +45,18 @@ class ReportCalculator
     }
 
     /**
+     * Same as balanceAsOf(), but in the account's own foreign currency
+     * instead of home currency — for a foreign-currency account only
+     * (callers must check $account->currency_code !== null first; for a
+     * home-currency account this is always 0, which is meaningless to
+     * display, not a real "zero balance in a foreign currency").
+     */
+    public function foreignBalanceAsOf(Account $account, CarbonInterface $date, ?int $fundId = null): int
+    {
+        return $this->signedToNatural($account, $this->rawForeignBalanceAsOf($account, $date, $fundId));
+    }
+
+    /**
      * Balance for a report presented the QuickBooks way: balance-sheet accounts
      * (asset / liability / equity) carry forward cumulatively, while income and
      * expense accounts reset at the start of each fiscal year — so a P&L account
@@ -118,6 +130,27 @@ class ReportCalculator
 
         return (int) $query
             ->selectRaw('COALESCE(SUM(debit_cents - credit_cents), 0) AS bal')
+            ->value('bal');
+    }
+
+    /**
+     * Raw (foreign_debit − foreign_credit) as of a date, with NO natural-
+     * balance conversion — see rawBalanceAsOf(), same reasoning, just the
+     * foreign-currency columns instead of the home-currency ones.
+     */
+    public function rawForeignBalanceAsOf(Account $account, CarbonInterface $date, ?int $fundId = null): int
+    {
+        $query = JournalLine::query()
+            ->where('account_id', $account->id)
+            ->where('is_posted', true)
+            ->where('entry_date', '<=', $date);
+
+        if ($fundId !== null) {
+            $query->where('fund_id', $fundId);
+        }
+
+        return (int) $query
+            ->selectRaw('COALESCE(SUM(foreign_debit_cents - foreign_credit_cents), 0) AS bal')
             ->value('bal');
     }
 
