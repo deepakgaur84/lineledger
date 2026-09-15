@@ -33,8 +33,18 @@
                         @else
                             {{ $a['code'] }} — {{ $a['name'] }}
                         @endif
+                        @if (! empty($a['id']) && isset(($footnotes ?? [])[$a['id']]))
+                            <sup class="text-muted-foreground" data-test="fc-footnote-marker">{{ $footnotes[$a['id']]['number'] }}</sup>
+                        @endif
                     </td>
-                    <td class="w-24 py-1 text-right font-mono {{ $fmt->cssClass($a['balance']) }}">{{ $fmt->format($a['balance']) }}</td>
+                    <td class="w-24 py-1 text-right font-mono {{ $fmt->cssClass($a['balance']) }}">
+                        {{ $fmt->format($a['balance']) }}
+                        @if (! empty($a['id']) && isset(($footnotes ?? [])[$a['id']]))
+                            <div class="text-xs font-normal text-muted-foreground" data-test="fc-inline-amount">
+                                {{ $footnotes[$a['id']]['currency_code'] }} {{ $fmt->format($footnotes[$a['id']]['foreign_balance']) }}
+                            </div>
+                        @endif
+                    </td>
                     @if ($showComparison)
                         <td class="w-24 py-1 text-right font-mono text-muted-foreground">{{ $fmt->format($a['prior']) }}</td>
                         <td class="w-24 py-1 text-right font-mono {{ $changeClass($a['balance'], $a['prior']) }}">{{ $changeCell($a['balance'], $a['prior']) }}</td>
