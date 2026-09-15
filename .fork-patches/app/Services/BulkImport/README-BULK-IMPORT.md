@@ -24,11 +24,19 @@ validation and business rules to one entered by hand — including currency.
   valid/invalid + why) → confirm → commit. Invalid rows are always
   skipped, never partially imported.
 
-## Currently shipped: Vendors, Customers
+## Currently shipped: Vendors, Customers, Item Categories, Items
 
-Both are flat entities — no reference resolution, no nested line items.
-That's *why* these two shipped first; see "Not yet built" below for what a
-Bills/Payments importer would additionally need.
+Vendors/Customers/Item Categories are flat entities — no reference
+resolution (Item Categories has one *optional* self-referential parent,
+resolved by name). Items is the first genuinely reference-heavy one:
+resolves an income/expense account by its `code`, an item category by
+`name`, and — for inventory-tracked items — an asset and COGS account too,
+plus a one-time opening-balance stock adjustment (matching exactly what
+`SaveItem` does for the Settings page). Deliberately excluded: **Bundle**
+items, since they reference *other items* as components — a flat CSV row
+has no clean way to represent that, same reasoning as Bills being
+excluded until there's a real convention for multi-row nested structures
+(see "Not yet built" below).
 
 ## The FC (foreign currency) logic — read this before adding Bills/Payments
 
@@ -97,12 +105,11 @@ required finding the underlying `BillPaymentPoster` posting bug (a missing
 foreign-amount field on the bank line, now fixed), then reposting every
 affected transaction by hand.
 
-## Not yet built: Items, Bills, Payments
+## Not yet built: Bills, Payments, Bundle items
 
-- **Items** need at minimum one reference resolution (`income_account_id`
-  is required) — a CSV import needs to resolve an account *name or code*
-  to an ID, and decide what happens when it doesn't match anything.
-- **Bills** additionally need: resolving a vendor name to `contact_id`,
+- **Bundle items** reference other items as components — no clean flat-CSV
+  representation, same underlying issue as Bills below.
+- **Bills** need: resolving a vendor name to `contact_id`,
   and a convention for representing multiple line items in a flat CSV
   (e.g. repeated header fields across rows sharing a "Bill Reference"
   column, grouped into one `commit()` call).
