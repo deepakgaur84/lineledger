@@ -397,6 +397,7 @@ Route::prefix('{company}')
         Route::livewire('reports/unattributed-ar', 'pages::reports.unattributed-ar')->name('reports.unattributed-ar');
         Route::livewire('reports/ap-aging', 'pages::reports.ap-aging')->name('reports.ap-aging');
         Route::livewire('reports/open-bills', 'pages::reports.open-bills')->name('reports.open-bills');
+        Route::livewire('reports/vendor-activity', 'pages::reports.vendor-activity')->name('reports.vendor-activity');
         Route::livewire('reports/1099-summary', 'pages::reports.form-1099')->name('reports.form-1099');
         Route::livewire('reports/contact-statement/{contact}', 'pages::reports.contact-statement')->name('reports.contact-statement');
         Route::livewire('reports/audit-log', 'pages::reports.audit-log')
