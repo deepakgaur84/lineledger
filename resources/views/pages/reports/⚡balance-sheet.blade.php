@@ -194,6 +194,10 @@ new #[Title('Balance Sheet')] class extends Component {
                 'balance' => $balance,
                 'prior' => $prior,
                 'section_id' => $account->report_section_id,
+                'currency_code' => $account->currency_code,
+                'foreign_balance' => $account->currency_code !== null
+                    ? $calc->foreignBalanceAsOf($account, $asOf)
+                    : null,
             ];
 
             $totals[$bucket] += $balance;
@@ -253,6 +257,54 @@ new #[Title('Balance Sheet')] class extends Component {
             'prior_net_income_ytd' => $priorNetIncomeYtd,
             'prior_total_le' => $priorTotals['liabilities'] + $priorTotals['equity'] + $priorNetIncomeYtd,
         ];
+    }
+
+    /**
+     * Every foreign-currency account row appearing anywhere in the report,
+     * in the order they appear, numbered for the superscript markers next
+     * to each account name and the footnote list at the bottom of the
+     * page. Keyed by account id for O(1) lookup from bs-subtype.blade.php.
+     *
+     * The displayed "rate" is the balance's own effective rate
+     * (home_balance / foreign_balance) — what the numbers on THIS page
+     * actually imply — not a freshly re-fetched live rate, which could
+     * disagree with the displayed balance and make the page look
+     * internally inconsistent.
+     *
+     * @return array<int, array{number: int, code: string, name: string, currency_code: string, foreign_balance: int, home_balance: int, rate: ?float}>
+     */
+    #[Computed]
+    public function foreignAccountFootnotes(): array
+    {
+        $footnotes = [];
+        $number = 0;
+
+        foreach (['assets', 'liabilities', 'equity'] as $bucket) {
+            foreach ($this->report[$bucket] ?? [] as $group) {
+                foreach ($group['blocks'] ?? [] as $block) {
+                    foreach ($block['rows'] ?? [] as $row) {
+                        if (($row['currency_code'] ?? null) === null || empty($row['id'])) {
+                            continue;
+                        }
+
+                        $number++;
+                        $footnotes[$row['id']] = [
+                            'number' => $number,
+                            'code' => $row['code'],
+                            'name' => $row['name'],
+                            'currency_code' => $row['currency_code'],
+                            'foreign_balance' => $row['foreign_balance'],
+                            'home_balance' => $row['balance'],
+                            'rate' => $row['foreign_balance'] !== 0
+                                ? $row['balance'] / $row['foreign_balance']
+                                : null,
+                        ];
+                    }
+                }
+            }
+        }
+
+        return $footnotes;
     }
 
     /**
@@ -368,6 +420,7 @@ new #[Title('Balance Sheet')] class extends Component {
             'labels' => $this->labels,
             'fmt' => $this->numberFormat,
             'notes' => $this->reportNotes,
+            'fcFootnotes' => $this->foreignAccountFootnotes(),
         ], "balance-sheet-{$this->asOf}.pdf");
     }
 }; ?>
@@ -438,7 +491,7 @@ new #[Title('Balance Sheet')] class extends Component {
                         </table>
                     @endif
                     @forelse ($sec['groups'] as $group)
-                        @include('partials.reports.bs-subtype', ['group' => $group])
+                        @include('partials.reports.bs-subtype', ['group' => $group, 'footnotes' => $this->foreignAccountFootnotes()])
                     @empty
                         <flux:text class="text-muted-foreground">{{ __('No accounts.') }}</flux:text>
                     @endforelse
@@ -481,7 +534,7 @@ new #[Title('Balance Sheet')] class extends Component {
                     </table>
                 @endif
                 @foreach ($this->report['equity'] as $group)
-                    @include('partials.reports.bs-subtype', ['group' => $group])
+                    @include('partials.reports.bs-subtype', ['group' => $group, 'footnotes' => $this->foreignAccountFootnotes()])
                 @endforeach
 
                 <div class="mt-3 border-t border-border pt-2">
@@ -521,6 +574,22 @@ new #[Title('Balance Sheet')] class extends Component {
             </div>
         </div>
     </div>
+
+    @if ($this->foreignAccountFootnotes() !== [])
+        <div class="mt-4 space-y-1 text-xs text-muted-foreground" data-test="fc-footnotes">
+            @foreach ($this->foreignAccountFootnotes() as $footnote)
+                <div data-test="fc-footnote">
+                    <sup>{{ $footnote['number'] }}</sup>
+                    {{ $footnote['code'] }} — {{ $footnote['name'] }}:
+                    {{ $footnote['currency_code'] }} {{ number_format($footnote['foreign_balance'] / 100, 2) }}
+                    @if ($footnote['rate'] !== null)
+                        {{ __('at') }} {{ number_format($footnote['rate'], 4) }}
+                    @endif
+                    = {{ number_format($footnote['home_balance'] / 100, 2) }} {{ $this->company->currency_code ?? 'NZD' }}
+                </div>
+            @endforeach
+        </div>
+    @endif
 
     <x-reports.footer-notes :report-notes="$reportNotes" />
 </section>
