@@ -8,6 +8,7 @@
     $fmt ??= new \App\Support\Reporting\ReportNumberFormat;
     $labels ??= \App\Support\Reporting\StatementLabels::for($company);
     $showComparison = $showComparison ?? false;
+    $fcFootnotes ??= [];
     $cols = $showComparison ? 3 : 2;
 
     $section = function (string $key, string $title, array $groups, int $total, int $priorTotal) {
@@ -41,8 +42,18 @@
                     @endif
                     @foreach ($block['rows'] as $a)
                         <tr>
-                            <td style="padding-left: {{ $block['type'] === 'section' ? '32px' : '16px' }};">{{ $a['code'] }} — {{ $a['name'] }}</td>
-                            <td class="num {{ $fmt->pdfClass($a['balance']) }}">{{ $fmt->format($a['balance']) }}</td>
+                            <td style="padding-left: {{ $block['type'] === 'section' ? '32px' : '16px' }};">
+                                {{ $a['code'] }} — {{ $a['name'] }}
+                                @if (! empty($a['id']) && isset($fcFootnotes[$a['id']]))
+                                    <sup>{{ $fcFootnotes[$a['id']]['number'] }}</sup>
+                                @endif
+                            </td>
+                            <td class="num {{ $fmt->pdfClass($a['balance']) }}">
+                                {{ $fmt->format($a['balance']) }}
+                                @if (! empty($a['id']) && isset($fcFootnotes[$a['id']]))
+                                    <div style="font-size: 8px; color: #6b7280;">{{ $fcFootnotes[$a['id']]['currency_code'] }} {{ $fmt->format($fcFootnotes[$a['id']]['foreign_balance']) }}</div>
+                                @endif
+                            </td>
                             @if ($showComparison)
                                 <td class="num" style="color:#6b7280;">{{ $fmt->format($a['prior']) }}</td>
                             @endif
@@ -105,6 +116,22 @@
         @endif
     </tr>
 </table>
+
+@if ($fcFootnotes !== [])
+    <div style="margin-top: 12px; font-size: 8px; color: #6b7280;">
+        @foreach ($fcFootnotes as $footnote)
+            <div>
+                <sup>{{ $footnote['number'] }}</sup>
+                {{ $footnote['code'] }} — {{ $footnote['name'] }}:
+                {{ $footnote['currency_code'] }} {{ number_format($footnote['foreign_balance'] / 100, 2) }}
+                @if ($footnote['rate'] !== null)
+                    at {{ number_format($footnote['rate'], 4) }}
+                @endif
+                = {{ number_format($footnote['home_balance'] / 100, 2) }} {{ $company->currency_code ?? 'NZD' }}
+            </div>
+        @endforeach
+    </div>
+@endif
 
 @if ($report['total_assets'] !== $report['total_le'])
     <div class="footer neg">Balance sheet is out of balance — difference {{ $fmt->format(abs($report['total_assets'] - $report['total_le'])) }}.</div>
