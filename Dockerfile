@@ -8,7 +8,7 @@
 FROM dunglas/frankenphp:1-php8.5 AS vendor
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
-RUN install-php-extensions pdo_mysql intl zip gd bcmath pcntl opcache
+RUN install-php-extensions pdo_mysql intl zip gd bcmath pcntl opcache redis
 
 WORKDIR /app
 COPY composer.json composer.lock ./
@@ -39,7 +39,7 @@ RUN npm run build
 ############################################################
 FROM dunglas/frankenphp:1-php8.5 AS runtime
 
-RUN install-php-extensions pdo_mysql intl zip gd bcmath pcntl opcache
+RUN install-php-extensions pdo_mysql intl zip gd bcmath pcntl opcache redis
 
 # poppler-utils: pdftotext for bank-statement PDF import
 # curl: container healthchecks against /up
