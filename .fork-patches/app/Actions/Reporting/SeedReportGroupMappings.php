@@ -1,0 +1,127 @@
+<?php
+
+namespace App\Actions\Reporting;
+
+use App\Models\Account;
+use App\Models\ReportGroup;
+use App\Models\ReportGroupAccountMap;
+use App\Models\ReportGroupLine;
+use Illuminate\Support\Collection;
+
+/**
+ * Auto-maps a report group's member accounts onto combined lines by matching
+ * account code. Idempotent and additive: only accounts not yet mapped are
+ * touched, so user curation (renamed lines, net lines) survives a re-seed and
+ * newly-added companies get picked up.
+ *
+ * Accounts that share a normalized code collapse onto one line; an account whose
+ * code is unique within the group becomes its own passthrough line.
+ */
+class SeedReportGroupMappings
+{
+    public function handle(ReportGroup $group): void
+    {
+        $companyIds = $group->companyIds();
+
+        if ($companyIds->isEmpty()) {
+            return;
+        }
+
+        $alreadyMapped = $group->accountMaps()->pluck('account_id')->all();
+
+        $accounts = Account::withoutGlobalScopes()
+            ->whereIn('company_id', $companyIds)
+            ->whereNotIn('id', $alreadyMapped)
+            ->orderBy('code')
+            ->get();
+
+        if ($accounts->isEmpty()) {
+            return;
+        }
+
+        $lineByCode = $this->existingLinesByCode($group);
+        $nextSort = (int) $group->lines()->max('sort_order') + 1;
+        $mapRows = [];
+        $now = now();
+
+        $accounts
+            ->groupBy(fn (Account $account) => $this->normalizeCode($account->code))
+            ->each(function (Collection $group_accounts, string $code) use ($group, &$lineByCode, &$nextSort, &$mapRows, $now) {
+                $line = $lineByCode[$code] ?? null;
+
+                if ($line === null) {
+                    /** @var Account $first */
+                    $first = $group_accounts->first();
+
+                    $isPassthrough = $group_accounts->count() === 1;
+
+                    $line = ReportGroupLine::create([
+                        'report_group_id' => $group->id,
+                        'name' => $first->name,
+                        'type' => $first->type,
+                        'subtype' => $first->subtype,
+                        // A passthrough line stands in for one account, so it keeps
+                        // that account's own cash-flow activity override.
+                        'cash_flow_activity' => $isPassthrough ? $first->cash_flow_activity : null,
+                        'sort_order' => $nextSort++,
+                        'is_passthrough' => $isPassthrough,
+                    ]);
+
+                    $lineByCode[$code] = $line;
+                }
+
+                foreach ($group_accounts as $account) {
+                    // Collected and inserted as one bulk statement below,
+                    // rather than one INSERT per account here — a company's
+                    // full chart of accounts, times up to 10 companies per
+                    // group, made this loop the group-creation page's own
+                    // bottleneck: hundreds of individual round trips run
+                    // synchronously inside the create request, slow enough
+                    // to exceed the reverse proxy's response timeout (a 504)
+                    // even though the group had genuinely finished creating
+                    // — which is exactly what caused duplicate groups when
+                    // the browser, seeing only the timeout, was used to retry.
+                    $mapRows[] = [
+                        'report_group_id' => $group->id,
+                        'report_group_line_id' => $line->id,
+                        'company_id' => $account->company_id,
+                        'account_id' => $account->id,
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ];
+                }
+            });
+
+        if ($mapRows !== []) {
+            ReportGroupAccountMap::insert($mapRows);
+        }
+    }
+
+    /**
+     * Map normalized account code → the line that already collects accounts of
+     * that code, so re-seeding routes new accounts to the matching line.
+     *
+     * @return array<string, ReportGroupLine>
+     */
+    protected function existingLinesByCode(ReportGroup $group): array
+    {
+        $maps = $group->accountMaps()->with('account', 'line')->get();
+
+        $byCode = [];
+
+        foreach ($maps as $map) {
+            if ($map->account === null || $map->line === null) {
+                continue;
+            }
+
+            $byCode[$this->normalizeCode($map->account->code)] ??= $map->line;
+        }
+
+        return $byCode;
+    }
+
+    protected function normalizeCode(string $code): string
+    {
+        return mb_strtoupper(trim($code));
+    }
+}
