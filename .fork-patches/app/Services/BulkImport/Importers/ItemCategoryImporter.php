@@ -24,7 +24,7 @@ class ItemCategoryImporter implements ImporterDefinition
 {
     public function key(): string
     {
-        return 'item_categories';
+        return 'item-categories';
     }
 
     public function label(): string
@@ -36,7 +36,7 @@ class ItemCategoryImporter implements ImporterDefinition
     {
         return [
             'name' => 'Required.',
-            'parent_category_name' => "Optional. Must match an existing category's name exactly. See this importer's own note on ordering if you're importing a parent and its children together.",
+            'parent_name' => "Optional. Must match an existing category's name exactly. See this importer's own note on ordering if you're importing a parent and its children together.",
             'is_active' => "Optional. 'true'/'false', defaults to true.",
         ];
     }
@@ -45,7 +45,7 @@ class ItemCategoryImporter implements ImporterDefinition
     {
         $rules = [
             'name' => ['required', 'string', 'max:255'],
-            'parent_category_name' => [
+            'parent_name' => [
                 'nullable', 'string',
                 Rule::exists('item_categories', 'name')->where('company_id', $company->id),
             ],
@@ -68,7 +68,7 @@ class ItemCategoryImporter implements ImporterDefinition
     {
         $summary = [
             'Name' => (string) ($row['name'] ?? ''),
-            'Parent' => (string) ($row['parent_category_name'] ?? '—'),
+            'Parent' => (string) ($row['parent_name'] ?? '—'),
         ];
 
         if (($duplicateOf = $this->findLikelyDuplicate($row, $company)) !== null) {
@@ -83,8 +83,8 @@ class ItemCategoryImporter implements ImporterDefinition
 
     public function commit(array $row, Company $company): void
     {
-        $parentId = filled($row['parent_category_name'] ?? null)
-            ? ItemCategory::query()->where('company_id', $company->id)->where('name', $row['parent_category_name'])->value('id')
+        $parentId = filled($row['parent_name'] ?? null)
+            ? ItemCategory::query()->where('company_id', $company->id)->where('name', $row['parent_name'])->value('id')
             : null;
 
         app(SaveItemCategory::class)->handle([
