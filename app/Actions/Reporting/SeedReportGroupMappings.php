@@ -41,10 +41,12 @@ class SeedReportGroupMappings
 
         $lineByCode = $this->existingLinesByCode($group);
         $nextSort = (int) $group->lines()->max('sort_order') + 1;
+        $mapRows = [];
+        $now = now();
 
         $accounts
             ->groupBy(fn (Account $account) => $this->normalizeCode($account->code))
-            ->each(function (Collection $group_accounts, string $code) use ($group, &$lineByCode, &$nextSort) {
+            ->each(function (Collection $group_accounts, string $code) use ($group, &$lineByCode, &$nextSort, &$mapRows, $now) {
                 $line = $lineByCode[$code] ?? null;
 
                 if ($line === null) {
@@ -69,14 +71,30 @@ class SeedReportGroupMappings
                 }
 
                 foreach ($group_accounts as $account) {
-                    ReportGroupAccountMap::create([
+                    // Collected and inserted as one bulk statement below,
+                    // rather than one INSERT per account here — a company's
+                    // full chart of accounts, times up to 10 companies per
+                    // group, made this loop the group-creation page's own
+                    // bottleneck: hundreds of individual round trips run
+                    // synchronously inside the create request, slow enough
+                    // to exceed the reverse proxy's response timeout (a 504)
+                    // even though the group had genuinely finished creating
+                    // — which is exactly what caused duplicate groups when
+                    // the browser, seeing only the timeout, was used to retry.
+                    $mapRows[] = [
                         'report_group_id' => $group->id,
                         'report_group_line_id' => $line->id,
                         'company_id' => $account->company_id,
                         'account_id' => $account->id,
-                    ]);
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ];
                 }
             });
+
+        if ($mapRows !== []) {
+            ReportGroupAccountMap::insert($mapRows);
+        }
     }
 
     /**
