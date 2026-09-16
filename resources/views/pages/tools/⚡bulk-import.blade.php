@@ -67,7 +67,7 @@ new #[Title('Bulk Import')] class extends Component {
             $out = fopen('php://output', 'w');
             fputcsv($out, $columns);
             fclose($out);
-        }, $importer->key().'-template.csv');
+        }, $importer->key().'-import-template.csv');
     }
 
     /**
