@@ -22,6 +22,14 @@ new #[Title('Combined reports')] class extends Component {
         Flux::modal('report-group-form')->show();
     }
 
+    public function deleteGroup(int $id): void
+    {
+        $group = ReportGroup::query()->where('user_id', auth()->id())->findOrFail($id);
+        $group->delete();
+
+        Flux::toast(variant: 'success', text: __('Report group deleted.'));
+    }
+
     public function create(SeedReportGroupMappings $seed): void
     {
         $user = Auth::user();
@@ -122,6 +130,7 @@ new #[Title('Combined reports')] class extends Component {
                         <flux:button variant="ghost" size="sm" icon="chart-bar" :href="route('report-groups.balance-sheet', $group)" wire:navigate :tooltip="__('Reports')" />
                         @if ($group->user_id === auth()->id())
                             <flux:button variant="ghost" size="sm" icon="pencil" :href="route('report-groups.edit', $group)" wire:navigate :tooltip="__('Edit')" data-test="report-group-edit-button" />
+                            <flux:button variant="ghost" size="sm" icon="trash" wire:click="deleteGroup({{ $group->id }})" wire:confirm="{{ __('Delete this report group? Its own lines and account mappings are removed — the underlying companies and their data are not affected.') }}" :tooltip="__('Delete')" data-test="report-group-delete-button" />
                         @endif
                     </div>
                 </div>
