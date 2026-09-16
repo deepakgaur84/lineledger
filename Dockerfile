@@ -16,9 +16,6 @@ COPY composer.json composer.lock ./
 # which needs the full app source; discovery runs in the runtime stage.
 RUN composer install --no-dev --no-scripts --no-interaction --prefer-dist --no-progress
 COPY . .
-# TEMPORARY DIAGNOSTIC — remove once the vendor-activity route mystery is solved.
-RUN echo "=== DIAGNOSTIC: routes/web.php right after COPY . . ===" \
-    && grep -c "vendor-activity" routes/web.php || echo "MISSING immediately after COPY . ."
 RUN composer dump-autoload --optimize --classmap-authoritative --no-scripts
 
 ############################################################
@@ -56,9 +53,6 @@ COPY docker/php.ini $PHP_INI_DIR/conf.d/99-lineledger.ini
 
 WORKDIR /app
 COPY --from=vendor /app /app
-# TEMPORARY DIAGNOSTIC — remove once the vendor-activity route mystery is solved.
-RUN echo "=== DIAGNOSTIC: routes/web.php in runtime stage after COPY --from=vendor ===" \
-    && grep -c "vendor-activity" routes/web.php || echo "MISSING in runtime stage"
 COPY --from=assets /app/public/build /app/public/build
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
