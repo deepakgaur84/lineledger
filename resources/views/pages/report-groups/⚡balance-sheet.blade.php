@@ -66,8 +66,37 @@ new #[Title('Combined Balance Sheet')] class extends Component {
     {
         $r = $this->report;
         $rows = collect();
+        $companies = $this->byCompany ? $r['companies'] : [];
 
-        $emit = function (string $section, int $total, ?string $displayName = null) use (&$rows, $r) {
+        // No precomputed *_by_company total exists for assets/liabilities/
+        // equity (unlike net_income_ytd and retained_earnings_prior, which
+        // do) — XlsxExporter covers this with a spreadsheet SUM formula
+        // over the line rows, which has no CSV equivalent, so the running
+        // total is accumulated by hand here as each line is emitted.
+        $lineValues = function (array $line) use ($companies, &$runningByCompany) {
+            $values = [];
+            foreach ($companies as $company) {
+                $amount = $line['by_company'][$company['id']] ?? 0;
+                $runningByCompany[$company['id']] = ($runningByCompany[$company['id']] ?? 0) + $amount;
+                $values[] = CsvExporter::cents($amount);
+            }
+            $values[] = CsvExporter::cents($line['balance']);
+
+            return $values;
+        };
+
+        $byCompanyValues = function (array $byCompany, int $combined) use ($companies) {
+            $values = [];
+            foreach ($companies as $company) {
+                $values[] = CsvExporter::cents($byCompany[$company['id']] ?? 0);
+            }
+            $values[] = CsvExporter::cents($combined);
+
+            return $values;
+        };
+
+        $emit = function (string $section, int $total, ?string $displayName = null) use (&$rows, $r, $lineValues, $byCompanyValues, &$runningByCompany) {
+            $runningByCompany = [];
             $name = $displayName ?? ucfirst($section);
             $rows->push([strtoupper($name)]);
             foreach ($r[$section] as $group) {
@@ -76,31 +105,45 @@ new #[Title('Combined Balance Sheet')] class extends Component {
                     if ($block['type'] === 'section') {
                         $rows->push(['', '', $block['name']]);
                     }
+                    $blockByCompany = [];
                     foreach ($block['rows'] as $line) {
-                        $name = ($block['type'] === 'section' ? '    ' : '').$line['name'];
-                        $rows->push(['', '', $name, CsvExporter::cents($line['balance'])]);
+                        $lineName = ($block['type'] === 'section' ? '    ' : '').$line['name'];
+                        $rows->push(array_merge(['', '', $lineName], $lineValues($line)));
                     }
                     if ($block['type'] === 'section') {
-                        $rows->push(['', '', 'Total '.$block['name'], CsvExporter::cents($block['subtotal'])]);
+                        $rows->push(array_merge(['', '', 'Total '.$block['name']], $byCompanyValues($runningByCompany, $block['subtotal'])));
                     }
                 }
             }
-            $rows->push(['', 'Total '.$name, '', CsvExporter::cents($total)]);
+            $rows->push(array_merge(['', 'Total '.$name, ''], $byCompanyValues($runningByCompany, $total)));
             $rows->push(['']);
+
+            return $runningByCompany;
         };
 
-        $emit('assets', $r['total_assets']);
-        $emit('liabilities', $r['total_liabilities']);
-        $emit('equity', $r['total_equity'], $this->labels->equityShort());
+        $assetsByCompany = $emit('assets', $r['total_assets']);
+        $liabilitiesByCompany = $emit('liabilities', $r['total_liabilities']);
+        $equityByCompany = $emit('equity', $r['total_equity'], $this->labels->equityShort());
+
         if ($r['retained_earnings_prior'] !== 0) {
-            $rows->push(['', $this->labels->retainedEarningsPriorRow(), '', CsvExporter::cents($r['retained_earnings_prior'])]);
+            $rows->push(array_merge(['', $this->labels->retainedEarningsPriorRow(), ''], $byCompanyValues($r['retained_earnings_prior_by_company'] ?? [], $r['retained_earnings_prior'])));
         }
-        $rows->push(['', $this->labels->netIncomeYtd(), '', CsvExporter::cents($r['net_income_ytd'])]);
-        $rows->push(['', strtoupper($this->labels->totalLiabilitiesAndEquity()), '', CsvExporter::cents($r['total_le'])]);
+        $rows->push(array_merge(['', $this->labels->netIncomeYtd(), ''], $byCompanyValues($r['net_income_ytd_by_company'] ?? [], $r['net_income_ytd'])));
+
+        $totalLeByCompany = [];
+        foreach ($companies as $company) {
+            $totalLeByCompany[$company['id']] = ($liabilitiesByCompany[$company['id']] ?? 0)
+                + ($equityByCompany[$company['id']] ?? 0)
+                + ($r['retained_earnings_prior_by_company'][$company['id']] ?? 0)
+                + ($r['net_income_ytd_by_company'][$company['id']] ?? 0);
+        }
+        $rows->push(array_merge(['', strtoupper($this->labels->totalLiabilitiesAndEquity()), ''], $byCompanyValues($totalLeByCompany, $r['total_le'])));
+
+        $header = array_merge(['Section', 'Subtype', 'Line'], collect($companies)->pluck('name')->all(), ['Combined']);
 
         return app(CsvExporter::class)->stream(
             "combined-balance-sheet-{$this->asOf}.csv",
-            ['Section', 'Subtype', 'Line', 'Amount'],
+            $header,
             $rows,
         );
     }
@@ -123,6 +166,8 @@ new #[Title('Combined Balance Sheet')] class extends Component {
             'report' => $this->report,
             'asOf' => $this->asOf,
             'labels' => $this->labels,
+            'byCompany' => $this->byCompany,
+            'companies' => $this->byCompany ? $this->report['companies'] : [],
         ], "combined-balance-sheet-{$this->asOf}.pdf");
     }
 }; ?>
