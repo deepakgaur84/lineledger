@@ -55,6 +55,14 @@ jobs:
           done
 
       - name: Commit and push if anything changed
+        # Retries on a rejected push: this workflow's own concurrency guard
+        # only serializes overlapping runs of ITSELF — it can't stop a
+        # direct human commit (or anything else) landing on main in the
+        # narrow window between this job's checkout and its own push. That
+        # produces a normal, expected "fetch first" rejection, not a real
+        # conflict — our change and theirs are almost always to different
+        # files. Rebase onto whatever's new and try again, a few times,
+        # before actually giving up.
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -65,7 +73,19 @@ jobs:
           fi
           git add -A
           git commit -m "Reapply fork patches after upstream sync"
-          git push origin main
+
+          for attempt in 1 2 3 4 5; do
+            if git push origin main; then
+              exit 0
+            fi
+            echo "Push rejected (attempt ${attempt}/5) — something else pushed to main first. Rebasing and retrying..."
+            git fetch origin main
+            git rebase origin/main
+            sleep 2
+          done
+
+          echo "::error::Failed to push after 5 attempts — main is moving too fast for this job to keep up, or there's a genuine conflict this rebase couldn't resolve. Manual push needed."
+          exit 1
 
       - name: Warn if this push also touched a patched file
         # Runs after the reapply above already committed and pushed — the
