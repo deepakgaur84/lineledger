@@ -15,6 +15,7 @@ use App\Models\Company;
 use App\Models\ReportSection;
 use App\Services\Reporting\CsvExporter;
 use App\Services\Reporting\PdfExporter;
+use App\Services\Currency\ExchangeRateService;
 use App\Services\Reporting\ReportCalculator;
 use App\Services\Reporting\XlsxExporter;
 use App\Support\Reporting\ComparisonPeriod;
@@ -260,51 +261,84 @@ new #[Title('Balance Sheet')] class extends Component {
     }
 
     /**
-     * Every foreign-currency account row appearing anywhere in the report,
-     * in the order they appear, numbered for the superscript markers next
-     * to each account name and the footnote list at the bottom of the
-     * page. Keyed by account id for O(1) lookup from bs-subtype.blade.php.
+     * Every foreign-currency account row with a genuine non-zero foreign
+     * balance, grouped by currency — one shared superscript number and one
+     * real rate per currency, not one per account. Two currency accounts
+     * almost always show the SAME rate on the same date, so numbering them
+     * separately just repeats the same disclosure; worse, this page used to
+     * derive "rate" from each account's own accumulated book value
+     * (home_balance ÷ foreign_balance), which can genuinely differ between
+     * two accounts holding the same currency if their transaction history
+     * differs — confusing, and not what a reader means by "the rate."
      *
-     * The displayed "rate" is the balance's own effective rate
-     * (home_balance / foreign_balance) — what the numbers on THIS page
-     * actually imply — not a freshly re-fetched live rate, which could
-     * disagree with the displayed balance and make the page look
-     * internally inconsistent.
+     * The rate itself now comes from the same ExchangeRateService::rateFor()
+     * revaluation uses, as of this report's date — the real market/company
+     * rate, not a figure backed into matching the displayed balance.
      *
-     * @return array<int, array{number: int, code: string, name: string, currency_code: string, foreign_balance: int, home_balance: int, rate: ?float}>
+     * An account whose foreign balance has genuinely netted to zero (e.g.
+     * fully paid down) is excluded entirely — its currency_code being set
+     * doesn't mean there's anything left to disclose about it.
+     *
+     * @return array{by_account: array<int, array{number: int, currency_code: string, foreign_balance: int}>, by_currency: array<int, array{number: int, currency_code: string, rate: ?float, accounts: array<int, array{code: string, name: string, foreign_balance: int, home_balance: int}>}>}
      */
     #[Computed]
     public function foreignAccountFootnotes(): array
     {
-        $footnotes = [];
-        $number = 0;
+        $rowsByCurrency = [];
 
         foreach (['assets', 'liabilities', 'equity'] as $bucket) {
             foreach ($this->report[$bucket] ?? [] as $group) {
                 foreach ($group['blocks'] ?? [] as $block) {
                     foreach ($block['rows'] ?? [] as $row) {
-                        if (($row['currency_code'] ?? null) === null || empty($row['id'])) {
+                        if (($row['currency_code'] ?? null) === null || empty($row['id']) || ($row['foreign_balance'] ?? 0) === 0) {
                             continue;
                         }
 
-                        $number++;
-                        $footnotes[$row['id']] = [
-                            'number' => $number,
-                            'code' => $row['code'],
-                            'name' => $row['name'],
-                            'currency_code' => $row['currency_code'],
-                            'foreign_balance' => $row['foreign_balance'],
-                            'home_balance' => $row['balance'],
-                            'rate' => $row['foreign_balance'] !== 0
-                                ? $row['balance'] / $row['foreign_balance']
-                                : null,
-                        ];
+                        $rowsByCurrency[$row['currency_code']][] = $row;
                     }
                 }
             }
         }
 
-        return $footnotes;
+        $byAccount = [];
+        $byCurrency = [];
+        $number = 0;
+        $asOf = CarbonImmutable::parse($this->asOf);
+
+        foreach ($rowsByCurrency as $currencyCode => $rows) {
+            $number++;
+
+            try {
+                $rate = (float) app(ExchangeRateService::class)->rateFor($this->company, $currencyCode, $asOf);
+            } catch (\Throwable) {
+                // No rate available for this date — still list the accounts
+                // and their balances, just without a rate figure, rather
+                // than break the whole report over a missing exchange rate.
+                $rate = null;
+            }
+
+            $byCurrency[$number] = [
+                'number' => $number,
+                'currency_code' => $currencyCode,
+                'rate' => $rate,
+                'accounts' => array_map(fn (array $row): array => [
+                    'code' => $row['code'],
+                    'name' => $row['name'],
+                    'foreign_balance' => $row['foreign_balance'],
+                    'home_balance' => $row['balance'],
+                ], $rows),
+            ];
+
+            foreach ($rows as $row) {
+                $byAccount[$row['id']] = [
+                    'number' => $number,
+                    'currency_code' => $currencyCode,
+                    'foreign_balance' => $row['foreign_balance'],
+                ];
+            }
+        }
+
+        return ['by_account' => $byAccount, 'by_currency' => $byCurrency];
     }
 
     /**
@@ -420,7 +454,8 @@ new #[Title('Balance Sheet')] class extends Component {
             'labels' => $this->labels,
             'fmt' => $this->numberFormat,
             'notes' => $this->reportNotes,
-            'fcFootnotes' => $this->foreignAccountFootnotes(),
+            'fcFootnotes' => $this->foreignAccountFootnotes()['by_account'],
+            'fcFootnotesByCurrency' => $this->foreignAccountFootnotes()['by_currency'],
         ], "balance-sheet-{$this->asOf}.pdf");
     }
 }; ?>
@@ -491,7 +526,7 @@ new #[Title('Balance Sheet')] class extends Component {
                         </table>
                     @endif
                     @forelse ($sec['groups'] as $group)
-                        @include('partials.reports.bs-subtype', ['group' => $group, 'footnotes' => $this->foreignAccountFootnotes()])
+                        @include('partials.reports.bs-subtype', ['group' => $group, 'footnotes' => $this->foreignAccountFootnotes()['by_account']])
                     @empty
                         <flux:text class="text-muted-foreground">{{ __('No accounts.') }}</flux:text>
                     @endforelse
@@ -534,7 +569,7 @@ new #[Title('Balance Sheet')] class extends Component {
                     </table>
                 @endif
                 @foreach ($this->report['equity'] as $group)
-                    @include('partials.reports.bs-subtype', ['group' => $group, 'footnotes' => $this->foreignAccountFootnotes()])
+                    @include('partials.reports.bs-subtype', ['group' => $group, 'footnotes' => $this->foreignAccountFootnotes()['by_account']])
                 @endforeach
 
                 <div class="mt-3 border-t border-border pt-2">
@@ -575,17 +610,22 @@ new #[Title('Balance Sheet')] class extends Component {
         </div>
     </div>
 
-    @if ($this->foreignAccountFootnotes() !== [])
+    @if ($this->foreignAccountFootnotes()['by_currency'] !== [])
         <div class="mt-4 space-y-1 text-xs text-muted-foreground" data-test="fc-footnotes">
-            @foreach ($this->foreignAccountFootnotes() as $footnote)
+            @foreach ($this->foreignAccountFootnotes()['by_currency'] as $footnote)
                 <div data-test="fc-footnote">
                     <sup>{{ $footnote['number'] }}</sup>
-                    {{ $footnote['code'] }} — {{ $footnote['name'] }}:
-                    {{ $footnote['currency_code'] }} {{ number_format($footnote['foreign_balance'] / 100, 2) }}
+                    {{ $footnote['currency_code'] }}
                     @if ($footnote['rate'] !== null)
-                        {{ __('at') }} {{ number_format($footnote['rate'], 4) }}
+                        ({{ __('rate') }} {{ number_format($footnote['rate'], 4) }} {{ __('as of') }} {{ $this->asOf }}):
+                    @else
+                        ({{ __('rate unavailable for this date') }}):
                     @endif
-                    = {{ number_format($footnote['home_balance'] / 100, 2) }} {{ $this->company->currency_code ?? 'NZD' }}
+                    @foreach ($footnote['accounts'] as $i => $account)
+                        {{ $i > 0 ? ', ' : '' }}{{ $account['code'] }} — {{ $account['name'] }}
+                        ({{ $footnote['currency_code'] }} {{ number_format($account['foreign_balance'] / 100, 2) }}
+                        = {{ number_format($account['home_balance'] / 100, 2) }} {{ $this->company->currency_code ?? 'NZD' }})
+                    @endforeach
                 </div>
             @endforeach
         </div>
