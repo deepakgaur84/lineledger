@@ -74,43 +74,70 @@ new #[Title('Combined Cash Flow Statement')] class extends Component {
     {
         $r = $this->report;
         $rows = collect();
+        $companies = $this->byCompany ? $r['companies'] : [];
         $cents = fn (int $c): string => CsvExporter::cents($c);
 
-        $activity = function (string $key, string $label, int $total) use (&$rows, $r, $cents): void {
+        $byCompanyValues = function (array $byCompany, int $combined) use ($companies, $cents) {
+            $values = [];
+            foreach ($companies as $company) {
+                $values[] = $cents($byCompany[$company['id']] ?? 0);
+            }
+            $values[] = $cents($combined);
+
+            return $values;
+        };
+
+        $lineValues = function (array $line) use ($companies, $cents) {
+            $values = [];
+            foreach ($companies as $company) {
+                $values[] = $cents($line['by_company'][$company['id']] ?? 0);
+            }
+            $values[] = $cents($line['current']);
+
+            return $values;
+        };
+
+        $activity = function (string $key, string $label, int $total, array $totalByCompany) use (&$rows, $r, $lineValues, $byCompanyValues, $companies, $cents): void {
             $rows->push([strtoupper($label)]);
 
             if ($key === 'operating') {
-                $rows->push(['', 'Net income', $cents($r['net_income'])]);
+                $rows->push(array_merge(['', 'Net income'], $byCompanyValues($r['net_income_by_company'] ?? [], $r['net_income'])));
             }
 
             foreach ($r[$key] as $block) {
                 if ($block['type'] === 'section') {
                     $rows->push(['', $block['name']]);
                 }
+                $blockByCompany = [];
                 foreach ($block['rows'] as $line) {
                     $name = ($block['type'] === 'section' ? '    ' : '').$line['name'];
-                    $rows->push(['', $name, $cents($line['current'])]);
+                    foreach ($companies as $company) {
+                        $blockByCompany[$company['id']] = ($blockByCompany[$company['id']] ?? 0) + ($line['by_company'][$company['id']] ?? 0);
+                    }
+                    $rows->push(array_merge(['', $name], $lineValues($line)));
                 }
                 if ($block['type'] === 'section') {
-                    $rows->push(['', 'Total '.$block['name'], $cents($block['subtotal'])]);
+                    $rows->push(array_merge(['', 'Total '.$block['name']], $byCompanyValues($blockByCompany, $block['subtotal'])));
                 }
             }
 
-            $rows->push(['Total '.$label, '', $cents($total)]);
+            $rows->push(array_merge(['Total '.$label, ''], $byCompanyValues($totalByCompany, $total)));
             $rows->push(['']);
         };
 
-        $activity('operating', 'Operating Activities', $r['total_operating']);
-        $activity('investing', 'Investing Activities', $r['total_investing']);
-        $activity('financing', 'Financing Activities', $r['total_financing']);
+        $activity('operating', 'Operating Activities', $r['total_operating'], $r['total_operating_by_company'] ?? []);
+        $activity('investing', 'Investing Activities', $r['total_investing'], $r['total_investing_by_company'] ?? []);
+        $activity('financing', 'Financing Activities', $r['total_financing'], $r['total_financing_by_company'] ?? []);
 
-        $rows->push(['NET CHANGE IN CASH', '', $cents($r['net_change'])]);
-        $rows->push(['Cash at beginning of period', '', $cents($r['cash_beginning'])]);
-        $rows->push(['Cash at end of period', '', $cents($r['cash_ending'])]);
+        $rows->push(array_merge(['NET CHANGE IN CASH', ''], $byCompanyValues($r['net_change_by_company'] ?? [], $r['net_change'])));
+        $rows->push(array_merge(['Cash at beginning of period', ''], $byCompanyValues($r['cash_beginning_by_company'] ?? [], $r['cash_beginning'])));
+        $rows->push(array_merge(['Cash at end of period', ''], $byCompanyValues($r['cash_ending_by_company'] ?? [], $r['cash_ending'])));
+
+        $header = array_merge(['Section', 'Line'], collect($companies)->pluck('name')->all(), ['Combined']);
 
         return app(CsvExporter::class)->stream(
             "combined-cash-flow-{$this->startDate}-{$this->endDate}.csv",
-            ['Section', 'Line', 'Amount'],
+            $header,
             $rows,
         );
     }
@@ -134,6 +161,8 @@ new #[Title('Combined Cash Flow Statement')] class extends Component {
             'report' => $this->report,
             'startDate' => $this->startDate,
             'endDate' => $this->endDate,
+            'byCompany' => $this->byCompany,
+            'companies' => $this->byCompany ? $this->report['companies'] : [],
         ], "combined-cash-flow-{$this->startDate}-{$this->endDate}.pdf");
     }
 }; ?>
