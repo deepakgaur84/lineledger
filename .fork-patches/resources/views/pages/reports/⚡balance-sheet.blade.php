@@ -358,8 +358,8 @@ new #[Title('Balance Sheet')] class extends Component {
         $rows = collect();
 
         $headers = $this->showComparison
-            ? ['Section', 'Subtype', 'Account', 'Current', 'Prior', 'Change', '% Change']
-            : ['Section', 'Subtype', 'Account', 'Amount'];
+            ? ['Section', 'Subtype', 'Account', 'Current', 'FC Currency', 'FC Amount', 'Prior', 'Change', '% Change']
+            : ['Section', 'Subtype', 'Account', 'Amount', 'FC Currency', 'FC Amount'];
 
         $chg = fn (int $c, int $p): string => CsvExporter::cents($c - $p);
         $pct = fn (int $c, int $p): string => $p !== 0 ? number_format(($c - $p) / abs($p) * 100, 1).'%' : '';
@@ -376,7 +376,12 @@ new #[Title('Balance Sheet')] class extends Component {
                     }
                     foreach ($block['rows'] as $a) {
                         $label = ($block['type'] === 'section' ? '    ' : '').$a['code'].' — '.$a['name'];
-                        $row = ['', '', $label, CsvExporter::cents($a['balance'])];
+                        $hasFc = ($a['currency_code'] ?? null) !== null && ($a['foreign_balance'] ?? 0) !== 0;
+                        $row = [
+                            '', '', $label, CsvExporter::cents($a['balance']),
+                            $hasFc ? $a['currency_code'] : '',
+                            $hasFc ? CsvExporter::cents($a['foreign_balance']) : '',
+                        ];
                         if ($this->showComparison) {
                             $row[] = CsvExporter::cents($a['prior']);
                             $row[] = $chg($a['balance'], $a['prior']);
@@ -385,7 +390,7 @@ new #[Title('Balance Sheet')] class extends Component {
                         $rows->push($row);
                     }
                     if ($block['type'] === 'section') {
-                        $sub = ['', '', 'Total '.$block['name'], CsvExporter::cents($block['subtotal'])];
+                        $sub = ['', '', 'Total '.$block['name'], CsvExporter::cents($block['subtotal']), '', ''];
                         if ($this->showComparison) {
                             $sub[] = CsvExporter::cents($block['prior_subtotal']);
                             $sub[] = $chg($block['subtotal'], $block['prior_subtotal']);
@@ -396,7 +401,7 @@ new #[Title('Balance Sheet')] class extends Component {
                 }
             }
 
-            $totalRow = ['', 'Total '.$name, '', CsvExporter::cents($sectionTotal)];
+            $totalRow = ['', 'Total '.$name, '', CsvExporter::cents($sectionTotal), '', ''];
             if ($this->showComparison) {
                 $totalRow[] = CsvExporter::cents($priorSectionTotal);
                 $totalRow[] = $chg($sectionTotal, $priorSectionTotal);
@@ -410,8 +415,8 @@ new #[Title('Balance Sheet')] class extends Component {
         $emit('liabilities', $r['total_liabilities'], $r['prior_total_liabilities']);
         $emit('equity', $r['total_equity'], $r['prior_total_equity'], $this->labels->equityShort());
 
-        $niRow = ['', $this->labels->netIncomeYtd(), '', CsvExporter::cents($r['net_income_ytd'])];
-        $leRow = ['', strtoupper($this->labels->totalLiabilitiesAndEquity()), '', CsvExporter::cents($r['total_le'])];
+        $niRow = ['', $this->labels->netIncomeYtd(), '', CsvExporter::cents($r['net_income_ytd']), '', ''];
+        $leRow = ['', strtoupper($this->labels->totalLiabilitiesAndEquity()), '', CsvExporter::cents($r['total_le']), '', ''];
         if ($this->showComparison) {
             $niRow[] = CsvExporter::cents($r['prior_net_income_ytd']);
             $niRow[] = $chg($r['net_income_ytd'], $r['prior_net_income_ytd']);
@@ -422,6 +427,21 @@ new #[Title('Balance Sheet')] class extends Component {
         }
         $rows->push($niRow);
         $rows->push($leRow);
+
+        $footnotesByCurrency = $this->foreignAccountFootnotes()['by_currency'];
+        if ($footnotesByCurrency !== []) {
+            $rows->push(['']);
+            $rows->push(['FX RATES USED']);
+            foreach ($footnotesByCurrency as $footnote) {
+                $accountNames = collect($footnote['accounts'])->map(fn ($acc) => $acc['code'].' — '.$acc['name'])->implode('; ');
+                $rows->push([
+                    '',
+                    $footnote['currency_code'],
+                    $footnote['rate'] !== null ? number_format($footnote['rate'], 4) : 'unavailable for this date',
+                    $accountNames,
+                ]);
+            }
+        }
 
         return app(CsvExporter::class)->stream(
             "balance-sheet-{$this->asOf}.csv",
@@ -439,6 +459,7 @@ new #[Title('Balance Sheet')] class extends Component {
             $this->asOf,
             $this->showComparison,
             $this->numberFormat->xlsxMoneyFormat(),
+            $this->foreignAccountFootnotes()['by_currency'],
         );
     }
 
