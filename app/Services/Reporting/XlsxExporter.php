@@ -341,12 +341,12 @@ class XlsxExporter
      *
      * @param  array<string, mixed>  $report
      */
-    public function balanceSheet(string $filename, Company $company, array $report, string $asOf, bool $showComparison = false, ?string $moneyFormat = null): BinaryFileResponse
+    public function balanceSheet(string $filename, Company $company, array $report, string $asOf, bool $showComparison = false, ?string $moneyFormat = null, array $fxFootnotesByCurrency = []): BinaryFileResponse
     {
         $money = $moneyFormat ?? self::MONEY_FORMAT;
         $labels = StatementLabels::for($company);
 
-        return $this->buildAndStream($filename, function (Writer $writer) use ($company, $report, $asOf, $showComparison, $money, $labels) {
+        return $this->buildAndStream($filename, function (Writer $writer) use ($company, $report, $asOf, $showComparison, $money, $labels, $fxFootnotesByCurrency) {
             $sheet = $writer->getCurrentSheet();
             $sheet->setName('Balance Sheet');
 
@@ -354,18 +354,20 @@ class XlsxExporter
             $sheet->setColumnWidth(28, 2);  // Subtype
             $sheet->setColumnWidth(40, 3);  // Account
             $sheet->setColumnWidth(16, 4);  // Amount / Current
+            $sheet->setColumnWidth(12, 5);  // FC Currency
+            $sheet->setColumnWidth(16, 6);  // FC Amount
             if ($showComparison) {
-                $sheet->setColumnWidth(16, 5);  // Prior
+                $sheet->setColumnWidth(16, 7);  // Prior
             }
 
-            $totalColumns = $showComparison ? 5 : 4;
+            $totalColumns = $showComparison ? 7 : 6;
             $headerRowsUsed = $this->writeReportHeader($writer, 'Balance Sheet', $company->name, [
                 'As of '.$asOf,
             ], totalColumns: $totalColumns);
 
             $columnHeaders = $showComparison
-                ? ['Section', 'Subtype', 'Account', 'Current', 'Prior']
-                : ['Section', 'Subtype', 'Account', 'Amount'];
+                ? ['Section', 'Subtype', 'Account', 'Current', 'FC Currency', 'FC Amount', 'Prior']
+                : ['Section', 'Subtype', 'Account', 'Amount', 'FC Currency', 'FC Amount'];
 
             $writer->addRow(Row::fromValuesWithStyle(
                 $columnHeaders,
@@ -386,6 +388,8 @@ class XlsxExporter
                     Cell::fromValue('', $sectionStyle),
                     Cell::fromValue('', $sectionStyle),
                     Cell::fromValue('', $sectionStyle),
+                    Cell::fromValue('', $sectionStyle),
+                    Cell::fromValue('', $sectionStyle),
                 ];
                 if ($showComparison) {
                     $sectionHeaderCells[] = Cell::fromValue('', $sectionStyle);
@@ -399,6 +403,8 @@ class XlsxExporter
                     $subtypeCells = [
                         Cell::fromValue(''),
                         $this->text($group['label'], $subtypeStyle),
+                        Cell::fromValue(''),
+                        Cell::fromValue(''),
                         Cell::fromValue(''),
                         Cell::fromValue(''),
                     ];
@@ -415,6 +421,8 @@ class XlsxExporter
                                 Cell::fromValue(''),
                                 $this->text($block['name'], $subtypeStyle),
                                 Cell::fromValue(''),
+                                Cell::fromValue(''),
+                                Cell::fromValue(''),
                             ];
                             if ($showComparison) {
                                 $subHeader[] = Cell::fromValue('');
@@ -427,11 +435,14 @@ class XlsxExporter
                         foreach ($block['rows'] as $a) {
                             $rowIndex++;
                             $accountRows[] = $rowIndex;
+                            $hasFc = ($a['currency_code'] ?? null) !== null && ($a['foreign_balance'] ?? 0) !== 0;
                             $cells = [
                                 Cell::fromValue(''),
                                 Cell::fromValue(''),
                                 $this->text(($block['type'] === 'section' ? '    ' : '').$a['code'].' — '.$a['name']),
                                 Cell::fromValue($a['balance'] / 100, $moneyStyle),
+                                Cell::fromValue($hasFc ? $a['currency_code'] : ''),
+                                $hasFc ? Cell::fromValue($a['foreign_balance'] / 100, $moneyStyle) : Cell::fromValue(''),
                             ];
                             if ($showComparison) {
                                 $cells[] = Cell::fromValue($a['prior'] / 100, $moneyStyle);
@@ -448,9 +459,11 @@ class XlsxExporter
                                 Cell::fromValue('', $subtypeStyle),
                                 $this->text('Total '.$block['name'], $subtypeStyle),
                                 Cell::fromValue($this->sumFormula('D', $blockFirst, $blockLast), $this->makeStyle(italic: true, fontColor: '6B7280', format: $money)),
+                                Cell::fromValue('', $subtypeStyle),
+                                Cell::fromValue('', $subtypeStyle),
                             ];
                             if ($showComparison) {
-                                $subCells[] = Cell::fromValue($this->sumFormula('E', $blockFirst, $blockLast), $this->makeStyle(italic: true, fontColor: '6B7280', format: $money));
+                                $subCells[] = Cell::fromValue($this->sumFormula('G', $blockFirst, $blockLast), $this->makeStyle(italic: true, fontColor: '6B7280', format: $money));
                             }
                             $writer->addRow(new Row($subCells));
                         }
@@ -471,10 +484,12 @@ class XlsxExporter
                     Cell::fromValue('', $totalBlank),
                     Cell::fromValue('Total '.$title, $totalLabel),
                     Cell::fromValue($formula, $totalMoney),
+                    Cell::fromValue('', $totalBlank),
+                    Cell::fromValue('', $totalBlank),
                 ];
                 if ($showComparison) {
                     $priorFormula = $accountRows !== []
-                        ? '='.implode('+', array_map(fn ($r) => 'E'.$r, $accountRows))
+                        ? '='.implode('+', array_map(fn ($r) => 'G'.$r, $accountRows))
                         : ($priorFallbackTotal / 100);
                     $totalCells[] = Cell::fromValue($priorFormula, $totalMoney);
                 }
@@ -503,6 +518,8 @@ class XlsxExporter
                 Cell::fromValue(''),
                 Cell::fromValue($labels->netIncomeYtd(), $this->makeStyle(italic: true)),
                 Cell::fromValue($report['net_income_ytd'] / 100, $moneyStyle),
+                Cell::fromValue(''),
+                Cell::fromValue(''),
             ];
             if ($showComparison) {
                 $niCells[] = Cell::fromValue(($report['prior_net_income_ytd'] ?? 0) / 100, $moneyStyle);
@@ -520,11 +537,30 @@ class XlsxExporter
                 Cell::fromValue('', $totalLEBlank),
                 Cell::fromValue($labels->totalLiabilitiesAndEquity(), $totalLELabel),
                 Cell::fromValue(sprintf('=D%d+D%d+D%d', $liabilitiesTotalRow, $equityTotalRow, $netIncomeRow), $totalLEMoney),
+                Cell::fromValue('', $totalLEBlank),
+                Cell::fromValue('', $totalLEBlank),
             ];
             if ($showComparison) {
-                $totalLECells[] = Cell::fromValue(sprintf('=E%d+E%d+E%d', $liabilitiesTotalRow, $equityTotalRow, $netIncomeRow), $totalLEMoney);
+                $totalLECells[] = Cell::fromValue(sprintf('=G%d+G%d+G%d', $liabilitiesTotalRow, $equityTotalRow, $netIncomeRow), $totalLEMoney);
             }
             $writer->addRow(new Row($totalLECells));
+
+            if ($fxFootnotesByCurrency !== []) {
+                $writer->addRow(Row::fromValues([]));
+                $writer->addRow(Row::fromValuesWithStyle(['FX RATES USED'], $this->makeStyle(bold: true)));
+                foreach ($fxFootnotesByCurrency as $footnote) {
+                    $accountNames = implode('; ', array_map(
+                        fn (array $acc): string => $acc['code'].' — '.$acc['name'],
+                        $footnote['accounts'],
+                    ));
+                    $writer->addRow(Row::fromValues([
+                        '',
+                        $footnote['currency_code'],
+                        $footnote['rate'] !== null ? number_format($footnote['rate'], 4) : 'unavailable for this date',
+                        $accountNames,
+                    ]));
+                }
+            }
         });
     }
 
