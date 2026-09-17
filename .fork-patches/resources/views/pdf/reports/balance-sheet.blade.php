@@ -117,17 +117,23 @@
     </tr>
 </table>
 
-@if ($fcFootnotes !== [])
+@php $fcFootnotesByCurrency ??= []; @endphp
+@if ($fcFootnotesByCurrency !== [])
     <div style="margin-top: 12px; font-size: 8px; color: #6b7280;">
-        @foreach ($fcFootnotes as $footnote)
+        @foreach ($fcFootnotesByCurrency as $footnote)
             <div>
                 <sup>{{ $footnote['number'] }}</sup>
-                {{ $footnote['code'] }} — {{ $footnote['name'] }}:
-                {{ $footnote['currency_code'] }} {{ number_format($footnote['foreign_balance'] / 100, 2) }}
+                {{ $footnote['currency_code'] }}
                 @if ($footnote['rate'] !== null)
-                    at {{ number_format($footnote['rate'], 4) }}
+                    (rate {{ number_format($footnote['rate'], 4) }} as of {{ $asOf }}):
+                @else
+                    (rate unavailable for this date):
                 @endif
-                = {{ number_format($footnote['home_balance'] / 100, 2) }} {{ $company->currency_code ?? 'NZD' }}
+                @foreach ($footnote['accounts'] as $i => $account)
+                    {{ $i > 0 ? ', ' : '' }}{{ $account['code'] }} — {{ $account['name'] }}
+                    ({{ $footnote['currency_code'] }} {{ number_format($account['foreign_balance'] / 100, 2) }}
+                    = {{ number_format($account['home_balance'] / 100, 2) }} {{ $company->currency_code ?? 'NZD' }})
+                @endforeach
             </div>
         @endforeach
     </div>
