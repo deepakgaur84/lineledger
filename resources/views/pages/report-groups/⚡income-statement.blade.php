@@ -71,37 +71,76 @@ new #[Title('Combined Income Statement')] class extends Component {
     {
         $r = $this->report;
         $rows = collect();
+        $companies = $this->byCompany ? $r['companies'] : [];
 
-        $emit = function (string $section, array $blocks, int $total) use (&$rows) {
+        $lineValues = function (array $line) use ($companies, &$runningByCompany) {
+            $values = [];
+            foreach ($companies as $company) {
+                $amount = $line['by_company'][$company['id']] ?? 0;
+                $runningByCompany[$company['id']] = ($runningByCompany[$company['id']] ?? 0) + $amount;
+                $values[] = CsvExporter::cents($amount);
+            }
+            $values[] = CsvExporter::cents($line['current']);
+
+            return $values;
+        };
+
+        $byCompanyValues = function (array $byCompany, int $combined) use ($companies) {
+            $values = [];
+            foreach ($companies as $company) {
+                $values[] = CsvExporter::cents($byCompany[$company['id']] ?? 0);
+            }
+            $values[] = CsvExporter::cents($combined);
+
+            return $values;
+        };
+
+        $emit = function (string $section, array $blocks, int $total) use (&$rows, $lineValues, $byCompanyValues, &$runningByCompany) {
+            $runningByCompany = [];
             $rows->push([strtoupper($section)]);
             foreach ($blocks as $block) {
                 if ($block['type'] === 'section') {
                     $rows->push(['', $block['name']]);
                 }
+                $blockByCompany = [];
                 foreach ($block['rows'] as $line) {
                     $name = ($block['type'] === 'section' ? '    ' : '').$line['name'];
-                    $rows->push(['', $name, CsvExporter::cents($line['current'])]);
+                    $rows->push(array_merge(['', $name], $lineValues($line)));
                 }
                 if ($block['type'] === 'section') {
-                    $rows->push(['', 'Total '.$block['name'], CsvExporter::cents($block['subtotal'])]);
+                    $rows->push(array_merge(['', 'Total '.$block['name']], $byCompanyValues($runningByCompany, $block['subtotal'])));
                 }
             }
-            $rows->push(['Total '.ucfirst($section), '', CsvExporter::cents($total)]);
+            $rows->push(array_merge(['Total '.ucfirst($section), ''], $byCompanyValues($runningByCompany, $total)));
             $rows->push(['']);
+
+            return $runningByCompany;
         };
 
-        $emit('income', $r['income'], $r['total_income']);
+        $incomeByCompany = $emit('income', $r['income'], $r['total_income']);
+        $cogsByCompany = [];
         if (! empty($r['cogs'])) {
-            $emit('cost of goods sold', $r['cogs'], $r['total_cogs']);
-            $rows->push([$this->labels->grossProfit(), '', CsvExporter::cents($r['gross_profit'])]);
+            $cogsByCompany = $emit('cost of goods sold', $r['cogs'], $r['total_cogs']);
+            $grossProfitByCompany = [];
+            foreach ($companies as $company) {
+                $grossProfitByCompany[$company['id']] = ($incomeByCompany[$company['id']] ?? 0) - ($cogsByCompany[$company['id']] ?? 0);
+            }
+            $rows->push(array_merge([$this->labels->grossProfit(), ''], $byCompanyValues($grossProfitByCompany, $r['gross_profit'])));
             $rows->push(['']);
         }
-        $emit('expense', $r['expense'], $r['total_expense']);
-        $rows->push([strtoupper($this->labels->netIncome()), '', CsvExporter::cents($r['net_income'])]);
+        $expenseByCompany = $emit('expense', $r['expense'], $r['total_expense']);
+
+        $netIncomeByCompany = [];
+        foreach ($companies as $company) {
+            $netIncomeByCompany[$company['id']] = ($incomeByCompany[$company['id']] ?? 0) - ($cogsByCompany[$company['id']] ?? 0) - ($expenseByCompany[$company['id']] ?? 0);
+        }
+        $rows->push(array_merge([strtoupper($this->labels->netIncome()), ''], $byCompanyValues($netIncomeByCompany, $r['net_income'])));
+
+        $header = array_merge(['Section', 'Line'], collect($companies)->pluck('name')->all(), ['Combined']);
 
         return app(CsvExporter::class)->stream(
             "combined-income-statement-{$this->startDate}-{$this->endDate}.csv",
-            ['Section', 'Line', 'Amount'],
+            $header,
             $rows,
         );
     }
@@ -126,6 +165,8 @@ new #[Title('Combined Income Statement')] class extends Component {
             'startDate' => $this->startDate,
             'endDate' => $this->endDate,
             'labels' => $this->labels,
+            'byCompany' => $this->byCompany,
+            'companies' => $this->byCompany ? $this->report['companies'] : [],
         ], "combined-income-statement-{$this->startDate}-{$this->endDate}.pdf");
     }
 }; ?>
