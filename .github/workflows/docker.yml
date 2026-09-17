@@ -62,12 +62,13 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Deliberately no cache-from/cache-to: this repo saw several
-          # incidents where a genuinely changed file didn't seem to show up
-          # in the published :edge image despite a green build. The GHA
-          # remote cache backend is the one remaining source of doubt we
-          # couldn't fully rule out (versus the concurrency race above,
-          # which was confirmed and fixed). Every build now compiles from
-          # scratch — slower, but removes that class of uncertainty
-          # entirely. Revisit if build times become a real problem.
-          no-cache: true
+          # Re-enabled after a period running fully uncached (no-cache: true):
+          # that was a precaution against a suspected cache-staleness issue,
+          # but the actual, confirmed cause of every "green build, stale
+          # image" incident traced back to was the concurrency race above
+          # (fixed with the concurrency block), never a proven cache bug —
+          # the uncached period never definitively caught one either. Given
+          # every build was running several minutes slower as a result,
+          # caching is worth it now that the real cause is closed off.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
