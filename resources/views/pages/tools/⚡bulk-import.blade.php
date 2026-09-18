@@ -226,6 +226,18 @@ new #[Title('Bulk Import')] class extends Component {
         </flux:subheading>
     </div>
 
+    <flux:card class="flex items-center justify-between gap-4">
+        <div>
+            <flux:heading size="sm">{{ __('Importing bank transactions?') }}</flux:heading>
+            <flux:subheading>
+                {{ __('Cheques, deposits, and transfers are better handled from your actual bank statement — it matches against your books, pays open bills, splits out tax, and pairs transfers automatically.') }}
+            </flux:subheading>
+        </div>
+        <flux:button :href="route('banking.import', ['company' => $company->slug])" wire:navigate variant="ghost" icon:trailing="arrow-up-right">
+            {{ __('Import a bank statement') }}
+        </flux:button>
+    </flux:card>
+
     <flux:card class="space-y-4">
         <flux:select wire:model.live="entityType" :label="__('What are you importing?')">
             @foreach ($this->importers() as $importer)
