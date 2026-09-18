@@ -1,0 +1,37 @@
+name: backup
+
+# Manual only — this exists purely so a complete, downloadable backup can be
+# produced from a browser, with no git installed locally. A git bundle is a
+# single file containing the FULL repository: every branch, every commit,
+# all history — not just a snapshot of the current files (which is all
+# GitHub's own "Download ZIP" button gives you). Restoring FROM a bundle
+# does need git on whatever machine does the restore, but producing and
+# downloading one here needs nothing but a browser.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Every branch and tag, not just main — a shallow, single-branch
+          # checkout would produce an incomplete bundle.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Create a complete git bundle (every branch, every commit)
+        run: git bundle create lineledger-backup.bundle --all
+
+      - name: Upload the bundle as a downloadable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineledger-backup-${{ github.run_id }}
+          path: lineledger-backup.bundle
+          # Artifacts count toward storage quota — a backup only needs to
+          # survive long enough to be downloaded and stored somewhere safe.
+          retention-days: 14
