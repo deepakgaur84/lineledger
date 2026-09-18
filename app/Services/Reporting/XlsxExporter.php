@@ -1194,7 +1194,11 @@ class XlsxExporter
 
                 $rowIndex++;
                 $sectionTotalRows['gross_profit'] = $rowIndex;
-                $this->writeCombinedFormulaRow($writer, $labels->grossProfit(), $valueColumns, fn (string $letter) => sprintf('=%s%d-%s%d', $letter, $sectionTotalRows['income'], $letter, $sectionTotalRows['cogs']), self::SUBHEADER_FILL);
+                $this->writeCombinedFormulaRow($writer, $labels->grossProfit(), $valueColumns, function (string $letter) use ($sectionTotalRows): string {
+                    $incomeExpr = isset($sectionTotalRows['income']) ? $letter.$sectionTotalRows['income'] : '0';
+
+                    return sprintf('=%s-%s%d', $incomeExpr, $letter, $sectionTotalRows['cogs']);
+                }, self::SUBHEADER_FILL);
             }
 
             $rowIndex++;
@@ -1207,9 +1211,23 @@ class XlsxExporter
                 if (isset($sectionTotalRows['gross_profit'])) {
                     $expr = $letter.$sectionTotalRows['gross_profit'];
                 } elseif (isset($sectionTotalRows['cogs'])) {
-                    $expr = sprintf('%s%d-%s%d', $letter, $sectionTotalRows['income'], $letter, $sectionTotalRows['cogs']);
+                    // Only reachable when cogs has rows but income doesn't — an
+                    // unusual combination, but income's own reference still
+                    // needs the same empty-section guard as the plain else
+                    // branch below, or this produces the same invalid "B0"
+                    // (column letter + a missing row number) that the else
+                    // branch guards against.
+                    $incomeExpr = isset($sectionTotalRows['income']) ? $letter.$sectionTotalRows['income'] : '0';
+                    $expr = sprintf('%s-%s%d', $incomeExpr, $letter, $sectionTotalRows['cogs']);
                 } else {
-                    $expr = $letter.($sectionTotalRows['income'] ?? 0);
+                    // income can be empty (Total Income: 0, no line items at
+                    // all) — $sectionTotalRows['income'] is then never set,
+                    // since emitSection() returns early for an empty section
+                    // without writing a total row. The fallback must be the
+                    // literal formula fragment "0", not $letter.0 — that
+                    // produces an invalid reference like "B0" (Excel has no
+                    // row 0), which is exactly the broken formula this fixes.
+                    $expr = isset($sectionTotalRows['income']) ? $letter.$sectionTotalRows['income'] : '0';
                 }
                 if (isset($sectionTotalRows['expense'])) {
                     $expr .= '-'.$letter.$sectionTotalRows['expense'];
