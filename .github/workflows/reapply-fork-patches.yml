@@ -69,12 +69,22 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet; then
+
+          # `git diff --quiet` (no args) only compares already-tracked
+          # files — it is blind to a brand-new file the copy step just
+          # placed at a path that's never been committed before. Staging
+          # everything first and diffing the INDEX against HEAD catches
+          # both modifications and additions. This was a real, confirmed
+          # bug: every genuinely new file introduced via .fork-patches
+          # silently never got committed here, even though the copy step
+          # above placed it correctly — only updates to already-existing
+          # files ever worked.
+          git add -A
+          if git diff --cached --quiet; then
             echo "No changes — sync didn't touch any patched file, or patches already applied."
             echo "pushed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          git add -A
           git commit -m "Reapply fork patches after upstream sync"
 
           for attempt in 1 2 3 4 5; do
