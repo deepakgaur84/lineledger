@@ -2,6 +2,7 @@
 
 namespace App\Services\BulkImport;
 
+use App\Services\BulkImport\Importers\BillImporter;
 use App\Services\BulkImport\Importers\CustomerImporter;
 use App\Services\BulkImport\Importers\ItemCategoryImporter;
 use App\Services\BulkImport\Importers\ItemImporter;
@@ -22,6 +23,7 @@ class BulkImportRegistry
             app(CustomerImporter::class),
             app(ItemCategoryImporter::class),
             app(ItemImporter::class),
+            app(BillImporter::class),
         ];
     }
 
