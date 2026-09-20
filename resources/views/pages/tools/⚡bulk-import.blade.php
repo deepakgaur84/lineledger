@@ -2,6 +2,7 @@
 
 use App\Models\Company;
 use App\Services\BulkImport\BulkImportRegistry;
+use App\Services\BulkImport\GroupedImporterDefinition;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 use Livewire\WithFileUploads;
@@ -15,7 +16,13 @@ new #[Title('Bulk Import')] class extends Component {
 
     public ?\Livewire\Features\SupportFileUploads\TemporaryUploadedFile $upload = null;
 
-    /** @var array<int, array{row: int, status: string, data: array<string, string>, errors: array<int, string>}>|null */
+    /**
+     * For a grouped importer, 'row' is a range like "2–4" and 'raw' is the
+     * group's array of rows rather than a single row — see
+     * validateGroupedUpload().
+     *
+     * @var array<int, array{row: int|string, status: string, data: array<string, string>, errors: array<int, string>, raw: mixed}>|null
+     */
     public ?array $previewRows = null;
 
     public int $validCount = 0;
@@ -63,9 +70,16 @@ new #[Title('Bulk Import')] class extends Component {
         $importer = $this->currentImporter();
         $columns = array_keys($importer->csvColumns());
 
-        return response()->streamDownload(function () use ($columns): void {
+        return response()->streamDownload(function () use ($columns, $importer): void {
             $out = fopen('php://output', 'w');
             fputcsv($out, $columns);
+
+            if ($importer instanceof GroupedImporterDefinition) {
+                foreach ($importer->sampleRows() as $sample) {
+                    fputcsv($out, array_map(fn (string $column): string => $sample[$column] ?? '', $columns));
+                }
+            }
+
             fclose($out);
         }, $importer->key().'-import-template.csv');
     }
@@ -80,6 +94,12 @@ new #[Title('Bulk Import')] class extends Component {
 
         $importer = $this->currentImporter();
         $rows = $this->parseCsv($this->upload->getRealPath(), array_keys($importer->csvColumns()));
+
+        if ($importer instanceof GroupedImporterDefinition) {
+            $this->validateGroupedUpload($importer, $rows);
+
+            return;
+        }
 
         $preview = [];
         $validCount = 0;
@@ -125,9 +145,82 @@ new #[Title('Bulk Import')] class extends Component {
     }
 
     /**
-     * Create every row that passed validation. Invalid rows are skipped
-     * entirely — fix the CSV and re-upload rather than partially patch
-     * a single row here.
+     * The grouped-importer counterpart of the loop above — rows sharing a
+     * groupKey() become one preview entry instead of one entry per row. A
+     * row with no group key (blank bill_no, say) is never silently merged
+     * into a neighbouring group; it's its own singleton group, which
+     * validateGroup() then rejects for that specific, attributable reason.
+     *
+     * @param  array<int, array<string, ?string>>  $rows
+     */
+    private function validateGroupedUpload(GroupedImporterDefinition $importer, array $rows): void
+    {
+        /** @var array<int, array{key: ?string, rowNumbers: array<int, int>, rows: array<int, array<string, ?string>>}> $groups */
+        $groups = [];
+        $groupIndexByKey = [];
+
+        foreach ($rows as $i => $row) {
+            $rowNumber = $i + 2; // +1 for zero-index, +1 for the header row
+            $key = $importer->groupKey($row);
+
+            if ($key === null) {
+                $groups[] = ['key' => null, 'rowNumbers' => [$rowNumber], 'rows' => [$row]];
+
+                continue;
+            }
+
+            if (! isset($groupIndexByKey[$key])) {
+                $groupIndexByKey[$key] = count($groups);
+                $groups[] = ['key' => $key, 'rowNumbers' => [], 'rows' => []];
+            }
+
+            $idx = $groupIndexByKey[$key];
+            $groups[$idx]['rowNumbers'][] = $rowNumber;
+            $groups[$idx]['rows'][] = $row;
+        }
+
+        $preview = [];
+        $validCount = 0;
+        $invalidCount = 0;
+
+        foreach ($groups as $group) {
+            if ($group['key'] === null) {
+                $errors = [__('This row has no value to group it into a document — every row needs one (e.g. a bill number).')];
+            } else {
+                $errors = $importer->validateGroup($group['rows'], $this->company);
+            }
+
+            $isValid = $errors === [];
+            $isValid ? $validCount++ : $invalidCount++;
+
+            $preview[] = [
+                'row' => $this->formatRowRange($group['rowNumbers']),
+                'status' => $isValid ? 'valid' : 'invalid',
+                'data' => $isValid ? $importer->summarizeGroup($group['rows'], $this->company) : [],
+                'errors' => $errors,
+                'raw' => $group['rows'],
+            ];
+        }
+
+        $this->previewRows = $preview;
+        $this->validCount = $validCount;
+        $this->invalidCount = $invalidCount;
+        $this->commitFailures = [];
+        $this->committedCount = null;
+    }
+
+    /** @param  array<int, int>  $rowNumbers */
+    private function formatRowRange(array $rowNumbers): string
+    {
+        return count($rowNumbers) === 1
+            ? (string) $rowNumbers[0]
+            : min($rowNumbers).'–'.max($rowNumbers);
+    }
+
+    /**
+     * Create every row (or, for a grouped importer, every group) that
+     * passed validation. Invalid entries are skipped entirely — fix the
+     * CSV and re-upload rather than partially patch a single row here.
      */
     public function commitImport(): void
     {
@@ -136,6 +229,7 @@ new #[Title('Bulk Import')] class extends Component {
         }
 
         $importer = $this->currentImporter();
+        $isGrouped = $importer instanceof GroupedImporterDefinition;
         $created = 0;
         $failures = [];
 
@@ -145,12 +239,20 @@ new #[Title('Bulk Import')] class extends Component {
             }
 
             try {
-                $importer->commit($entry['raw'], $this->company);
+                if ($isGrouped) {
+                    $importer->commitGroup($entry['raw'], $this->company);
+                } else {
+                    $importer->commit($entry['raw'], $this->company);
+                }
                 $created++;
             } catch (\Throwable $e) {
                 $failures[] = [
                     'row' => $entry['row'],
-                    'name' => $entry['data']['Name'] ?? ('Row '.$entry['row']),
+                    // The first summary field is always the record's own
+                    // identifying label by convention (Name, Bill, ...) —
+                    // generic on purpose, so this doesn't need updating
+                    // every time a new importer uses a different label.
+                    'name' => $entry['data'] !== [] ? reset($entry['data']) : __('Row :row', ['row' => $entry['row']]),
                     'error' => $e->getMessage(),
                 ];
             }
@@ -222,7 +324,7 @@ new #[Title('Bulk Import')] class extends Component {
     <div>
         <flux:heading size="xl">{{ __('Bulk Import') }}</flux:heading>
         <flux:subheading>
-            {{ __('Import vendors and customers from a CSV file. Every row goes through the same validation and business rules as creating one by hand.') }}
+            {{ __('Import records from a CSV file. Every row goes through the same validation and business rules as creating one by hand.') }}
         </flux:subheading>
     </div>
 
