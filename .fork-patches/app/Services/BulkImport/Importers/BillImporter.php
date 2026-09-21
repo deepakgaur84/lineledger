@@ -17,7 +17,10 @@ use Illuminate\Validation\Rule;
 
 /**
  * Bills — one CSV row is one LINE, not one bill; rows sharing the same
- * bill_no become one bill with multiple lines. Column set/validation
+ * import_ref become one bill with multiple lines. import_ref only groups
+ * rows within this file — it's never stored, and is separate from bill_no
+ * (the actual bill number), which can be left blank to auto-number the
+ * bill the same way one entered by hand would be. Column set/validation
  * deliberately mirrors StoreBillRequest (the API's own rules), so an
  * imported bill is held to exactly the same standard as one entered via
  * the API. There's no CSV importer to mimic here — Migration's own
@@ -47,11 +50,12 @@ class BillImporter implements GroupedImporterDefinition
     public function csvColumns(): array
     {
         return [
-            'bill_no' => 'Required. Groups rows into one bill — every line of the same bill repeats the same bill_no. Must be unique; a bill_no already in use is rejected.',
+            'import_ref' => 'Required. Groups rows into one bill — every line of the same bill repeats the same import_ref. Only used to group rows in this file; never stored, and unrelated to bill_no.',
+            'bill_no' => 'Optional. Left blank, the bill is numbered automatically the same way one entered by hand would be. Given, must be unique — a bill_no already in use is rejected.',
             'vendor_display_name' => "Required. Must match an existing vendor's display name exactly (case-insensitive) — add the vendor first via the Vendors importer if they don't exist yet. If more than one vendor shares this name, the row is rejected rather than guessing which one.",
             'vendor_reference' => "Optional. The vendor's own invoice/reference number.",
-            'bill_date' => 'Required. YYYY-MM-DD.',
-            'due_date' => 'Optional. YYYY-MM-DD. Left blank, derived from payment_terms if given, else defaults to bill_date. Must not be before bill_date.',
+            'bill_date' => 'Required. Any unambiguous date works, e.g. 01-Apr-2026 or 2026-04-01.',
+            'due_date' => 'Optional. Same date formats as bill_date. Left blank, derived from payment_terms if given, else defaults to bill_date. Must not be before bill_date.',
             'payment_terms' => "Optional. Must match an existing payment term's name exactly (e.g. 'Net 30'). Ignored if due_date is given directly.",
             'memo' => 'Optional. Same on every line of a bill — only the first line\'s value is used.',
             'account_code' => 'Required. The code of an existing expense/asset account, e.g. 6100 — not the account name.',
@@ -67,7 +71,7 @@ class BillImporter implements GroupedImporterDefinition
 
     public function groupKey(array $row): ?string
     {
-        $key = trim((string) ($row['bill_no'] ?? ''));
+        $key = trim((string) ($row['import_ref'] ?? ''));
 
         return $key !== '' ? $key : null;
     }
@@ -89,7 +93,7 @@ class BillImporter implements GroupedImporterDefinition
 
         $validator = Validator::make($header, [
             'bill_no' => [
-                'required', 'string', 'max:40',
+                'nullable', 'string', 'max:40',
                 Rule::unique('bills', 'bill_no')->where('company_id', $company->id),
             ],
             'vendor_display_name' => ['required', 'string'],
@@ -157,7 +161,7 @@ class BillImporter implements GroupedImporterDefinition
         }, 0.0);
 
         $summary = [
-            'Bill' => (string) ($first['bill_no'] ?? ''),
+            'Bill' => filled($first['bill_no'] ?? null) ? (string) $first['bill_no'] : __('(auto-numbered)'),
             'Vendor' => (string) ($first['vendor_display_name'] ?? ''),
             'Date' => (string) ($first['bill_date'] ?? ''),
             'Lines' => (string) count($rows),
@@ -212,7 +216,7 @@ class BillImporter implements GroupedImporterDefinition
 
         $bill = app(SaveBill::class)->handle([
             'contact_id' => $vendor->id,
-            'bill_no' => $first['bill_no'],
+            'bill_no' => filled($first['bill_no'] ?? null) ? $first['bill_no'] : null,
             'vendor_reference' => $first['vendor_reference'] ?? null,
             'bill_date' => $first['bill_date'],
             'due_date' => $first['due_date'] ?? null,
@@ -243,10 +247,11 @@ class BillImporter implements GroupedImporterDefinition
     {
         return [
             [
+                'import_ref' => '1',
                 'bill_no' => 'BILL-1001',
                 'vendor_display_name' => 'Acme Supplies',
                 'vendor_reference' => 'INV-4471',
-                'bill_date' => '2026-01-15',
+                'bill_date' => '15-Jan-2026',
                 'due_date' => '',
                 'payment_terms' => 'Net 30',
                 'memo' => '',
@@ -260,10 +265,11 @@ class BillImporter implements GroupedImporterDefinition
                 'fx_rate' => '',
             ],
             [
+                'import_ref' => '1',
                 'bill_no' => 'BILL-1001',
                 'vendor_display_name' => 'Acme Supplies',
                 'vendor_reference' => 'INV-4471',
-                'bill_date' => '2026-01-15',
+                'bill_date' => '15-Jan-2026',
                 'due_date' => '',
                 'payment_terms' => 'Net 30',
                 'memo' => '',
@@ -277,11 +283,14 @@ class BillImporter implements GroupedImporterDefinition
                 'fx_rate' => '',
             ],
             [
-                'bill_no' => 'BILL-1002',
+                // bill_no left blank here on purpose — this bill is numbered
+                // automatically instead, same as one entered by hand.
+                'import_ref' => '2',
+                'bill_no' => '',
                 'vendor_display_name' => 'Beta Traders',
                 'vendor_reference' => '',
-                'bill_date' => '2026-01-16',
-                'due_date' => '2026-02-15',
+                'bill_date' => '16-Jan-2026',
+                'due_date' => '15-Feb-2026',
                 'payment_terms' => '',
                 'memo' => '',
                 'account_code' => '5200',
