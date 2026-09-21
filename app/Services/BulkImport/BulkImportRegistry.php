@@ -15,7 +15,7 @@ use App\Services\BulkImport\Importers\VendorImporter;
  */
 class BulkImportRegistry
 {
-    /** @return array<int, ImporterDefinition> */
+    /** @return array<int, ImporterDefinition|GroupedImporterDefinition> */
     public static function all(): array
     {
         return [
@@ -27,7 +27,7 @@ class BulkImportRegistry
         ];
     }
 
-    public static function find(string $key): ?ImporterDefinition
+    public static function find(string $key): ImporterDefinition|GroupedImporterDefinition|null
     {
         foreach (self::all() as $importer) {
             if ($importer->key() === $key) {
