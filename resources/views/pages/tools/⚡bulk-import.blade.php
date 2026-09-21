@@ -39,13 +39,13 @@ new #[Title('Bulk Import')] class extends Component {
         $this->company = $company;
     }
 
-    /** @return array<int, \App\Services\BulkImport\ImporterDefinition> */
+    /** @return array<int, \App\Services\BulkImport\ImporterDefinition|\App\Services\BulkImport\GroupedImporterDefinition> */
     public function importers(): array
     {
         return BulkImportRegistry::all();
     }
 
-    public function currentImporter(): \App\Services\BulkImport\ImporterDefinition
+    public function currentImporter(): \App\Services\BulkImport\ImporterDefinition|GroupedImporterDefinition
     {
         return BulkImportRegistry::find($this->entityType) ?? BulkImportRegistry::all()[0];
     }
