@@ -5,19 +5,43 @@ namespace App\Services\BulkImport;
 use App\Models\Company;
 
 /**
- * Extends ImporterDefinition for entity types where one CSV row is a single
- * LINE of a multi-line document (a bill, an invoice) rather than a whole
- * record by itself — rows sharing the same groupKey() become one document
- * with multiple lines.
+ * Contract for entity types where one CSV row is a single LINE of a
+ * multi-line document (a bill, an invoice) rather than a whole record by
+ * itself — rows sharing the same groupKey() become one document with
+ * multiple lines.
+ *
+ * Deliberately NOT an extension of ImporterDefinition, even though it
+ * shares key()/label()/csvColumns() with it verbatim: extending it would
+ * also inherit validate()/summarize()/commit(), which operate on a single
+ * row and have no sensible meaning for a multi-line document — a class
+ * couldn't satisfy this interface without also being forced to implement
+ * three methods it can never correctly use. This was a real bug caught in
+ * production: BillImporter implemented only the grouped methods below,
+ * which is exactly right for how it's actually used, but PHP still fatally
+ * refused to load the class because the old, wrongly-extended interface
+ * demanded the row-level methods too.
  *
  * The Bulk Import page checks for this interface (instanceof) and switches
  * its preview/commit logic to operate per-group instead of per-row; a plain
  * ImporterDefinition (Vendors, Items, Item Categories, Customers) is
- * completely unaffected — this is a pure addition, not a change to the
- * existing flat-row contract.
+ * completely unaffected by any of this.
  */
-interface GroupedImporterDefinition extends ImporterDefinition
+interface GroupedImporterDefinition
 {
+    /** Stable key used in the entity-type selector, e.g. 'bills'. */
+    public function key(): string;
+
+    /** Display label for the entity-type selector, e.g. 'Bills'. */
+    public function label(): string;
+
+    /**
+     * Expected CSV column names, in the order they should appear, mapped to
+     * a short human description for the on-page help text / template.
+     *
+     * @return array<string, string>
+     */
+    public function csvColumns(): array;
+
     /**
      * The value that groups rows into one document — e.g. the bill number.
      * Rows sharing the same non-null, non-empty key become one document's
