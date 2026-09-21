@@ -7,6 +7,7 @@ use App\Models\Account;
 use App\Models\Bill;
 use App\Models\Company;
 use App\Models\Contact;
+use App\Models\Item;
 use App\Models\PaymentTerm;
 use App\Models\TaxCode;
 use App\Services\BulkImport\GroupedImporterDefinition;
@@ -192,7 +193,7 @@ class BillImporter implements GroupedImporterDefinition
                 ->value('id');
 
             $itemId = filled($line['item_sku'] ?? null)
-                ? \App\Models\Item::query()->where('company_id', $company->id)->where('sku', $line['item_sku'])->value('id')
+                ? Item::query()->where('company_id', $company->id)->where('sku', $line['item_sku'])->value('id')
                 : null;
 
             $taxCodeId = filled($line['tax_code'] ?? null)
