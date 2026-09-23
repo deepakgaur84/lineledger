@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stops answering. Nothing is deleted — tickets already raised stay readable in
   the admin portal, so switching it back on loses nothing. See
   `config/support.php`.
+- **Pay an expense from a loan account** — a new **Use to pay expenses** switch on
+  a current, long-term, or other liability in the Chart of Accounts adds it to an
+  expense's Paid from, alongside bank and credit card. When an owner pays a business
+  cost personally you can post it straight to their Shareholder Loan: debit the
+  expense and any recoverable tax, credit the loan, in one entry with no clearing
+  account. Off by default; system accounts such as the payroll payables can't be
+  switched on. ([#50](https://github.com/lineledger/lineledger/issues/50))
 
 ### Changed
 
@@ -35,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installation. `APP_REGION` still picks which marketing site the legal links
   point at, but no longer forces the banner, so a self-host that set it to get the
   right legal documents is no longer offered a trip to someone else's app.
+
+### Fixed
+
+- **"Include in transfers" now saves.** The switch on a Chart of Accounts
+  account was shown and read back, but saving never stored it, so a line of
+  credit or other non-bank account could not be added to the transfer form.
 
 ## [1.1.0] - 2026-09-18
 

@@ -115,7 +115,16 @@ new #[Title('Expense')] class extends Component
 
     public function updatedPaymentAccountId(): void
     {
-        LastBankAccount::remember($this->company, $this->payment_account_id);
+        // Only a bank or card pick is shared with the banking screens; a loan
+        // (e.g. Shareholder Loan) is a one-off, not the next expense's default.
+        $isBanking = Account::query()
+            ->whereKey($this->payment_account_id)
+            ->whereIn('subtype', [AccountSubtype::Bank->value, AccountSubtype::CreditCard->value])
+            ->exists();
+
+        if ($isBanking || ! $this->payment_account_id) {
+            LastBankAccount::remember($this->company, $this->payment_account_id);
+        }
     }
 
     /**
@@ -236,7 +245,15 @@ new #[Title('Expense')] class extends Component
         $companyId = $this->company->id;
 
         $validated = $this->validate([
-            'payment_account_id' => ['required', 'integer', Rule::exists('accounts', 'id')->where('company_id', $companyId)->whereIn('subtype', [AccountSubtype::Bank->value, AccountSubtype::CreditCard->value])],
+            'payment_account_id' => ['required', 'integer', Rule::exists('accounts', 'id')->where('company_id', $companyId), function (string $attribute, mixed $value, \Closure $fail) {
+                // An expense keeps the account it was saved with, even if that
+                // account's "Use to pay expenses" switch has since been turned off.
+                $unchanged = $this->expense?->exists && (int) $value === (int) $this->expense->payment_account_id;
+
+                if (! $unchanged && ! Account::query()->expensePaymentSources()->whereKey($value)->exists()) {
+                    $fail(__('Choose a bank or credit-card account, or one switched on with Use to pay expenses.'));
+                }
+            }],
             'payment_method_id' => ['nullable', 'integer', Rule::exists('payment_methods', 'id')->where('company_id', $companyId)],
             'reference' => ['nullable', 'string', 'max:40'],
             'expense_date' => ['required', 'date'],
@@ -329,11 +346,12 @@ new #[Title('Expense')] class extends Component
     #[Computed]
     public function paymentAccounts()
     {
-        // Active bank + credit-card accounts, plus the one already selected so
-        // editing never drops a since-deactivated account.
+        // Active bank + credit-card accounts and any switched on with "Use to pay
+        // expenses", plus the one already selected so editing never drops a
+        // since-deactivated or since-switched-off account.
         return Account::query()
             ->where(function ($q) {
-                $q->where(fn ($inner) => $inner->whereIn('subtype', [AccountSubtype::Bank->value, AccountSubtype::CreditCard->value])->where('is_active', true));
+                $q->where(fn ($inner) => $inner->expensePaymentSources()->where('is_active', true));
 
                 if ($this->payment_account_id) {
                     $q->orWhere('id', $this->payment_account_id);
@@ -467,7 +485,7 @@ new #[Title('Expense')] class extends Component
 
     <form wire:submit="postExpense" class="space-y-6">
         <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <flux:select wire:model.live="payment_account_id" :label="__('Paid from (bank or credit card)')" required data-test="expense-account-select">
+            <flux:select wire:model.live="payment_account_id" :label="__('Paid from')" :description:trailing="__('Bank and credit-card accounts, plus any account switched on with Use to pay expenses in the Chart of Accounts.')" required data-test="expense-account-select">
                 <flux:select.option value="">{{ __('— Select —') }}</flux:select.option>
                 @foreach ($this->paymentAccounts as $opt)
                     <flux:select.option :value="$opt->id">{{ $opt->code }} — {{ $opt->name }}</flux:select.option>
