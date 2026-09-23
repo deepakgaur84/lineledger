@@ -39,20 +39,153 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Copy patch files over their real paths
+      - name: Detect whether this push also touched a patched file
+        id: collisions
+        # Computed up front (not just as a closing warning) because it now
+        # decides HOW the copy step below handles each file: a plain
+        # overwrite for anything untouched by this push, a real 3-way merge
+        # attempt for anything this push also changed. workflow_dispatch has
+        # no before/after commit range to diff, so there's nothing to detect
+        # on a manual run — falls through to a plain copy for everything.
+        run: |
+          set -euo pipefail
+          : > /tmp/collided-files.txt
+
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "Not a push event — nothing to diff, every file gets a plain copy."
+            echo "count=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          before="${{ github.event.before }}"
+          after="${{ github.event.after }}"
+
+          # A new branch's first push has an all-zero "before" SHA.
+          if [ "$before" = "0000000000000000000000000000000000000000" ]; then
+            echo "No prior commit to compare against — skipping."
+            echo "count=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed_by_push="$(git diff --name-only "$before" "$after")"
+
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            dest="${f#.fork-patches/}"
+            if printf '%s\n' "$changed_by_push" | grep -qxF "$dest"; then
+              echo "$dest" >> /tmp/collided-files.txt
+            fi
+          done < <(find .fork-patches -type f)
+
+          count=$(wc -l < /tmp/collided-files.txt)
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          if [ "$count" -gt 0 ]; then
+            echo "This push also touched $count file(s) we've patched:"
+            cat /tmp/collided-files.txt
+          else
+            echo "No overlap between this push and our patched files."
+          fi
+
+      - name: Create a backup branch before attempting any merge
+        # Only when there's actually a collision to merge through — most
+        # runs are a plain, risk-free copy and don't need one. Named to
+        # match the *backup*/*Backup* branch-protection ruleset (blocks
+        # deletion and force-push) so this is a genuinely safe fallback:
+        # if an auto-merge below produces something broken, this branch is
+        # an exact, protected snapshot of main right before this run
+        # touched anything, to reset back to.
+        if: steps.collisions.outputs.count != '0'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          branch="Backup-$(date +%d.%m.%Y)"
+          if git ls-remote --exit-code --heads origin "$branch" > /dev/null 2>&1; then
+            # Already one for today (an earlier collision run) — suffix
+            # with this run's id so today's second rollback point doesn't
+            # overwrite the first one.
+            branch="${branch}-${{ github.run_id }}"
+          fi
+
+          git branch "$branch" HEAD
+          git push origin "$branch"
+          echo "Backup branch created: $branch"
+
+      - name: Copy patch files over their real paths, merging where this push also changed one
         run: |
           set -euo pipefail
           if [ ! -d .fork-patches ]; then
             echo "No .fork-patches directory found — nothing to reapply."
             exit 0
           fi
-          # Mirror .fork-patches/<path> -> <path> for every file in the staging
-          # folder, creating destination directories as needed.
+
+          : > /tmp/needs-manual-review.txt
+
           find .fork-patches -type f | while read -r src; do
             dest="${src#.fork-patches/}"
             mkdir -p "$(dirname "$dest")"
-            cp "$src" "$dest"
-            echo "Reapplied: $dest"
+
+            if ! grep -qxF "$dest" /tmp/collided-files.txt 2>/dev/null; then
+              # The common case: nothing about this file changed on the
+              # upstream/incoming side of this push, so our copy is simply
+              # correct as-is.
+              cp "$src" "$dest"
+              echo "Reapplied: $dest"
+              continue
+            fi
+
+            echo "Attempting 3-way merge for $dest (this push also changed it)..."
+
+            # Base = what the real file looked like at the exact commit
+            # where we last updated OUR .fork-patches copy — main's history
+            # here is fast-forward-only (never rebased/force-pushed), so
+            # that commit is always a direct ancestor of HEAD, and at the
+            # moment it was made the real path hadn't been touched yet (our
+            # own commits only ever change .fork-patches directly; reapply
+            # handles the real path separately, afterwards). That makes it
+            # exactly "upstream's content right before we most recently
+            # customized this file" — the correct base for a 3-way merge
+            # against "upstream's content now" (theirs) and "our current
+            # customization" (ours).
+            last_patch_commit="$(git log -1 --format=%H -- "$src" 2>/dev/null || true)"
+
+            if [ -z "$last_patch_commit" ] \
+              || ! git show "$last_patch_commit:$dest" > /tmp/merge-base.txt 2>/dev/null \
+              || ! git show "HEAD:$dest" > /tmp/merge-theirs.txt 2>/dev/null; then
+              # No prior patch commit to anchor a base on, the file didn't
+              # exist yet at that point, or it's been deleted by the
+              # incoming change — nothing meaningful to 3-way merge
+              # against. Safe fallback: keep our version, flag for a human
+              # to look at rather than guess.
+              cp "$src" "$dest"
+              echo "$dest" >> /tmp/needs-manual-review.txt
+              echo "  No usable merge base for $dest — kept our version, flagged for review."
+              continue
+            fi
+
+            cp "$src" /tmp/merge-ours.txt
+
+            if git merge-file -p /tmp/merge-ours.txt /tmp/merge-base.txt /tmp/merge-theirs.txt > /tmp/merge-result.txt 2>/tmp/merge-stderr.txt; then
+              # Clean merge — our change and the incoming one touched
+              # different parts of the file. Adopt the combined result as
+              # both the real file and the new .fork-patches copy, so
+              # future runs reapply the merged version, not the pre-merge
+              # one — otherwise the next sync would just re-collide with
+              # the same already-resolved change.
+              cp /tmp/merge-result.txt "$dest"
+              cp /tmp/merge-result.txt "$src"
+              echo "  Merged cleanly — upstream's change and ours both kept, .fork-patches updated to match."
+            else
+              # Genuine textual overlap git can't reconcile on its own.
+              # Safe fallback: our version wins outright (identical to
+              # this workflow's behaviour before merging existed), and
+              # this file is called out for manual review below rather
+              # than silently discarding whichever side lost.
+              cp "$src" "$dest"
+              echo "$dest" >> /tmp/needs-manual-review.txt
+              echo "  Real conflict — kept our version, flagged for review."
+            fi
           done
 
       - name: Commit and push if anything changed
@@ -85,7 +218,13 @@ jobs:
             echo "pushed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          git commit -m "Reapply fork patches after upstream sync"
+
+          if [ -s /tmp/needs-manual-review.txt ]; then
+            commit_msg="Reapply fork patches after upstream sync (some files need manual review)"
+          else
+            commit_msg="Reapply fork patches after upstream sync"
+          fi
+          git commit -m "$commit_msg"
 
           for attempt in 1 2 3 4 5; do
             if git push origin main; then
@@ -119,42 +258,21 @@ jobs:
             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/docker.yml/dispatches" \
             -d '{"ref":"main"}'
 
-      - name: Warn if this push also touched a patched file
-        # Runs after the reapply above already committed and pushed — the
-        # app is already back on our patched code either way. This step's
-        # only job is to make the RUN show red so a failure notification
-        # fires; a plain ::warning:: annotation does not trigger GitHub's
-        # failure-notification email, only a genuinely failed run does.
-        #
-        # workflow_dispatch has no before/after commit range to diff, so
-        # there's nothing to check on a manual run.
-        if: github.event_name == 'push'
+      - name: Fail loudly if any file needed manual review
+        # Runs after the commit/push/trigger above already went through —
+        # the app is already deployed and working either way (every
+        # conflicted file kept our own version as a safe fallback). This
+        # step's only job is to make the run show red so a failure
+        # notification fires; a plain ::warning:: annotation does not
+        # trigger GitHub's failure-notification email, only a genuinely
+        # failed run does.
         run: |
           set -euo pipefail
-          before="${{ github.event.before }}"
-          after="${{ github.event.after }}"
-
-          # A new branch's first push has an all-zero "before" SHA.
-          if [ "$before" = "0000000000000000000000000000000000000000" ]; then
-            echo "No prior commit to compare against — skipping."
+          if [ ! -s /tmp/needs-manual-review.txt ]; then
+            echo "Nothing needed manual review — any collisions this run found merged cleanly."
             exit 0
           fi
 
-          changed_by_push="$(git diff --name-only "$before" "$after")"
-          collisions=""
-
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            dest="${f#.fork-patches/}"
-            if printf '%s\n' "$changed_by_push" | grep -qxF "$dest"; then
-              collisions="${collisions}${dest}"$'\n'
-            fi
-          done < <(find .fork-patches -type f)
-
-          if [ -n "$collisions" ]; then
-            echo "::error::This push also modified a file we've patched in .fork-patches. The reapply step above already restored OUR version over it — the app is fine — but that may have silently discarded a genuine upstream improvement. Diff upstream's current version of each file below against .fork-patches before assuming nothing was lost:"
-            printf '%s' "$collisions" | sed 's/^/::error::  - /'
-            exit 1
-          fi
-
-          echo "No overlap between this push and our patched files — nothing to review."
+          echo "::error::This push touched a file we've patched, and it couldn't be merged automatically — the change genuinely overlaps ours. Our version was kept (the app is fine), but a real upstream improvement may have been discarded. Diff upstream's current version of each file below against .fork-patches before assuming nothing was lost. A backup branch from right before this run was also created, matching the Backup-DD.MM.YYYY pattern, if anything here needs rolling back instead:"
+          sed 's/^/::error::  - /' /tmp/needs-manual-review.txt
+          exit 1
