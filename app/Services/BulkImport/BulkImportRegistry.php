@@ -3,10 +3,12 @@
 namespace App\Services\BulkImport;
 
 use App\Services\BulkImport\Importers\BillImporter;
+use App\Services\BulkImport\Importers\CreditMemoImporter;
 use App\Services\BulkImport\Importers\CustomerImporter;
 use App\Services\BulkImport\Importers\InvoiceImporter;
 use App\Services\BulkImport\Importers\ItemCategoryImporter;
 use App\Services\BulkImport\Importers\ItemImporter;
+use App\Services\BulkImport\Importers\VendorCreditImporter;
 use App\Services\BulkImport\Importers\VendorImporter;
 
 /**
@@ -26,6 +28,8 @@ class BulkImportRegistry
             app(ItemImporter::class),
             app(BillImporter::class),
             app(InvoiceImporter::class),
+            app(VendorCreditImporter::class),
+            app(CreditMemoImporter::class),
         ];
     }
 
