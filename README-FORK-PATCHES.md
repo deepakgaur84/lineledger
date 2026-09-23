@@ -42,11 +42,36 @@ a currency/region upstream never anticipated.
 - `app/Console/Commands/ExportAllCompaniesCommand.php` (new) —
   `backups:export-all`, loops every company, exports synchronously
   (blocking), continues past one company's failure
-- NAS-side only, not a repo file: `lineledger-backup.sh` — DSM Task
-  Scheduler script that runs the command above, moves finished ZIPs to
-  `/volume1/Backup/docker/lineledger` (renamed `<timestamp>-<slug>.zip`),
-  cleans up empty per-company folders, prunes anything older than 365
-  days from the offsite copy only
+- `lineledger-backup.sh` — DSM Task Scheduler script that ties the rest of
+  this section together on a schedule. Committed at the root of
+  `.fork-patches/` (so it lands at the repo root, alongside this file, not
+  nested into any app path — it's an operational script, not application
+  code) rather than kept purely NAS-side, so it's versioned and can't be
+  silently lost. Run via Control Panel > Task Scheduler > Create >
+  Scheduled Task > User-defined script, not cron directly — gives a GUI
+  for timing, and DSM emails its own stdout/stderr on failure,
+  independent of LineLedger's own `SchedulerFailureAlert`. What it does,
+  in order:
+  1. Runs `backups:export-all` (blocking, so it's safe to immediately move
+     the resulting files afterward — no queue-timing guesswork)
+  2. Moves every finished ZIP off the app's own storage volume to a
+     separate NAS share (different physical protection than the docker
+     volume it started on), renamed from LineLedger's own
+     `backups/<company_id>/<id>-<timestamp>.zip` to
+     `<timestamp>-<company-slug>.zip` at the destination — the numeric
+     backup id is dropped entirely, replaced by the company's slug
+     (looked up directly from the `companies` table), and reordered so
+     files sort chronologically by filename
+  3. Cleans up the now-empty per-company subfolders left behind in the
+     source directory (cosmetic — nothing depends on them existing)
+  4. Prunes anything older than its retention window from the offsite
+     folder only, never the source
+  - **`COMPOSE_DIR`, `SOURCE_DIR`, and `DEST_DIR` at the top of the script
+    are this NAS's own paths** — adjust all three to match wherever
+    LineLedger's compose stack and the intended offsite share actually
+    live on a different setup. `RETENTION_DAYS` is likewise a local
+    choice, not a fixed requirement (currently 90, changed down from the
+    365 originally used at launch).
 
 ## 3. Employee Reimbursements Payable backfill
 
