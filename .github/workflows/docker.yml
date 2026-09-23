@@ -16,8 +16,12 @@ on:
 # own bot commit, and each build here takes several minutes — without this,
 # two overlapping runs could finish out of order, with the older commit's
 # build publishing :edge *after* the newer one and silently overwriting it
-# with stale content. Queuing (not cancelling) keeps builds strictly in push
-# order, so the run for the newest commit always finishes and publishes last.
+# with stale content. Queuing (not cancelling) reduces how often that
+# happens, but does NOT guarantee finish order — confirmed the hard way:
+# a run stuck queued for over an hour still finished and pushed after a
+# newer commit's build had already published. The actual guarantee is the
+# "Check this commit is still main's current tip" step further down, which
+# refuses to publish once main has moved on regardless of queue behaviour.
 concurrency:
   group: docker-${{ github.ref }}
   cancel-in-progress: false
@@ -53,13 +57,39 @@ jobs:
             type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
             type=sha
 
+      - name: Check this commit is still main's current tip
+        id: freshness
+        # Confirmed, not just theoretical: on a night with many rapid
+        # commits, an older commit's build sat queued (cancel-in-progress:
+        # false queues rather than drops it) for over an hour, then finally
+        # ran and pushed :edge a full hour AFTER a newer commit's build had
+        # already pushed the correct image — silently overwriting it with
+        # stale content. The concurrency block above reduces how often
+        # builds pile up, but doesn't guarantee finish order once several
+        # do queue at once. This check is the actual guarantee: skip the
+        # push outright if a newer commit has landed on main by the time
+        # this build is about to publish, regardless of why this run ended
+        # up executing later than expected. Tags are exempt — a tag always
+        # points at one fixed commit, so there's nothing to go stale.
+        if: github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          current_tip="$(git rev-parse origin/main)"
+          if [ "$current_tip" != "${{ github.sha }}" ]; then
+            echo "::warning::main has moved to $current_tip since this build (${{ github.sha }}) started — skipping push so a newer image isn't overwritten with stale content."
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           # amd64 only. Building arm64 here needs QEMU emulation, which turned a
           # few-minute job into ~75 minutes of billable runner time.
           platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ github.event_name != 'pull_request' && steps.freshness.outputs.stale != 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Re-enabled after a period running fully uncached (no-cache: true):
