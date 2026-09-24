@@ -581,7 +581,7 @@ new #[Title('Transactions')] class extends Component {
 
         foreach ($this->filteredQuery()->lazy() as $line) {
             $row = [
-                'date' => $line->entry_date?->toDateString(),
+                'date' => (string) $line->entry_date,
                 'entry_no' => $line->journalEntry?->entry_no,
                 'account' => trim(($line->account?->code ?? '').' — '.($line->account?->name ?? ''), ' —'),
                 'name' => $line->contact?->display_name,
@@ -845,7 +845,7 @@ new #[Title('Transactions')] class extends Component {
                     @endif
 
                     <tr data-test="txn-row">
-                        <td class="px-4 py-2 whitespace-nowrap">{{ $line->entry_date?->toDateString() }}</td>
+                        <td class="px-4 py-2 whitespace-nowrap">{{ $line->entry_date }}</td>
                         @if ($this->columnVisible('entry_no'))
                             <td class="px-4 py-2 font-mono">{{ $line->journalEntry?->entry_no }}</td>
                         @endif
