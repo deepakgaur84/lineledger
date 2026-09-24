@@ -24,7 +24,7 @@ final class ReportSettings
         'classId', 'locationId', 'fundId', 'contactId', 'accountId', 'accountType', 'perPage',
         'reportTitle', 'comparisonBasis', 'sortField', 'sortDir', 'excludeUnappliedCredits',
         'view', 'includeInactive', 'hiddenColumns', 'groupBy', 'sourceType',
-        'negativeStyle', 'numberUnits', 'reportNotes', 'reportBasis',
+        'negativeStyle', 'numberUnits', 'reportNotes', 'reportBasis', 'search',
     ];
 
     /**

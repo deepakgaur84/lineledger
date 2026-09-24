@@ -109,6 +109,44 @@ it('posts an expense with recoverable GST: DR expense + DR tax payable / CR bank
         ->and($gstPayable->fresh()->balance_cents)->toBe(-500); // ITC reduces payable
 });
 
+it('posts an expense paid by a shareholder: DR expense + DR tax payable / CR shareholder loan', function () {
+    $gst = TaxCode::where('code', 'GST')->firstOrFail();
+    $loan = Account::create([
+        'code' => '2780',
+        'name' => 'Shareholder Loan',
+        'subtype' => AccountSubtype::CurrentLiability->value,
+        'type' => AccountSubtype::CurrentLiability->type()->value,
+        'normal_balance' => AccountSubtype::CurrentLiability->type()->normalBalance()->value,
+    ]);
+
+    $exp = Expense::create([
+        'payment_account_id' => $loan->id,
+        'expense_date' => now()->toDateString(),
+        'payee_name' => 'Staples',
+    ]);
+    $exp->lines()->create([
+        'account_id' => $this->expense->id,
+        'description' => 'Printer paper',
+        'amount_cents' => 10000,
+        'tax_code_id' => $gst->id,
+        'tax_cents' => $gst->taxFor(10000),
+        'line_order' => 0,
+    ]);
+
+    app(ExpensePoster::class)->post($exp);
+    $exp->refresh();
+
+    $gstPayable = $gst->agency->payableAccount;
+
+    expect($exp->status)->toBe(ExpenseStatus::Posted)
+        ->and($exp->amount_cents)->toBe(10500)
+        // Owed to the shareholder for the gross amount; no cash moves.
+        ->and($loan->fresh()->balance_cents)->toBe(10500)
+        ->and($this->bank->fresh()->balance_cents)->toBe(0)
+        ->and($this->expense->fresh()->balance_cents)->toBe(10000)
+        ->and($gstPayable->fresh()->balance_cents)->toBe(-500);
+});
+
 it('voids a posted expense and reverses the GL', function () {
     $exp = Expense::create([
         'payment_account_id' => $this->bank->id,
@@ -212,4 +250,71 @@ it('lets an explicit override win under amount_includes_tax and refuses tax larg
             'amount_includes_tax' => true,
         ]],
     ]))->toThrow(PostingValidationException::class);
+});
+
+it('carries the line description onto the expense leg, leaving the tax and bank legs alone', function () {
+    $gst = TaxCode::where('code', 'GST')->firstOrFail();
+
+    $exp = Expense::create([
+        'payment_account_id' => $this->bank->id,
+        'expense_date' => now()->toDateString(),
+        'payee_name' => 'Tax Vendor',
+    ]);
+    $exp->lines()->create([
+        'account_id' => $this->expense->id,
+        'description' => 'Printer toner',
+        'amount_cents' => 10000,
+        'tax_code_id' => $gst->id,
+        'tax_cents' => $gst->taxFor(10000),
+        'line_order' => 0,
+    ]);
+
+    $lines = app(ExpensePoster::class)->post($exp)->lines;
+
+    expect($lines->firstWhere('account_id', $this->expense->id)->memo)->toBe('Printer toner')
+        ->and($lines->firstWhere('account_id', $gst->agency->payable_account_id)->memo)->toBe('Input tax credit')
+        ->and($lines->firstWhere('account_id', $this->bank->id)->memo)->toBe('Expense');
+});
+
+it('joins the descriptions of lines that share an expense leg', function () {
+    $exp = Expense::create([
+        'payment_account_id' => $this->bank->id,
+        'expense_date' => now()->toDateString(),
+        'payee_name' => 'Cafe',
+    ]);
+
+    foreach (['Coffee', '  ', 'Muffins', 'Coffee'] as $i => $description) {
+        $exp->lines()->create([
+            'account_id' => $this->expense->id,
+            'description' => $description,
+            'amount_cents' => 500,
+            'tax_cents' => 0,
+            'line_order' => $i,
+        ]);
+    }
+
+    $legs = app(ExpensePoster::class)->post($exp)->lines->where('account_id', $this->expense->id);
+
+    expect($legs)->toHaveCount(1)
+        ->and((int) $legs->first()->debit_cents)->toBe(2000)
+        ->and($legs->first()->memo)->toBe('Coffee; Muffins');
+});
+
+it('leaves the expense leg memo empty when no line has a description', function () {
+    $exp = Expense::create([
+        'payment_account_id' => $this->bank->id,
+        'expense_date' => now()->toDateString(),
+        'payee_name' => 'Quick Mart',
+    ]);
+    $exp->lines()->create([
+        'account_id' => $this->expense->id,
+        'description' => '',
+        'amount_cents' => 5000,
+        'tax_cents' => 0,
+        'line_order' => 0,
+    ]);
+
+    $lines = app(ExpensePoster::class)->post($exp)->lines;
+
+    expect($lines->firstWhere('account_id', $this->expense->id)->memo)->toBeNull();
 });

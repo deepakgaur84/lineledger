@@ -23,15 +23,16 @@ use RuntimeException;
  * Posts a pay-now expense (QuickBooks "Expense") to the GL.
  *   DR  Expense (per-line, grouped by account, gross-up non-recoverable tax)
  *   DR  Tax Payable (per-agency, recoverable tax = input tax credit)
- *   CR    Payment account (bank asset OR credit-card liability)
+ *   CR    Payment account (bank asset, credit card, or loan liability such as a shareholder loan)
  *
  * Mirrors {@see ChequePoster}; the structural difference is that the credit
- * leg is the chosen payment account (which may be a credit card), and the
+ * leg is the chosen payment account (which may be a credit card or loan), and the
  * document carries a payment method for expense-report filtering. Like the
  * cheque, there is no repost path — a posted expense is voided and recreated.
  */
 class ExpensePoster
 {
+    use Concerns\JoinsLineDescriptions;
     use Concerns\PlugsForeignRounding;
     use Concerns\SplitsLineTax;
 
@@ -169,7 +170,7 @@ class ExpensePoster
         $legs = [];
 
         foreach ($this->expenseByAccount($expense) as $leg) {
-            $legs[] = ['account_id' => $leg['account_id'], 'class_id' => $leg['class_id'], 'location_id' => $leg['location_id'], 'foreign' => $leg['cents'], 'home' => Currency::toHomeCents($leg['cents'], $rate), 'memo' => null];
+            $legs[] = ['account_id' => $leg['account_id'], 'class_id' => $leg['class_id'], 'location_id' => $leg['location_id'], 'foreign' => $leg['cents'], 'home' => Currency::toHomeCents($leg['cents'], $rate), 'memo' => $this->descriptionMemo($leg['descriptions'])];
         }
 
         foreach ($this->recoverableTaxByPayableAccount($expense) as $payableAccountId => $foreignCents) {
@@ -232,7 +233,10 @@ class ExpensePoster
     }
 
     /**
-     * @return list<array{account_id: int, class_id: ?int, location_id: ?int, cents: int}>
+     * One leg per account + dimensions, with the descriptions of the lines folded
+     * into it for the leg's memo.
+     *
+     * @return list<array{account_id: int, class_id: ?int, location_id: ?int, cents: int, descriptions: list<?string>}>
      */
     protected function expenseByAccount(Expense $expense): array
     {
@@ -254,8 +258,10 @@ class ExpensePoster
                 'class_id' => $line->class_id,
                 'location_id' => $line->location_id,
                 'cents' => 0,
+                'descriptions' => [],
             ];
             $grouped[$key]['cents'] += $cents;
+            $grouped[$key]['descriptions'][] = $line->description;
         }
 
         return array_values($grouped);

@@ -110,3 +110,14 @@ function editLockDraftInvoice(Company $company): Invoice
         ]],
     ]);
 }
+
+/**
+ * The opening <body> tag of a rendered app page, where the layout puts
+ * per-user switches such as data-escape-back.
+ */
+function escapeBackBodyTag(string $html): string
+{
+    preg_match('/<body\b[^>]*>/s', $html, $match);
+
+    return $match[0] ?? '';
+}

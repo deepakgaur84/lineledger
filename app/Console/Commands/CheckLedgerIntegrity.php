@@ -2,6 +2,8 @@
 
 namespace App\Console\Commands;
 
+use App\Enums\AccountSubtype;
+use App\Enums\ChequeStatus;
 use App\Enums\NormalBalance;
 use App\Models\Account;
 use App\Models\Bill;
@@ -11,13 +13,14 @@ use App\Notifications\LedgerIntegrityAlert;
 use App\Services\Audit\AuditMute;
 use App\Services\Posting\BillPaymentPoster;
 use App\Services\Posting\ReceiptPoster;
+use App\Support\Accounting\ControlAccountRoles;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 
 /**
- * Nightly proof that the books still reconcile. Four checks per company:
+ * Nightly proof that the books still reconcile. Five checks per company:
  *
  *   1. Audit hash chain — delegated to {@see VerifyAccountingAuditCommand}.
  *   2. Double-entry balance — every posted journal nets to zero across the GL,
@@ -25,6 +28,10 @@ use Illuminate\Support\Facades\Notification;
  *   3. Balance-cache drift — accounts.balance_cents is a denormalized hint that
  *      reports ignore, but drift signals a posting bug, so we recompute each
  *      account from its posted lines and compare. --fix heals the cache.
+ *   4. Document paid-cache drift — invoices/bills amount_paid_cents against the
+ *      live applications of posted receipts and payments. --fix reposts.
+ *   5. Tax on a control-account cheque line — report-only; see
+ *      {@see checkControlAccountTax()}.
  *
  * On any failure it logs, emails ops (unless --no-alert), and exits non-zero so
  * a scheduler/CI run surfaces it. The accumulating run history is also exactly
@@ -37,7 +44,7 @@ class CheckLedgerIntegrity extends Command
         {--fix : Recompute drifted account-balance and document paid caches in place}
         {--no-alert : Report failures without emailing}';
 
-    protected $description = 'Verify ledger integrity: audit hash chain, double-entry balance, account-balance cache, and invoice/bill paid caches.';
+    protected $description = 'Verify ledger integrity: audit hash chain, double-entry balance, account-balance cache, invoice/bill paid caches, and tax on control-account cheque lines.';
 
     /**
      * Length of the rolling full-verification cycle, in days.
@@ -140,6 +147,50 @@ class CheckLedgerIntegrity extends Command
         //    applications of posted receipts / payments. A stale value shows a
         //    document as paid (or owing) that the ledger says otherwise.
         $issues = array_merge($issues, $this->checkPaidCaches($companyId));
+
+        // 5. Sales tax on a cheque line coded to an AR/AP control account.
+        $issues = array_merge($issues, $this->checkControlAccountTax($companyId));
+
+        return $issues;
+    }
+
+    /**
+     * Cheques posted with sales tax on a line coded to an AR/AP control account.
+     *
+     * The balance such a line settles already includes the tax its originating
+     * invoice or bill recorded, so taxing it again double-counts: a
+     * non-recoverable code is grossed up into the AR/AP leg itself (moving the
+     * contact's sub-ledger by more than the payment), and a recoverable one adds
+     * an input-tax-credit leg for a credit that was never incurred. The write
+     * path now strips it ({@see ControlAccountRoles::excludesTax()}); this finds
+     * what was posted before it did.
+     *
+     * Report-only, with no --fix: the repair is to open the cheque and save it,
+     * which reposts through SaveCheque and drops the tax deliberately, under the
+     * audit chain. A void needs nothing — its entry is already reversed.
+     *
+     * @return list<string>
+     */
+    protected function checkControlAccountTax(int $companyId): array
+    {
+        $cheques = DB::table('cheque_lines as cl')
+            ->join('cheques as c', 'c.id', '=', 'cl.cheque_id')
+            ->join('accounts as a', 'a.id', '=', 'cl.account_id')
+            ->where('c.company_id', $companyId)
+            ->whereNull('c.deleted_at')
+            ->whereNotNull('c.journal_entry_id')
+            ->where('c.status', '!=', ChequeStatus::Void->value)
+            ->whereIn('a.subtype', [AccountSubtype::AccountsReceivable->value, AccountSubtype::AccountsPayable->value])
+            ->where(fn ($q) => $q->where('cl.tax_cents', '!=', 0)->orWhere('cl.secondary_tax_cents', '!=', 0))
+            ->distinct()
+            ->orderBy('c.id')
+            ->pluck('c.cheque_no', 'c.id');
+
+        $issues = [];
+
+        foreach ($cheques as $id => $chequeNo) {
+            $issues[] = "Cheque {$chequeNo} (id {$id}) carries sales tax on an Accounts Receivable / Payable line, which double-counts the tax already in that balance. Open it and save it to strip the tax and repost.";
+        }
 
         return $issues;
     }

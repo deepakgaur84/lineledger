@@ -184,6 +184,10 @@ final class RowTransformer
             'journal_line_id' => 'journal_lines',
             'journal_entry_id' => 'journal_entries',
         ],
+        'tax_return_adjustments' => [
+            'tax_return_id' => 'tax_returns',
+            'account_id' => 'accounts',
+        ],
         'stock_adjustment_lines' => [
             'stock_adjustment_id' => 'stock_adjustments',
             'item_id' => 'items',
@@ -398,6 +402,7 @@ final class RowTransformer
         ],
         'tax_returns' => [
             'tax_agency_id' => 'tax_agencies',
+            'adjustment_journal_entry_id' => 'journal_entries',
         ],
         'tax_return_payments' => [
             'tax_return_id' => 'tax_returns',
@@ -443,6 +448,16 @@ final class RowTransformer
         'currency_revaluations' => [
             'journal_entry_id' => 'journal_entries',
             'reversal_entry_id' => 'journal_entries',
+        ],
+        // Opening Balances workspace. created_by_user_id / updated_by_user_id
+        // are remapped by the generic `*_user_id` pass. States restore after
+        // journal_entries; rows restore after states + accounts (registry order).
+        'opening_balance_states' => [
+            'journal_entry_id' => 'journal_entries',
+        ],
+        'opening_balance_rows' => [
+            'opening_balance_state_id' => 'opening_balance_states',
+            'account_id' => 'accounts',
         ],
         'company_currencies' => [
             'ar_account_id' => 'accounts',
@@ -531,6 +546,7 @@ final class RowTransformer
             'wage_expense_account_id' => 'accounts',
             'class_id' => 'classifications',
             'location_id' => 'locations',
+            'fund_id' => 'funds',
         ],
         'employee_recurring_items' => [
             'employee_payroll_profile_id' => 'employee_payroll_profiles',
@@ -640,9 +656,18 @@ final class RowTransformer
      * id through {@see IdMapper}.
      *
      * @var array<string, array<int, array{type: string, id: string}>>
+     *
+     * @internal Exposed for the arch test that asserts every polymorphic
+     *           `*_id` column on an exported table is either listed here or
+     *           documented as intentionally un-remapped.
      */
-    private const POLYMORPHIC_PAIRS = [
+    public const POLYMORPHIC_PAIRS = [
         'journal_entries' => [
+            ['type' => 'source_type', 'id' => 'source_id'],
+        ],
+        // Filed-return lines snapshot the journal entry's source pair for the
+        // drill-down; the FQCN is the same one journal_entries carries.
+        'tax_return_lines' => [
             ['type' => 'source_type', 'id' => 'source_id'],
         ],
         'stock_movements' => [
@@ -718,8 +743,11 @@ final class RowTransformer
      * export-side discovery and import-side remap stay in lockstep.
      *
      * @var list<string>
+     *
+     * @internal Exposed for the arch test that checks every `users` FK on an
+     *           exported table is one the generic user remap will catch.
      */
-    private const USER_ID_EXACT = ['created_by', 'uploaded_by_id', 'invited_by', 'user_id'];
+    public const USER_ID_EXACT = ['created_by', 'uploaded_by_id', 'invited_by', 'user_id'];
 
     /**
      * @param  array<int, int>  $userIdMap  oldUserId => newUserId, including fallback entries.

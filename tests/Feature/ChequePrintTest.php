@@ -66,16 +66,18 @@ it('prepares cheque draw data from the Cheque model', function () {
 
     $data = app(ChequePdfRenderer::class)->dataFor($cheque);
 
-    expect($data['date_mmddyyyy'])->toBe('05202026');
+    expect($data['date_comb'])->toBe('20260520');
     expect($data['date_slashed'])->toBe('5/20/2026');
     expect($data['payee'])->toBe('Jane Doe');
     expect($data['amount_numeric'])->toBe('**5.00');
     expect($data['total_numeric'])->toBe('5.00');
     expect($data['memo'])->toBe('test');
-    expect($data['amount_words'])->toEndWith('Five and 00/100');
+    expect($data['amount_words'])->toBe('*****Five and 00/100');
     expect($data['lines'])->toHaveCount(1);
+    // The voucher names the account the way QuickBooks does: "200 · Customer
+    // Receivables" — the code alone means nothing to whoever opens the envelope.
     expect($data['lines'][0])->toMatchArray([
-        'account' => $cheque->lines[0]->account->code,
+        'account' => $cheque->lines[0]->account->code.' · '.$cheque->lines[0]->account->name,
         'description' => 'Rent',
         'amount' => '5.00',
     ]);

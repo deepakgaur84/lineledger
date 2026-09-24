@@ -253,3 +253,83 @@ it('round-trips includeInactive through memorize and apply', function () {
         ->call('applyMemorized', $memorized->id)
         ->assertSet('includeInactive', true);
 });
+
+it('filters the customer contact list by name, company, or email', function () {
+    Contact::create(['display_name' => 'Arts Council', 'is_customer' => true]);
+    Contact::create(['display_name' => 'Bolt Supply Co', 'company_name' => 'Heartstone Ltd', 'is_customer' => true]);
+    Contact::create(['display_name' => 'Zed Buyer', 'email' => 'arts@zed.test', 'is_customer' => true]);
+    Contact::create(['display_name' => 'Unrelated Person', 'is_customer' => true]);
+    Contact::create(['display_name' => 'Arts Vendor', 'is_vendor' => true]);
+
+    $component = Livewire::actingAs($this->user)
+        ->test('pages::reports.customer-contact-list', ['company' => $this->company])
+        ->set('search', 'arts');
+
+    expect(collect($component->instance()->rows())->pluck('name')->all())
+        ->toBe(['Arts Council', 'Bolt Supply Co', 'Zed Buyer']);
+
+    $component->assertSee('Arts Council')
+        ->assertDontSee('Unrelated Person')
+        ->assertDontSee('Arts Vendor');
+});
+
+it('filters the vendor contact list by search', function () {
+    Contact::create(['display_name' => 'Paper Arts Supply', 'is_vendor' => true]);
+    Contact::create(['display_name' => 'Bolt Hardware', 'is_vendor' => true]);
+
+    Livewire::actingAs($this->user)
+        ->test('pages::reports.vendor-contact-list', ['company' => $this->company])
+        ->set('search', 'arts')
+        ->assertSee('Paper Arts Supply')
+        ->assertDontSee('Bolt Hardware');
+});
+
+it('trims the contact list search and matches regardless of case', function () {
+    Contact::create(['display_name' => 'Arts Council', 'is_customer' => true]);
+    Contact::create(['display_name' => 'Bolt Buyer', 'is_customer' => true]);
+
+    $rows = Livewire::actingAs($this->user)
+        ->test('pages::reports.customer-contact-list', ['company' => $this->company])
+        ->set('search', '  ARTS  ')
+        ->instance()
+        ->rows();
+
+    expect(collect($rows)->pluck('name')->all())->toBe(['Arts Council']);
+});
+
+it('says nothing matched when a contact list search has no results', function () {
+    Contact::create(['display_name' => 'Arts Council', 'is_customer' => true]);
+
+    Livewire::actingAs($this->user)
+        ->test('pages::reports.customer-contact-list', ['company' => $this->company])
+        ->set('search', 'zzz')
+        ->assertSee('No customers match your search.')
+        ->assertDontSee('No customers to list.');
+});
+
+it('leaves the report title alone when searching', function () {
+    Livewire::actingAs($this->user)
+        ->test('pages::reports.customer-contact-list', ['company' => $this->company])
+        ->set('search', 'arts')
+        ->assertSet('reportTitle', '')
+        ->assertSee('Customer Contact List');
+});
+
+it('round-trips the contact list search through memorize and apply', function () {
+    Livewire::actingAs($this->user)
+        ->test('pages::reports.customer-contact-list', ['company' => $this->company])
+        ->set('search', 'arts')
+        ->set('memorizeName', 'Arts customers')
+        ->call('memorizeReport')
+        ->assertHasNoErrors();
+
+    $memorized = MemorizedReport::query()->where('user_id', $this->user->id)->first();
+
+    expect($memorized->settings['search'])->toBe('arts');
+
+    Livewire::actingAs($this->user)
+        ->test('pages::reports.customer-contact-list', ['company' => $this->company])
+        ->assertSet('search', '')
+        ->call('applyMemorized', $memorized->id)
+        ->assertSet('search', 'arts');
+});

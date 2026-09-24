@@ -38,6 +38,7 @@ use RuntimeException;
  */
 class ChequePoster
 {
+    use Concerns\JoinsLineDescriptions;
     use Concerns\PlugsForeignRounding;
     use Concerns\SplitsLineTax;
 
@@ -295,7 +296,7 @@ class ChequePoster
         $legs = [];
 
         foreach ($this->expenseByAccount($cheque) as $expense) {
-            $legs[] = ['account_id' => $expense['account_id'], 'class_id' => $expense['class_id'], 'location_id' => $expense['location_id'], 'contact_id' => $expense['contact_id'], 'foreign' => $expense['cents'], 'home' => Currency::toHomeCents($expense['cents'], $rate), 'memo' => null];
+            $legs[] = ['account_id' => $expense['account_id'], 'class_id' => $expense['class_id'], 'location_id' => $expense['location_id'], 'contact_id' => $expense['contact_id'], 'foreign' => $expense['cents'], 'home' => Currency::toHomeCents($expense['cents'], $rate), 'memo' => $this->descriptionMemo($expense['descriptions'])];
         }
 
         foreach ($this->recoverableTaxByPayableAccount($cheque) as $payableAccountId => $foreignCents) {
@@ -440,7 +441,10 @@ class ChequePoster
     }
 
     /**
-     * @return list<array{account_id: int, class_id: ?int, location_id: ?int, contact_id: ?int, cents: int}>
+     * One leg per account + dimensions + contact, with the descriptions of the
+     * lines folded into it for the leg's memo.
+     *
+     * @return list<array{account_id: int, class_id: ?int, location_id: ?int, contact_id: ?int, cents: int, descriptions: list<?string>}>
      */
     protected function expenseByAccount(Cheque $cheque): array
     {
@@ -468,8 +472,10 @@ class ChequePoster
                 'location_id' => $line->location_id,
                 'contact_id' => $contactId,
                 'cents' => 0,
+                'descriptions' => [],
             ];
             $grouped[$key]['cents'] += $cents;
+            $grouped[$key]['descriptions'][] = $line->description;
         }
 
         return array_values($grouped);

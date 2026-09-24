@@ -33,11 +33,13 @@ use App\Http\Controllers\Security\CspReportController;
 use App\Http\Controllers\Settings\ListImportTemplateController;
 use App\Http\Controllers\Stripe\ConnectController;
 use App\Http\Controllers\Stripe\WebhookController as StripeWebhookController;
+use App\Http\Controllers\SwitchCompanyController;
 use App\Http\Controllers\VerificationDownloadController;
 use App\Http\Middleware\EnforceTwoFactor;
 use App\Http\Middleware\EnsureCompanyMembership;
 use App\Http\Middleware\EnsureSectionAccess;
 use App\Http\Middleware\EnsureSectionEnabled;
+use App\Http\Middleware\EnsureSupportEnabled;
 use App\Models\Attachment;
 use App\Models\Company;
 use App\Models\DocumentFolder;
@@ -97,10 +99,19 @@ Route::middleware(['auth', 'throttle:120,1'])->prefix('edit-locks')->name('edit-
     Route::post('release', [EditLockController::class, 'release'])->name('release');
 });
 
+// The company switcher posts here from a target="_blank" form, opening the chosen
+// company in a new tab. Outside the {company} prefix: the controller checks
+// membership itself, and the user's tab-of-origin arrives as `from`.
+Route::middleware(['auth', 'verified'])->group(function () {
+    Route::post('companies/{company}/switch', SwitchCompanyController::class)->name('companies.switch');
+});
+
 // In-app support tickets. Platform-level (not tenant-scoped), so they live here
 // beside settings rather than under the {company} prefix; per-page mount() guards
-// enforce that a user only sees their own tickets.
-Route::middleware(['auth', 'verified'])->group(function () {
+// enforce that a user only sees their own tickets. EnsureSupportEnabled 404s the
+// pair on a deployment that handles support elsewhere (SUPPORT_ENABLED=false),
+// leaving the route names resolvable for anything still linking to a ticket.
+Route::middleware(['auth', 'verified', EnsureSupportEnabled::class])->group(function () {
     Route::livewire('support', 'pages::support.index')->name('support.index');
     Route::livewire('support/{ticket}', 'pages::support.show')->name('support.show');
 });

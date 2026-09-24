@@ -177,6 +177,13 @@ select:focus[data-flux-control] {
     @apply outline-hidden ring-2 ring-accent ring-offset-2 ring-offset-accent-foreground;
 }
 
+/* A click anywhere in a date field opens its calendar (resources/js/date-picker.js);
+ * the icon keeps the pointer that says so. Dark mode needs nothing here:
+ * @fluxAppearance already sets `color-scheme: dark` on :root.dark. */
+input::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+}
+
 /* \[:where(&)\]:size-4 {
     @apply size-4;
 } */

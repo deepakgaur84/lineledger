@@ -1,8 +1,5 @@
 <?php
 
-use App\Enums\SecurityEvent;
-use App\Models\Company;
-use App\Services\Audit\SecurityLogRecorder;
 use App\Support\UserCompany;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
@@ -32,64 +29,6 @@ new class extends Component {
     {
         return Auth::user()->toUserCompanies(includeCurrent: true);
     }
-
-    public function switchCompany(string $slug, SecurityLogRecorder $recorder): void
-    {
-        $user = Auth::user();
-
-        abort_unless(
-            $user->belongsToCompany($company = Company::where('slug', $slug)->firstOrFail()),
-            403
-        );
-
-        $currentCompanySlug = $user->currentCompany?->slug;
-
-        $user->switchCompany($company);
-
-        if ($currentCompanySlug !== $company->slug) {
-            $recorder->record(SecurityEvent::CompanySwitched, $user, metadata: [
-                'from_company_slug' => $currentCompanySlug,
-                'to_company_slug' => $company->slug,
-            ]);
-        }
-
-        if (! request()->header('Referer')) {
-            $this->redirectRoute('dashboard', ['company' => $company->slug], navigate: true);
-
-            return;
-        }
-
-        if (! $currentCompanySlug) {
-            $this->redirect(request()->header('Referer'), navigate: true);
-
-            return;
-        }
-
-        $redirectTo = $this->replaceCurrentCompanyInReferer(
-            request()->header('Referer'),
-            $currentCompanySlug,
-            $company->slug,
-        );
-
-        $this->redirect($redirectTo ?? request()->header('Referer'), navigate: true);
-    }
-
-    protected function replaceCurrentCompanyInReferer(string $referer, string $currentCompanySlug, string $newCompanySlug): ?string
-    {
-        $redirectTo = preg_replace(
-            '#/'.preg_quote($currentCompanySlug, '#').'(?=/|\?|$)#',
-            '/'.$newCompanySlug,
-            $referer,
-            1,
-        );
-
-        return preg_replace(
-            '#([?&]company=)'.preg_quote($currentCompanySlug, '#').'(?=&|$)#',
-            '$1'.$newCompanySlug,
-            $redirectTo ?? $referer,
-            1,
-        );
-    }
 }; ?>
 
 @php $current = $this->currentCompany(); @endphp
@@ -118,18 +57,28 @@ new class extends Component {
             <flux:menu.heading>{{ __('Organizations') }}</flux:menu.heading>
 
             @foreach ($this->companies() as $company)
-                <flux:menu.item
-                    wire:click="switchCompany('{{ $company->slug }}')"
-                    class="cursor-pointer"
-                    data-test="company-switcher-item"
-                >
-                    <div class="flex w-full items-center justify-between">
-                        <span>{{ $company->displayName }}</span>
-                        @if ($company->isCurrent)
+                @if ($company->isCurrent)
+                    <flux:menu.item class="cursor-pointer" data-test="company-switcher-item">
+                        <div class="flex w-full items-center justify-between">
+                            <span>{{ $company->displayName }}</span>
                             <flux:icon name="check" class="size-4" />
-                        @endif
-                    </div>
-                </flux:menu.item>
+                        </div>
+                    </flux:menu.item>
+                @else
+                    {{-- A native form, not a Livewire action: a window.open() after the round trip gets popup-blocked. --}}
+                    <form method="POST" action="{{ route('companies.switch', $company->slug) }}" target="_blank" rel="noopener">
+                        @csrf
+                        <input type="hidden" name="from" value="{{ $current['slug'] ?? '' }}" />
+                        <flux:menu.item
+                            type="submit"
+                            icon:trailing="arrow-top-right-on-square"
+                            class="cursor-pointer"
+                            data-test="company-switcher-item"
+                        >
+                            {{ $company->displayName }}
+                        </flux:menu.item>
+                    </form>
+                @endif
             @endforeach
 
             <flux:menu.separator />

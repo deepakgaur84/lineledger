@@ -160,14 +160,13 @@ it('prepares cheque draw data in the QuickBooks format', function () {
 
     $data = app(ChequePdfRenderer::class)->dataFor($payment);
 
-    expect($data['date_mmddyyyy'])->toBe('05142026');
+    expect($data['date_comb'])->toBe('20260514');
     expect($data['date_slashed'])->toBe('5/14/2026');
     expect($data['payee'])->toBe('Acme Supplies');
     expect($data['amount_numeric'])->toBe('**154.63');
     expect($data['total_numeric'])->toBe('154.63');
     expect($data['memo'])->toBe('Refund');
-    expect($data['amount_words'])->toEndWith('One Hundred Fifty-Four and 63/100');
-    expect($data['amount_words'])->toStartWith('*'); // star-padded
+    expect($data['amount_words'])->toBe('*****One Hundred Fifty-Four and 63/100');
     expect($data['lines'])->toHaveCount(1);
     expect($data['lines'][0])->toMatchArray([
         'account' => 'B-200',

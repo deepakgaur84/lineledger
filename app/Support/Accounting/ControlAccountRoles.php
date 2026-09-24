@@ -4,18 +4,21 @@ namespace App\Support\Accounting;
 
 use App\Enums\AccountSubtype;
 use App\Models\Account;
+use App\Services\Posting\ChequePoster;
 use App\Services\Posting\ControlAccountResolver;
 
 /**
- * Which of a company's accounts demand a counterparty on every line, and which
- * role that counterparty must hold: a customer on Accounts Receivable, a vendor
- * on Accounts Payable.
+ * Which of a company's accounts are AR/AP control accounts, and so what a line
+ * coded to one must do: name its counterparty, and carry no sales tax.
  *
  * `journal_lines.contact_id` is the AR/AP sub-ledger — the AR/AP aging reports,
  * the contact statements and the cached `ar_balance_cents` / `ap_balance_cents`
  * all read it and nothing else — so a control-account line without the right
- * contact lands in the reports' "unattributed" catch-all. This map is the single
- * definition the forms and the API both gate on.
+ * contact lands in the reports' "unattributed" catch-all. And the balance it
+ * settles already includes the tax its originating invoice or bill recorded, so
+ * a line settling it must not be taxed again ({@see excludesTax()}).
+ *
+ * This map is the single definition the forms and the API both gate on.
  *
  * Matched by subtype rather than `is_system`, so per-currency control accounts
  * (see {@see ControlAccountResolver}) are covered too.
@@ -52,6 +55,30 @@ final class ControlAccountRoles
         }
 
         return $roles;
+    }
+
+    /**
+     * Whether a line coded to this account must not carry sales tax.
+     *
+     * A control account never does: the receivable or payable already includes
+     * the tax its originating invoice or bill recorded, so taxing the
+     * settlement a second time double-counts it. On a cheque that is not
+     * cosmetic — {@see ChequePoster::expenseByAccount()} grosses a
+     * non-recoverable tax into the very AR/AP leg, moving the contact's
+     * sub-ledger by more than the payment, and a recoverable code adds an
+     * input-tax-credit leg for a credit that was never incurred, overstating
+     * the GST/HST return.
+     *
+     * Deliberately keyed off the same account set as {@see map()}: the two
+     * rules are distinct — one names a counterparty, one forbids tax — but
+     * both follow from the account being a control account, so they move
+     * together.
+     *
+     * @param  array<int, string>  $roles  from {@see map()}, hoisted by the caller
+     */
+    public static function excludesTax(array $roles, ?int $accountId): bool
+    {
+        return $accountId !== null && isset($roles[(int) $accountId]);
     }
 
     /**

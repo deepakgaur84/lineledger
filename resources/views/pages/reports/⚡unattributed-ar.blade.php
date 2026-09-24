@@ -271,7 +271,7 @@ new #[Title('Unattributed AR')] class extends Component
                         autocomplete="off"
                         data-test="assign-customer-search"
                     />
-                    <div x-show="open" x-cloak x-transition.opacity.duration.100ms class="absolute left-0 right-0 top-full z-20 mt-1 max-h-60 overflow-auto rounded-md border border-border bg-card py-1 shadow-lg">
+                    <div x-show="open" x-cloak x-transition.opacity.duration.100ms data-escape-guard class="absolute left-0 right-0 top-full z-20 mt-1 max-h-60 overflow-auto rounded-md border border-border bg-card py-1 shadow-lg">
                         @forelse ($this->customerOptions as $opt)
                             <button type="button" wire:click="chooseCustomer({{ $opt->id }})" @click="open = false" class="block w-full px-3 py-2 text-left text-sm hover:bg-muted" data-test="assign-customer-option">
                                 {{ $opt->display_name }}

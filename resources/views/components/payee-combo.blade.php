@@ -164,6 +164,7 @@
 
             <div
                 x-show="open"
+                data-escape-guard
                 x-cloak
                 x-transition.opacity.duration.100ms
                 class="absolute left-0 right-0 top-full z-20 mt-1 max-h-60 overflow-auto rounded-md border border-border bg-card py-1 shadow-lg"

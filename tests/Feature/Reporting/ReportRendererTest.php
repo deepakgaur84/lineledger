@@ -104,6 +104,21 @@ it('applies a settings snapshot to the component before rendering', function () 
     expect($artifact->filename)->toBe('income-statement-2025-03-01-2025-03-31.pdf');
 });
 
+it('applies a contact list search snapshot before rendering', function () {
+    $company = Company::factory()->create(['fiscal_year_start_month' => 1]);
+
+    app()->instance('current_company', $company);
+    Contact::create(['display_name' => 'Arts Council', 'is_customer' => true]);
+    Contact::create(['display_name' => 'Bolt Buyer', 'is_customer' => true]);
+    app()->forgetInstance('current_company');
+
+    $artifact = app(ReportRenderer::class)->render($company, 'reports.customer-contact-list', ['search' => 'arts'], 'xlsx');
+    $cells = rendererXlsxCells($artifact->bytes);
+
+    expect($cells)->toContain('Arts Council')
+        ->not->toContain('Bolt Buyer');
+});
+
 it('re-resolves a saved date preset against today when asked', function () {
     $this->travelTo(CarbonImmutable::parse('2026-06-09 12:00:00'));
 

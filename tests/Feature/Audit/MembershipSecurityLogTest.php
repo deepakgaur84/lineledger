@@ -145,10 +145,9 @@ test('switching company records a CompanySwitched event with from and to slugs',
     $user->switchCompany($user->personalCompany());
     $fromSlug = $user->personalCompany()->slug;
 
-    $this->actingAs($user);
-
-    Livewire::test('company-switcher')
-        ->call('switchCompany', $companyB->slug);
+    $this->actingAs($user)
+        ->post(route('companies.switch', $companyB->slug), ['from' => $fromSlug])
+        ->assertRedirect();
 
     $row = latestEvent(SecurityEvent::CompanySwitched);
 

@@ -8,6 +8,7 @@
 <div
     x-ref="tape"
     x-show="showTape"
+    data-escape-guard
     x-cloak
     x-transition.opacity
     class="fixed z-50 min-w-40 rounded-lg border border-border bg-card p-2 font-mono text-xs shadow-lg"

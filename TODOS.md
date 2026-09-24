@@ -61,6 +61,25 @@ land on S3.
 **Priority:** P1
 **Depends on:** None
 
+## Documentation
+
+### Sync the marketing-site docs mirror to 1.1.0
+
+**What:** Bring `~/Code/lineledger-site` up to date with the in-app docs: the 29 pages under
+`src/content/docs`, the `public/images/docs` screenshots, the three tutorials, and the
+`src/config/docs-nav.ts` grouping, now that the in-app docs nav mirrors the app sidebar.
+
+**Why:** The site was last synced 2026-08-15 and already contradicts the app — pages, nav
+order, and screenshots have all moved since.
+
+**Context:** The in-app docs are the source of truth (`resources/views/pages/docs/`, screenshots
+in `public/docs/screenshots/<page>/`). Mirror them page by page rather than rewriting; the site's
+nav grouping should follow the app sidebar order the in-app nav now uses.
+
+**Effort:** M
+**Priority:** P1
+**Depends on:** None
+
 ## Testing
 
 ### End-to-end test for the guest country-switcher banner
@@ -82,4 +101,46 @@ cross-origin link meaningfully. The banner and its Alpine block are
 **Priority:** P2
 **Depends on:** Stand up the US app deployment at books.lineledger.com
 
+### Add the new in-app docs pages to the marketing site's docs-nav slug test
+
+**What:** The marketing site's docs-nav test enforces slug pairing between its nav and its
+content pages, so each new in-app docs page — `opening-balances`, `insights`,
+`employee-portal`, `site-administration`, `self-hosting` — must be added there (nav entry +
+content page) or that suite fails once the mirror is synced.
+
+**Why:** Without the pairing, the site build passes while the new pages are silently
+unreachable from its nav.
+
+**Effort:** S
+**Priority:** P2
+**Depends on:** Sync the marketing-site docs mirror to 1.1.0
+
 ## Completed
+
+## Known issues found during the 1.1.0 docs audit
+
+### Template-based import steps can't read a Windows-1252 CSV
+
+**What:** The Items, Open invoices (template layout), Open bills, Inventory on hand, Fixed
+assets and Trial balance steps read the file byte for byte through `CsvParser`, which does no
+encoding conversion and does not strip a UTF-8 byte-order mark. Excel's plain "CSV" on
+Windows is Windows-1252, so accented names (Café, Montréal) arrive as invalid UTF-8; Excel's
+"CSV UTF-8" adds a BOM that hides the first column.
+
+**Why:** The QuickBooks-export readers (chart of accounts, contacts, open invoices in the QB
+layout) already convert Windows-1252; the template steps should behave the same. The docs
+currently tell users to export from Google Sheets or LibreOffice instead.
+
+**Effort:** S · **Priority:** P2 · **Depends on:** None
+
+### A copied 2210 account gets the new organization's provincial agency
+
+**What:** When the setup wizard copies another organization's chart, `seedProvincialSalesTax()`
+attaches the NEW organization's provincial agency and tax code to any non-system tax-payable
+account coded 2210, whatever tax it was for (e.g. a BC "PST Payable" copied into a Manitoba
+organization gets Manitoba RST).
+
+**Why:** The account name and the agency then disagree. Either rename the account to match or
+skip the provincial seeding when the copied account's tax does not match the new province.
+
+**Effort:** S · **Priority:** P3 · **Depends on:** None

@@ -31,6 +31,9 @@ new #[Title('Customer Contact List')] class extends Component {
     #[Url(as: 'dir')]
     public string $sortDir = 'asc';
 
+    #[Url(as: 'q')]
+    public string $search = '';
+
     public function mount(Company $company): void
     {
         $this->company = $company;
@@ -69,6 +72,12 @@ new #[Title('Customer Contact List')] class extends Component {
         return Contact::query()
             ->where('is_customer', true)
             ->when(! $this->includeInactive, fn ($q) => $q->where('is_active', true))
+            ->when(trim($this->search) !== '', fn ($q) => $q->where(function ($q) {
+                $term = '%'.trim($this->search).'%';
+                $q->where('display_name', 'like', $term)
+                    ->orWhere('company_name', 'like', $term)
+                    ->orWhere('email', 'like', $term);
+            }))
             ->with('defaultTerms')
             ->orderBy($orderColumn, $dir)
             ->orderBy('display_name')
@@ -173,6 +182,7 @@ new #[Title('Customer Contact List')] class extends Component {
         :emailable="$this->canEmailReport()"
         :print-url="$this->printReportUrl()"
     >
+        <flux:input wire:model.live.debounce.300ms="search" :label="__('Search')" :placeholder="__('Name, company or email…')" icon="magnifying-glass" class="max-w-[220px]" data-test="contact-list-search" />
         <flux:switch wire:model.live="includeInactive" :label="__('Include inactive')" data-test="include-inactive-toggle" />
     </x-reports.control-bar>
 
@@ -209,7 +219,7 @@ new #[Title('Customer Contact List')] class extends Component {
                         <td class="px-4 py-2 text-right font-mono">{{ number_format($row['balance'] / 100, 2) }}</td>
                     </tr>
                 @empty
-                    <tr><td colspan="8" class="px-4 py-8 text-center text-muted-foreground">{{ __('No customers to list.') }}</td></tr>
+                    <tr><td colspan="8" class="px-4 py-8 text-center text-muted-foreground">{{ trim($search) !== '' ? __('No customers match your search.') : __('No customers to list.') }}</td></tr>
                 @endforelse
             </tbody>
             @if (! empty($this->rows))

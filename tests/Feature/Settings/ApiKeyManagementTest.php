@@ -29,6 +29,23 @@ it('lets an owner create an API key via Livewire', function () {
     expect(SecurityLog::query()->where('event', SecurityEvent::ApiKeyCreated->value)->exists())->toBeTrue();
 });
 
+it('keeps managing the company the panel was opened for after another tab switches company', function () {
+    $user = User::factory()->create();
+    $opened = $user->currentCompany;
+    $other = Company::factory()->create();
+    $other->members()->attach($user, ['role' => CompanyRole::Owner->value]);
+
+    $panel = Livewire::actingAs($user)->test('pages::settings.api-keys');
+
+    // A new tab opens the other company, moving the user's current company.
+    $user->switchCompany($other);
+
+    $panel->set('label', 'Older tab key')->call('create');
+
+    $key = CompanyApiKey::query()->withoutGlobalScopes()->firstOrFail();
+    expect($key->company_id)->toBe($opened->id);
+});
+
 it('creates an API key with a chosen expiry', function () {
     $user = User::factory()->create();
 

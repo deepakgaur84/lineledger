@@ -3,7 +3,11 @@
     <head>
         @include('partials.head')
     </head>
-<body class="min-h-screen bg-background">
+<body
+    class="min-h-screen bg-background"
+    @if (auth()->user()?->escape_goes_back) data-escape-back @endif
+    data-escape-back-confirm="{{ __('Leave this page? Changes you haven\'t saved will be lost.') }}"
+>
         <flux:sidebar sticky collapsible="mobile" class="border-e border-sidebar-border bg-sidebar">
             <flux:sidebar.header>
                 <livewire:company-switcher />
@@ -98,7 +102,8 @@
 
             <flux:spacer />
 
-            @php($supportUnread = auth()->user()->unreadSupportRepliesCount())
+            @php($supportEnabled = (bool) config('support.enabled'))
+            @php($supportUnread = $supportEnabled ? auth()->user()->unreadSupportRepliesCount() : 0)
             <flux:dropdown position="top" align="end">
                 <div class="relative">
                     <flux:profile
@@ -133,12 +138,14 @@
                         <flux:menu.item :href="route('docs.getting-started')" icon="book-open" wire:navigate>
                             {{ __('Documentation') }}
                         </flux:menu.item>
-                        <flux:menu.item :href="route('support.index')" icon="lifebuoy" wire:navigate data-test="support-link-mobile">
-                            {{ __('Support') }}
-                            @if ($supportUnread)
-                                <flux:badge size="sm" color="sky" class="ms-auto">{{ $supportUnread }}</flux:badge>
-                            @endif
-                        </flux:menu.item>
+                        @if ($supportEnabled)
+                            <flux:menu.item :href="route('support.index')" icon="lifebuoy" wire:navigate data-test="support-link-mobile">
+                                {{ __('Support') }}
+                                @if ($supportUnread)
+                                    <flux:badge size="sm" color="sky" class="ms-auto">{{ $supportUnread }}</flux:badge>
+                                @endif
+                            </flux:menu.item>
+                        @endif
                         <flux:menu.item :href="route('profile.edit')" icon="cog" wire:navigate>
                             {{ __('Settings') }}
                         </flux:menu.item>

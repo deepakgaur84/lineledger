@@ -1,6 +1,14 @@
 import './charts.js';
 import { evaluateAmountExpression, isAmountExpression, roundHalfUp } from './amount-expression.js';
 import { editLockBlockedPoller, editLockKeeper } from './edit-lock.js';
+import { installEscapeBack } from './escape-back.js';
+import { installDatePicker } from './date-picker.js';
+
+/** Escape goes back to the previous page. See ./escape-back.js. */
+installEscapeBack();
+
+/** Clicking a date field opens its calendar. See ./date-picker.js. */
+installDatePicker();
 
 document.addEventListener('alpine:init', () => {
     /**

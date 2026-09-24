@@ -3,6 +3,8 @@
 use App\Enums\CompanyRole;
 use App\Models\Company;
 use App\Models\User;
+use App\Services\Reporting\Render\RenderedArtifact;
+use App\Services\Reporting\Render\ReportRenderer;
 
 beforeEach(function () {
     $this->company = Company::factory()->create(['fiscal_year_start_month' => 1]);
@@ -29,6 +31,22 @@ it('serves a report as an inline PDF honoring the page query string', function (
         ->toContain('income-statement-2025-03-01-2025-03-31.pdf');
 
     expect(substr($response->getContent(), 0, 4))->toBe('%PDF');
+});
+
+it('forwards the contact list search from the query string to the renderer', function () {
+    $this->mock(ReportRenderer::class)
+        ->shouldReceive('render')
+        ->once()
+        ->withArgs(fn ($company, $reportKey, $settings, $format) => $reportKey === 'reports.customer-contact-list'
+            && ($settings['search'] ?? null) === 'arts'
+            && $format === 'pdf')
+        ->andReturn(new RenderedArtifact('%PDF-stub', 'customer-contact-list.pdf', 'application/pdf'));
+
+    $this->actingAs($this->user)->get(route('reports.print', [
+        'company' => $this->company->slug,
+        'reportKey' => 'reports.customer-contact-list',
+        'q' => 'arts',
+    ]))->assertOk();
 });
 
 it('rejects report keys outside the renderable registry', function () {

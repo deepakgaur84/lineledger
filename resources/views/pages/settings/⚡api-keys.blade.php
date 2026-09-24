@@ -46,14 +46,24 @@ new class extends Component {
 
     public bool $canManage = false;
 
+    /**
+     * The company this panel was opened for. Pinned at mount because the user's
+     * current company follows whichever tab loaded last — re-reading it would
+     * let an older tab mint or revoke another company's keys.
+     */
+    #[Locked]
+    public ?int $companyId = null;
+
     public function mount(): void
     {
+        $this->companyId = auth()->user()?->current_company_id;
+
         $this->loadKeys();
     }
 
     protected function company(): ?Company
     {
-        return auth()->user()?->currentCompany;
+        return once(fn () => $this->companyId === null ? null : Company::find($this->companyId));
     }
 
     /**
