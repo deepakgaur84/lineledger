@@ -851,7 +851,7 @@ new #[Title('Transactions')] class extends Component {
                     @endif
 
                     <tr data-test="txn-row">
-                        <td class="px-4 py-2 whitespace-nowrap">{{ $line->entry_date }}</td>
+                        <td class="px-4 py-2 whitespace-nowrap">{{ $line->entry_date->toDateString() }}</td>
                         @if ($this->columnVisible('entry_no'))
                             <td class="px-4 py-2 font-mono">{{ $line->journalEntry?->entry_no }}</td>
                         @endif
