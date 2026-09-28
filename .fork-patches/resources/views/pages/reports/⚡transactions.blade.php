@@ -581,13 +581,7 @@ new #[Title('Transactions')] class extends Component {
 
         foreach ($this->filteredQuery()->lazy() as $line) {
             $row = [
-                // (string) would invoke Carbon's own __toString() (the full
-                // datetime, e.g. "2026-05-01 00:00:00") — that bypasses the
-                // model's own 'date:Y-m-d' cast entirely, since the cast
-                // parameter only controls JSON/array serialization, not
-                // PHP's string-casting. toDateString() always returns just
-                // the date portion regardless.
-                'date' => $line->entry_date->toDateString(),
+                'date' => $line->entry_date?->toDateString(),
                 'entry_no' => $line->journalEntry?->entry_no,
                 'account' => trim(($line->account?->code ?? '').' — '.($line->account?->name ?? ''), ' —'),
                 'name' => $line->contact?->display_name,
@@ -851,7 +845,7 @@ new #[Title('Transactions')] class extends Component {
                     @endif
 
                     <tr data-test="txn-row">
-                        <td class="px-4 py-2 whitespace-nowrap">{{ $line->entry_date->toDateString() }}</td>
+                        <td class="px-4 py-2 whitespace-nowrap">{{ $line->entry_date?->toDateString() }}</td>
                         @if ($this->columnVisible('entry_no'))
                             <td class="px-4 py-2 font-mono">{{ $line->journalEntry?->entry_no }}</td>
                         @endif
