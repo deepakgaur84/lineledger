@@ -2,6 +2,7 @@
 
 use App\Enums\AccountSubtype;
 use App\Enums\AccountType;
+use App\Enums\DepreciationMethod;
 use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Account;
 use App\Models\AssetCategory;
@@ -31,6 +32,10 @@ new #[Title('Asset categories')] class extends Component {
 
     public ?int $f_default_useful_life_months = null;
 
+    public string $f_default_depreciation_method = 'straight_line';
+
+    public string $f_default_depreciation_rate = '';
+
     public ?string $f_cca_class = null;
 
     public bool $f_is_active = true;
@@ -47,6 +52,7 @@ new #[Title('Asset categories')] class extends Component {
             'editingId', 'f_name', 'f_description',
             'f_default_asset_account_id', 'f_default_accumulated_depreciation_account_id',
             'f_default_depreciation_expense_account_id', 'f_default_useful_life_months', 'f_cca_class',
+            'f_default_depreciation_method', 'f_default_depreciation_rate',
         ]);
         $this->f_is_active = true;
         Flux::modal('asset-categories-form')->show();
@@ -67,9 +73,21 @@ new #[Title('Asset categories')] class extends Component {
         $this->f_default_accumulated_depreciation_account_id = $c->default_accumulated_depreciation_account_id;
         $this->f_default_depreciation_expense_account_id = $c->default_depreciation_expense_account_id;
         $this->f_default_useful_life_months = $c->default_useful_life_months;
+        $this->f_default_depreciation_method = $c->defaultDepreciationMethod()->value;
+        $this->f_default_depreciation_rate = $c->default_depreciation_rate !== null
+            ? rtrim(rtrim((string) $c->default_depreciation_rate, '0'), '.')
+            : '';
         $this->f_cca_class = $c->cca_class?->value;
         $this->f_is_active = (bool) $c->is_active;
         Flux::modal('asset-categories-form')->show();
+    }
+
+    public function updatedFDefaultDepreciationMethod(string $value): void
+    {
+        // Picking declining balance offers the usual rate unless one is already there.
+        if ($value === DepreciationMethod::DecliningBalance->value && trim($this->f_default_depreciation_rate) === '') {
+            $this->f_default_depreciation_rate = (string) DepreciationMethod::DEFAULT_RATE;
+        }
     }
 
     public function save(): void
@@ -93,8 +111,16 @@ new #[Title('Asset categories')] class extends Component {
             'f_default_accumulated_depreciation_account_id' => ['nullable', 'integer', Rule::exists('accounts', 'id')->where('company_id', $companyId)->where('subtype', AccountSubtype::FixedAsset->value)],
             'f_default_depreciation_expense_account_id' => ['nullable', 'integer', Rule::exists('accounts', 'id')->where('company_id', $companyId)->where('type', AccountType::Expense->value)],
             'f_default_useful_life_months' => ['nullable', 'integer', 'min:1', 'max:1200'],
+            'f_default_depreciation_method' => ['required', Rule::enum(DepreciationMethod::class)],
+            'f_default_depreciation_rate' => $this->f_default_depreciation_method === DepreciationMethod::DecliningBalance->value
+                ? ['nullable', 'numeric', 'between:'.DepreciationMethod::MIN_RATE.','.DepreciationMethod::MAX_RATE, 'decimal:0,3']
+                : ['nullable'],
             'f_cca_class' => ['nullable', Rule::enum(\App\Enums\CcaClass::class)],
             'f_is_active' => ['boolean'],
+        ], [
+            'f_default_depreciation_rate.numeric' => __('Enter the rate as a number, for example 20.'),
+            'f_default_depreciation_rate.between' => __('The rate must be between :min% and :max% a year.'),
+            'f_default_depreciation_rate.decimal' => __('Use at most 3 decimal places.'),
         ]);
 
         app(\App\Actions\Assets\SaveAssetCategory::class)->handle([
@@ -104,6 +130,8 @@ new #[Title('Asset categories')] class extends Component {
             'default_accumulated_depreciation_account_id' => $validated['f_default_accumulated_depreciation_account_id'] ?: null,
             'default_depreciation_expense_account_id' => $validated['f_default_depreciation_expense_account_id'] ?: null,
             'default_useful_life_months' => $validated['f_default_useful_life_months'],
+            'default_depreciation_method' => $validated['f_default_depreciation_method'],
+            'default_depreciation_rate' => filled($validated['f_default_depreciation_rate'] ?? null) ? $validated['f_default_depreciation_rate'] : null,
             'cca_class' => $validated['f_cca_class'] ?: null,
             'is_active' => $validated['f_is_active'],
         ], $editingCategory = $this->editingId ? AssetCategory::findOrFail($this->editingId) : null);
@@ -162,6 +190,7 @@ new #[Title('Asset categories')] class extends Component {
                         <th class="px-4 py-2 text-left">{{ __('Name') }}</th>
                         <th class="px-4 py-2 text-left">{{ __('Default asset account') }}</th>
                         <th class="px-4 py-2 text-left">{{ __('Useful life (months)') }}</th>
+                        <th class="px-4 py-2 text-left">{{ __('Depreciation') }}</th>
                         <th class="px-4 py-2"></th>
                     </tr>
                 </thead>
@@ -177,13 +206,14 @@ new #[Title('Asset categories')] class extends Component {
                                 @endif
                             </td>
                             <td class="px-4 py-2">{{ $c->default_useful_life_months ?? '—' }}</td>
+                            <td class="px-4 py-2" data-test="asset-category-method">{{ __($c->defaultDepreciationMethod()->label()) }}@if ($c->default_depreciation_rate !== null) — {{ rtrim(rtrim((string) $c->default_depreciation_rate, '0'), '.') }}%@endif</td>
                             <td class="px-4 py-2 text-right">
                                 <flux:button variant="ghost" size="sm" icon="pencil" wire:click="openEdit({{ $c->id }})" data-test="edit-asset-category-button" />
                             </td>
                         </tr>
                     @endforeach
                     @if ($this->categories->isEmpty())
-                        <tr><td colspan="4" class="px-4 py-6 text-center text-muted-foreground">{{ __('No asset categories yet.') }}</td></tr>
+                        <tr><td colspan="5" class="px-4 py-6 text-center text-muted-foreground">{{ __('No asset categories yet.') }}</td></tr>
                     @endif
                 </tbody>
             </table>
@@ -222,6 +252,16 @@ new #[Title('Asset categories')] class extends Component {
             </flux:select>
 
             <flux:input type="number" min="1" wire:model="f_default_useful_life_months" :label="__('Default useful life (months)')" data-test="asset-category-useful-life" />
+
+            <flux:select wire:model.live="f_default_depreciation_method" :label="__('Default depreciation method')" data-test="asset-category-method-select">
+                @foreach (\App\Enums\DepreciationMethod::cases() as $method)
+                    <flux:select.option :value="$method->value">{{ __($method->label()) }}</flux:select.option>
+                @endforeach
+            </flux:select>
+
+            @if ($f_default_depreciation_method === 'declining_balance')
+                <flux:input type="number" step="0.001" min="1" max="100" wire:model="f_default_depreciation_rate" :label="__('Default annual rate (%)')" data-test="asset-category-rate" />
+            @endif
 
             @if ($company->supports(\App\Enums\JurisdictionCapability::CanadianCapitalCostAllowance))
                 <flux:select wire:model="f_cca_class" :label="__('CCA class')" :description="__('Capital cost allowance class for the T2125 / CCA schedule.')" data-test="asset-category-cca-class">

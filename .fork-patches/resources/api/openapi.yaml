@@ -1604,6 +1604,8 @@ components:
         default_accumulated_depreciation_account_id: { type: [integer, "null"] }
         default_depreciation_expense_account_id: { type: [integer, "null"] }
         default_useful_life_months: { type: [integer, "null"] }
+        default_depreciation_method: { type: string, enum: [straight_line, declining_balance, immediate], description: "The method new assets in this category start with." }
+        default_depreciation_rate: { type: [number, "null"], description: "Annual percentage new declining_balance assets start with. Null for the other methods." }
         is_active: { type: boolean }
         created_at: { type: [string, "null"], format: date-time }
     AssetCategoryInput:
@@ -1616,6 +1618,8 @@ components:
         default_accumulated_depreciation_account_id: { type: [integer, "null"], description: "An account with subtype fixed_asset." }
         default_depreciation_expense_account_id: { type: [integer, "null"], description: "An expense account." }
         default_useful_life_months: { type: [integer, "null"], minimum: 1, maximum: 1200 }
+        default_depreciation_method: { type: string, enum: [straight_line, declining_balance, immediate], default: straight_line, description: "Omit on update to keep the category's current method." }
+        default_depreciation_rate: { type: [number, "null"], minimum: 1, maximum: 100, description: "Annual percentage, 1 to 100 with up to 3 decimals. Only kept for declining_balance, where leaving it blank means 20. Omit on update to keep the current rate." }
         is_active: { type: boolean }
 
     # ---- Items & stock --------------------------------------------------
