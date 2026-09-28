@@ -13,7 +13,6 @@ use App\Rules\MoneyString;
 use App\Services\Assets\AssetSourcePrefiller;
 use App\Services\Posting\DocumentNumberGenerator;
 use App\Support\Money;
-use Closure;
 use Flux\Flux;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\Rule;
@@ -240,7 +239,7 @@ new #[Title('Asset')] class extends Component {
             'depreciation_rate' => $this->depreciation_method === DepreciationMethod::DecliningBalance->value
                 ? ['required', 'numeric', 'between:'.DepreciationMethod::MIN_RATE.','.DepreciationMethod::MAX_RATE, 'decimal:0,3']
                 : ['nullable'],
-            'materiality_limit' => ['nullable', 'string', new MoneyString, function (string $attribute, mixed $value, Closure $fail): void {
+            'materiality_limit' => ['nullable', 'string', new MoneyString, function (string $attribute, mixed $value, \Closure $fail): void {
                 if ((string) $value !== '' && (Money::tryFromString((string) $value)?->isNegative() ?? false)) {
                     $fail(__('The materiality limit cannot be negative.'));
                 }

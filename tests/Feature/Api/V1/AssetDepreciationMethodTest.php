@@ -193,3 +193,46 @@ it('requires a rate when an update switches to declining balance', function () {
         ->assertStatus(422)
         ->assertJsonValidationErrors(['depreciation_rate']);
 });
+
+// The depreciation fields share these two request classes with the asset's
+// status, disposal and housekeeping fields. Nothing else covered those, and an
+// edit that dropped their rules would have made the API silently ignore them.
+it('still validates and stores the status, disposal, notes and active flag', function () {
+    // A retired status needs its disposal date.
+    $this->postJson('/api/v1/assets', methodApiPayload(['status' => 'sold']), methodApiHeader())
+        ->assertStatus(422)
+        ->assertJsonValidationErrors(['disposed_at']);
+
+    $this->postJson('/api/v1/assets', methodApiPayload([
+        'status' => 'sold',
+        'disposed_at' => '2026-03-31',
+        'disposal_notes' => 'Sold to a neighbour',
+        'notes' => 'Bought second-hand',
+        'is_active' => false,
+    ]), methodApiHeader())
+        ->assertStatus(201)
+        ->assertJsonPath('data.status', 'sold')
+        ->assertJsonPath('data.disposed_at', '2026-03-31')
+        ->assertJsonPath('data.disposal_notes', 'Sold to a neighbour')
+        ->assertJsonPath('data.notes', 'Bought second-hand')
+        ->assertJsonPath('data.is_active', false);
+});
+
+it('rejects an unknown asset status', function () {
+    $this->postJson('/api/v1/assets', methodApiPayload(['status' => 'vanished']), methodApiHeader())
+        ->assertStatus(422)
+        ->assertJsonValidationErrors(['status']);
+});
+
+it('still lets an update retire an asset and needs the disposal date to do it', function () {
+    $id = $this->postJson('/api/v1/assets', methodApiPayload(), methodApiHeader())->json('data.id');
+
+    $this->patchJson("/api/v1/assets/{$id}", methodApiPayload(['status' => 'disposed']), methodApiHeader())
+        ->assertStatus(422)
+        ->assertJsonValidationErrors(['disposed_at']);
+
+    $this->patchJson("/api/v1/assets/{$id}", methodApiPayload(['status' => 'disposed', 'disposed_at' => '2026-04-30']), methodApiHeader())
+        ->assertStatus(200)
+        ->assertJsonPath('data.status', 'disposed')
+        ->assertJsonPath('data.disposed_at', '2026-04-30');
+});

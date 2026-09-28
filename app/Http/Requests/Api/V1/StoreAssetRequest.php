@@ -65,6 +65,19 @@ class StoreAssetRequest extends FormRequest
             // declining_balance with no useful_life_months ends once the balance left
             // would be within this amount; null (or omitted) means 5% of cost.
             'materiality_limit_cents' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
+            'status' => ['sometimes', Rule::enum(AssetStatus::class)],
+            'disposed_at' => [
+                'nullable',
+                'date',
+                Rule::requiredIf(fn () => in_array($this->input('status'), [
+                    AssetStatus::Disposed->value,
+                    AssetStatus::Sold->value,
+                    AssetStatus::Lost->value,
+                ], true)),
+            ],
+            'disposal_notes' => ['nullable', 'string'],
+            'notes' => ['nullable', 'string'],
+            'is_active' => ['sometimes', 'boolean'],
         ];
     }
 }
