@@ -3,6 +3,7 @@
 namespace App\Services\Migration\Importers;
 
 use App\Enums\AssetStatus;
+use App\Enums\DepreciationMethod;
 use App\Models\Account;
 use App\Models\Asset;
 use App\Models\AssetCategory;
@@ -26,6 +27,11 @@ use Throwable;
  *   CR   Opening Balance Equity           (cost - accum_dep) net
  *
  * Asset categories are upserted by name.
+ *
+ * Each row may also carry a depreciation_method (straight_line, declining_balance/WDV or
+ * immediate/100% — blank means straight_line) and, for declining balance, an annual
+ * depreciation_rate from 1 to 100 (blank means 20). A rate on any other method is refused.
+ * The method and rate become the defaults of a category this import creates.
  */
 class FixedAssetsImporter implements Importer
 {
@@ -42,6 +48,7 @@ class FixedAssetsImporter implements Importer
             'asset_account_code', 'accum_depreciation_account_code', 'depreciation_expense_account_code',
             'acquired_date', 'in_service_date',
             'cost', 'salvage_value', 'useful_life_months',
+            'depreciation_method', 'depreciation_rate',
             'accumulated_depreciation_to_date',
             'serial_number', 'location', 'description',
         ];
@@ -61,6 +68,8 @@ class FixedAssetsImporter implements Importer
             'cost' => '45000.00',
             'salvage_value' => '5000.00',
             'useful_life_months' => '60',
+            'depreciation_method' => 'straight_line',
+            'depreciation_rate' => '',
             'accumulated_depreciation_to_date' => '18000.00',
             'serial_number' => 'VIN1234567890',
             'location' => 'Main yard',
@@ -145,6 +154,46 @@ class FixedAssetsImporter implements Importer
                 ? ($accountByCode[$row['depreciation_expense_account_code']] ?? null)
                 : null;
 
+            $methodText = trim((string) ($row['depreciation_method'] ?? ''));
+            $method = DepreciationMethod::StraightLine;
+
+            if ($methodText !== '') {
+                $parsedMethod = DepreciationMethod::fromLoose($methodText);
+
+                if ($parsedMethod === null) {
+                    $errors[] = ['row' => $rowNum, 'message' => "depreciation_method '{$methodText}' is not recognised — use straight_line, declining_balance (WDV) or immediate (100%)."];
+
+                    continue;
+                }
+
+                $method = $parsedMethod;
+            }
+
+            $rateText = trim(str_replace('%', '', (string) ($row['depreciation_rate'] ?? '')));
+            $rate = null;
+
+            if ($rateText !== '') {
+                $inWindow = preg_match('/^(\d+(\.\d{1,3})?|\.\d{1,3})$/', $rateText) === 1
+                    && (float) $rateText >= DepreciationMethod::MIN_RATE
+                    && (float) $rateText <= DepreciationMethod::MAX_RATE;
+
+                if (! $inWindow) {
+                    $errors[] = ['row' => $rowNum, 'message' => 'depreciation_rate must be a number from '.DepreciationMethod::MIN_RATE.' to '.DepreciationMethod::MAX_RATE.' (percent a year), with at most 3 decimals.'];
+
+                    continue;
+                }
+
+                if (! $method->usesRate()) {
+                    $errors[] = ['row' => $rowNum, 'message' => 'depreciation_rate only applies to the declining_balance method — set depreciation_method to WDV, or leave the rate blank.'];
+
+                    continue;
+                }
+
+                $rate = $rateText;
+            } elseif ($method->usesRate()) {
+                $rate = (string) DepreciationMethod::DEFAULT_RATE;
+            }
+
             $accepted[] = [
                 'row' => $row,
                 'cost' => $costCents,
@@ -153,6 +202,8 @@ class FixedAssetsImporter implements Importer
                 'asset_account_id' => (int) $assetAccountId,
                 'accum_account_id' => $accumAccountId ? (int) $accumAccountId : null,
                 'dep_expense_id' => $depExpenseId ? (int) $depExpenseId : null,
+                'method' => $method,
+                'rate' => $rate,
             ];
 
             $preview[] = [
@@ -201,7 +252,7 @@ class FixedAssetsImporter implements Importer
                     $costCents = $a['cost'];
                     $accumCents = $a['accum'];
 
-                    $category = $this->resolveCategory($ctx->company->id, $row['category_name'], $a['asset_account_id'], $a['accum_account_id'], $a['dep_expense_id'], $row['useful_life_months']);
+                    $category = $this->resolveCategory($ctx->company->id, $row['category_name'], $a['asset_account_id'], $a['accum_account_id'], $a['dep_expense_id'], $row['useful_life_months'], $a['method'], $a['rate']);
 
                     $asset = Asset::withoutGlobalScopes()->create([
                         'company_id' => $ctx->company->id,
@@ -218,7 +269,9 @@ class FixedAssetsImporter implements Importer
                         'in_service_date' => $row['in_service_date'] ? CarbonImmutable::parse($row['in_service_date']) : null,
                         'cost_cents' => $costCents,
                         'salvage_value_cents' => $a['salvage'],
-                        'useful_life_months' => $row['useful_life_months'] ? (int) $row['useful_life_months'] : null,
+                        'useful_life_months' => $a['method']->usesUsefulLife() && $row['useful_life_months'] ? (int) $row['useful_life_months'] : null,
+                        'depreciation_method' => $a['method']->value,
+                        'depreciation_rate' => $a['rate'],
                         'status' => AssetStatus::InService,
                         'is_active' => true,
                     ]);
@@ -281,7 +334,7 @@ class FixedAssetsImporter implements Importer
         );
     }
 
-    protected function resolveCategory(int $companyId, ?string $name, int $assetAccountId, ?int $accumAccountId, ?int $depExpenseId, ?string $usefulLifeMonths): ?AssetCategory
+    protected function resolveCategory(int $companyId, ?string $name, int $assetAccountId, ?int $accumAccountId, ?int $depExpenseId, ?string $usefulLifeMonths, DepreciationMethod $method, ?string $rate): ?AssetCategory
     {
         if (! $name) {
             return null;
@@ -303,6 +356,8 @@ class FixedAssetsImporter implements Importer
             'default_accumulated_depreciation_account_id' => $accumAccountId,
             'default_depreciation_expense_account_id' => $depExpenseId,
             'default_useful_life_months' => $usefulLifeMonths ? (int) $usefulLifeMonths : null,
+            'default_depreciation_method' => $method->value,
+            'default_depreciation_rate' => $method->usesRate() ? $rate : null,
             'is_active' => true,
         ]);
     }

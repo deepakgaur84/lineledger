@@ -387,6 +387,19 @@ default new assets onto WDV at a given rate.
   `tests/Feature/BulkImport/FixedAssetImporterTest.php`,
   `tests/Feature/Migration/FixedAssetsImporterMethodsTest.php`.
 
+**A second mistake worth recording, from delivering this feature itself**:
+it was originally handed over as two separate `.fork-patches` zips
+(category defaults, then everything else), built minutes apart. Two of
+the 15 core files — `DepreciationMethod.php` and `openapi.yaml` — were
+genuinely present in both, at different states, and whichever commit
+landed last silently won. The immediate cause was a git branch reset
+between building the two zips, which wiped uncommitted edits to files
+that already existed (new files survive that; edits to existing ones
+don't) — but the deeper lesson is the one worth keeping: never split one
+feature's `.fork-patches` delivery across multiple zips when any file
+could plausibly appear in more than one. A single combined zip removes
+the ambiguity entirely, rather than relying on remembering commit order.
+
 **A mistake worth recording**: an early version of the WDV tail used a
 flat "under $12/year" cutoff, invented before the actual rule was
 specified. The real rule is either the useful-life tail or a materiality

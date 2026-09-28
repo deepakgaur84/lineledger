@@ -24,6 +24,8 @@ class AssetCategoryResource extends JsonResource
             'default_accumulated_depreciation_account_id' => $this->default_accumulated_depreciation_account_id,
             'default_depreciation_expense_account_id' => $this->default_depreciation_expense_account_id,
             'default_useful_life_months' => $this->default_useful_life_months,
+            'default_depreciation_method' => $this->defaultDepreciationMethod()->value,
+            'default_depreciation_rate' => $this->default_depreciation_rate !== null ? (float) $this->default_depreciation_rate : null,
             'is_active' => (bool) $this->is_active,
             'created_at' => optional($this->created_at)->toIso8601String(),
         ];

@@ -25,6 +25,9 @@ enum DepreciationMethod: string
     /** The highest annual rate a declining-balance asset accepts, in percent. */
     public const MAX_RATE = 100;
 
+    /** The rate offered whenever declining balance is chosen and none has been typed, in percent. */
+    public const DEFAULT_RATE = 20;
+
     public function label(): string
     {
         return match ($this) {

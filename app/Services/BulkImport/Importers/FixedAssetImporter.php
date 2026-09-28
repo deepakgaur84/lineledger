@@ -338,9 +338,6 @@ class FixedAssetImporter implements ImporterDefinition
         return ['errors' => [], 'data' => $data, 'method' => $method, 'rate_defaulted' => $rateDefaulted, 'category' => $category, 'probe' => $probe];
     }
 
-    /**
-     * @param  list<string>  $errors
-     */
     private function accountId(string $code, Company $company, bool $fixedAssetOnly, string $column, array &$errors): ?int
     {
         if ($code === '') {

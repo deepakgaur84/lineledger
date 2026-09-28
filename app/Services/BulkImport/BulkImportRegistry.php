@@ -7,6 +7,7 @@ use App\Services\BulkImport\Importers\BillPaymentImporter;
 use App\Services\BulkImport\Importers\CreditMemoImporter;
 use App\Services\BulkImport\Importers\CustomerImporter;
 use App\Services\BulkImport\Importers\CustomerReceiptImporter;
+use App\Services\BulkImport\Importers\FixedAssetImporter;
 use App\Services\BulkImport\Importers\InvoiceImporter;
 use App\Services\BulkImport\Importers\ItemCategoryImporter;
 use App\Services\BulkImport\Importers\ItemImporter;
@@ -34,6 +35,7 @@ class BulkImportRegistry
             app(CreditMemoImporter::class),
             app(BillPaymentImporter::class),
             app(CustomerReceiptImporter::class),
+            app(FixedAssetImporter::class),
         ];
     }
 
