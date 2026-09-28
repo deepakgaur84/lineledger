@@ -67,7 +67,17 @@ jobs:
             exit 0
           fi
 
-          changed_by_push="$(git diff --name-only "$before" "$after")"
+          # core.quotepath=false is essential, not cosmetic: by default git
+          # prints any path containing non-ASCII characters octal-escaped
+          # and wrapped in quotes (e.g. "resources/.../\342\232\241edit.blade.php").
+          # Every Livewire single-file page here is named with a leading ⚡,
+          # so without this, none of them ever matched the raw ⚡ paths that
+          # `find` prints below — a patched ⚡ file that upstream also changed
+          # was never seen as a collision, took the plain-copy path, and our
+          # stale .fork-patches copy silently overwrote upstream's changes
+          # (confirmed the hard way: it removed the agentic-writes settings
+          # section and reverted a soft-delete fix in the setup wizard).
+          changed_by_push="$(git -c core.quotepath=false diff --name-only "$before" "$after")"
 
           while IFS= read -r f; do
             [ -z "$f" ] && continue
