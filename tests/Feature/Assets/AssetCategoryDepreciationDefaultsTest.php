@@ -1,0 +1,150 @@
+<?php
+
+use App\Enums\CompanyRole;
+use App\Models\AssetCategory;
+use App\Models\Company;
+use App\Models\User;
+use Livewire\Livewire;
+
+beforeEach(function () {
+    $this->user = User::factory()->create();
+    $this->company = Company::factory()->create();
+    $this->company->members()->attach($this->user, ['role' => CompanyRole::Owner->value]);
+    $this->actingAs($this->user);
+    app()->instance('current_company', $this->company);
+});
+
+afterEach(function () {
+    app()->forgetInstance('current_company');
+});
+
+it('starts a new category on straight-line with no rate', function () {
+    Livewire::test('pages::settings.lists.asset-categories', ['company' => $this->company])
+        ->call('openCreate')
+        ->assertSet('f_default_depreciation_method', 'straight_line')
+        ->assertSet('f_default_depreciation_rate', '')
+        ->set('f_name', 'Furniture')
+        ->call('save')
+        ->assertHasNoErrors();
+
+    $category = AssetCategory::query()->where('name', 'Furniture')->firstOrFail();
+
+    expect($category->defaultDepreciationMethod()->value)->toBe('straight_line')
+        ->and($category->default_depreciation_rate)->toBeNull();
+});
+
+it('only shows the rate field for declining balance', function () {
+    $page = Livewire::test('pages::settings.lists.asset-categories', ['company' => $this->company])
+        ->call('openCreate')
+        ->assertSee('Default depreciation method')
+        ->assertDontSeeHtml('data-test="asset-category-rate"');
+
+    $page->set('f_default_depreciation_method', 'declining_balance')
+        ->assertSeeHtml('data-test="asset-category-rate"');
+
+    $page->set('f_default_depreciation_method', 'immediate')
+        ->assertDontSeeHtml('data-test="asset-category-rate"');
+});
+
+it('suggests 20% when declining balance is picked and no rate is there yet', function () {
+    Livewire::test('pages::settings.lists.asset-categories', ['company' => $this->company])
+        ->call('openCreate')
+        ->set('f_default_depreciation_method', 'declining_balance')
+        ->assertSet('f_default_depreciation_rate', '20');
+});
+
+it('keeps a rate that was already typed when declining balance is picked', function () {
+    Livewire::test('pages::settings.lists.asset-categories', ['company' => $this->company])
+        ->call('openCreate')
+        ->set('f_default_depreciation_rate', '12.5')
+        ->set('f_default_depreciation_method', 'declining_balance')
+        ->assertSet('f_default_depreciation_rate', '12.5');
+});
+
+it('saves a declining-balance category with its rate', function () {
+    Livewire::test('pages::settings.lists.asset-categories', ['company' => $this->company])
+        ->call('openCreate')
+        ->set('f_name', 'Vehicles')
+        ->set('f_default_depreciation_method', 'declining_balance')
+        ->set('f_default_depreciation_rate', '25')
+        ->call('save')
+        ->assertHasNoErrors();
+
+    $category = AssetCategory::query()->where('name', 'Vehicles')->firstOrFail();
+
+    expect($category->defaultDepreciationMethod()->value)->toBe('declining_balance')
+        ->and((float) $category->default_depreciation_rate)->toBe(25.0);
+});
+
+it('stores 20% when a declining-balance category is saved with the rate cleared', function () {
+    Livewire::test('pages::settings.lists.asset-categories', ['company' => $this->company])
+        ->call('openCreate')
+        ->set('f_name', 'Vehicles')
+        ->set('f_default_depreciation_method', 'declining_balance')
+        ->set('f_default_depreciation_rate', '')
+        ->call('save')
+        ->assertHasNoErrors();
+
+    expect((float) AssetCategory::query()->where('name', 'Vehicles')->firstOrFail()->default_depreciation_rate)->toBe(20.0);
+});
+
+it('refuses a default rate below 1% or above 100%', function () {
+    foreach (['0', '0.5', '0.99', '101', '250'] as $rate) {
+        Livewire::test('pages::settings.lists.asset-categories', ['company' => $this->company])
+            ->call('openCreate')
+            ->set('f_name', 'Vehicles')
+            ->set('f_default_depreciation_method', 'declining_balance')
+            ->set('f_default_depreciation_rate', $rate)
+            ->call('save')
+            ->assertHasErrors(['f_default_depreciation_rate']);
+    }
+
+    expect(AssetCategory::query()->count())->toBe(0);
+});
+
+it('does not keep a rate for straight-line or 100% on purchase', function () {
+    foreach (['straight_line', 'immediate'] as $i => $method) {
+        Livewire::test('pages::settings.lists.asset-categories', ['company' => $this->company])
+            ->call('openCreate')
+            ->set('f_name', "Category {$i}")
+            ->set('f_default_depreciation_method', 'declining_balance')
+            ->set('f_default_depreciation_rate', '25')
+            ->set('f_default_depreciation_method', $method)
+            ->call('save')
+            ->assertHasNoErrors();
+
+        $category = AssetCategory::query()->where('name', "Category {$i}")->firstOrFail();
+
+        expect($category->defaultDepreciationMethod()->value)->toBe($method)
+            ->and($category->default_depreciation_rate)->toBeNull();
+    }
+});
+
+it('loads a category\'s method and rate when it is edited', function () {
+    $category = AssetCategory::create([
+        'name' => 'Vehicles',
+        'default_depreciation_method' => 'declining_balance',
+        'default_depreciation_rate' => 30,
+        'is_active' => true,
+    ]);
+
+    Livewire::test('pages::settings.lists.asset-categories', ['company' => $this->company])
+        ->call('openEdit', $category->id)
+        ->assertSet('f_default_depreciation_method', 'declining_balance')
+        ->assertSet('f_default_depreciation_rate', '30');
+});
+
+it('shows each category\'s method and rate in the list', function () {
+    AssetCategory::create([
+        'name' => 'Vehicles',
+        'default_depreciation_method' => 'declining_balance',
+        'default_depreciation_rate' => 30,
+        'is_active' => true,
+    ]);
+    AssetCategory::create(['name' => 'Furniture', 'is_active' => true]);
+
+    Livewire::test('pages::settings.lists.asset-categories', ['company' => $this->company])
+        ->assertSee('Written-down value (declining balance)')
+        ->assertSee('30%')
+        ->assertSee('Straight-line');
+});
