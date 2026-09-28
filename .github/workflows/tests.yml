@@ -7,6 +7,11 @@ on:
   pull_request:
     branches:
       - main
+  # Lets reapply-fork-patches start a run for its own commits. GitHub never fires
+  # `on: push` for a commit pushed with the default GITHUB_TOKEN, so without this
+  # nothing tested any bot commit — including the one that copies patched files
+  # over their real paths, i.e. the code that actually ships.
+  workflow_dispatch:
 
 # Least privilege: the test job only reads the tree.
 permissions:

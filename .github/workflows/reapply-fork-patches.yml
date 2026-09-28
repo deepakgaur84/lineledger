@@ -268,6 +268,21 @@ jobs:
             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/docker.yml/dispatches" \
             -d '{"ref":"main"}'
 
+      - name: Trigger the test run for this commit
+        # Same reason as the docker trigger above: the bot's commit is exactly the
+        # tree that ships (patched files copied over their real paths), yet a
+        # GITHUB_TOKEN push never starts the `tests` workflow, so it was never
+        # tested. A dispatch is not subject to that restriction. Deliberately no
+        # continue-on-error: if this cannot dispatch, the run should go red rather
+        # than quietly bring the gap back.
+        if: steps.commit_and_push.outputs.pushed == 'true'
+        run: |
+          curl -fsS -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/tests.yml/dispatches" \
+            -d '{"ref":"main"}'
+
       - name: Fail loudly if any file needed manual review
         # Runs after the commit/push/trigger above already went through —
         # the app is already deployed and working either way (every
