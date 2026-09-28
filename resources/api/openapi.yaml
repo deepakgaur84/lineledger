@@ -1556,7 +1556,10 @@ components:
         in_service_date: { type: [string, "null"], format: date }
         cost_cents: { type: integer }
         salvage_value_cents: { type: integer }
-        useful_life_months: { type: [integer, "null"] }
+        useful_life_months: { type: [integer, "null"], description: "Used by straight_line (required for a schedule) and optionally by declining_balance, where the final year of the life is the tail that takes the remaining balance. Null for immediate." }
+        depreciation_method: { type: string, enum: [straight_line, declining_balance, immediate], description: "How book depreciation is calculated: straight_line spreads the depreciable base over useful_life_months; declining_balance charges depreciation_rate a year on the book value at the start of each 12-month block; immediate writes the whole depreciable base off in the in-service month." }
+        depreciation_rate: { type: [number, "null"], description: "Annual percentage (20 means 20% a year). Set only for declining_balance." }
+        materiality_limit_cents: { type: [integer, "null"], description: "declining_balance only. When the asset has no useful_life_months, the year in which the balance left would be at or below this amount writes the whole balance off. Null means the default, 5% of cost." }
         status: { type: string, enum: [in-service, disposed, sold, lost] }
         disposed_at: { type: [string, "null"], format: date }
         disposal_notes: { type: [string, "null"] }
@@ -1582,7 +1585,10 @@ components:
         in_service_date: { type: [string, "null"], format: date }
         cost_cents: { type: integer, minimum: 0, maximum: 999999999999 }
         salvage_value_cents: { type: [integer, "null"], minimum: 0, maximum: 999999999999 }
-        useful_life_months: { type: [integer, "null"], minimum: 1, maximum: 1200 }
+        useful_life_months: { type: [integer, "null"], minimum: 1, maximum: 1200, description: "Required for a straight_line schedule. Optional for declining_balance: when given, the final year of the life takes whatever balance is left. Cleared for immediate." }
+        depreciation_method: { type: string, enum: [straight_line, declining_balance, immediate], default: straight_line, description: "Omit on update to keep the asset's current method." }
+        depreciation_rate: { type: [number, "null"], minimum: 1, maximum: 100, description: "Annual percentage, 1 to 100 with up to 3 decimals; nothing below 1 is accepted. Required when depreciation_method is declining_balance; ignored (and not stored) for the other methods." }
+        materiality_limit_cents: { type: [integer, "null"], minimum: 0, maximum: 999999999999, description: "declining_balance only, and used only when there is no useful_life_months. Null or omitted means 5% of cost." }
         status: { type: string, enum: [in-service, disposed, sold, lost] }
         disposed_at: { type: [string, "null"], format: date, description: "Required when status is disposed, sold or lost." }
         disposal_notes: { type: [string, "null"] }

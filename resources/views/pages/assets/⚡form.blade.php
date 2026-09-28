@@ -3,6 +3,7 @@
 use App\Enums\AccountSubtype;
 use App\Enums\AccountType;
 use App\Enums\AssetStatus;
+use App\Enums\DepreciationMethod;
 use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Asset;
@@ -12,6 +13,7 @@ use App\Rules\MoneyString;
 use App\Services\Assets\AssetSourcePrefiller;
 use App\Services\Posting\DocumentNumberGenerator;
 use App\Support\Money;
+use Closure;
 use Flux\Flux;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\Rule;
@@ -54,6 +56,16 @@ new #[Title('Asset')] class extends Component {
 
     public ?int $useful_life_months = null;
 
+    public string $depreciation_method = 'straight_line';
+
+    public string $depreciation_rate = '';
+
+    public string $materiality_limit = '';
+
+    // True once the user has typed a materiality limit of their own. Until then
+    // the field simply shows the default (5% of cost) and follows the cost.
+    public bool $materiality_touched = false;
+
     public bool $auto_depreciate = false;
 
     public string $status = 'in-service';
@@ -95,6 +107,14 @@ new #[Title('Asset')] class extends Component {
             $this->cost = Money::fromCents((int) $asset->cost_cents)->toDecimalString();
             $this->salvage_value = Money::fromCents((int) $asset->salvage_value_cents)->toDecimalString();
             $this->useful_life_months = $asset->useful_life_months;
+            $this->depreciation_method = $asset->depreciationMethod()->value;
+            $this->depreciation_rate = $asset->depreciation_rate !== null
+                ? rtrim(rtrim((string) $asset->depreciation_rate, '0'), '.')
+                : '';
+            $this->materiality_touched = $asset->materiality_limit_cents !== null;
+            $this->materiality_limit = $asset->materiality_limit_cents !== null
+                ? Money::fromCents((int) $asset->materiality_limit_cents)->toDecimalString()
+                : '';
             $this->auto_depreciate = (bool) $asset->auto_depreciate;
             $this->status = $asset->status->value;
             $this->disposed_at = $asset->disposed_at?->toDateString() ?? '';
@@ -103,6 +123,7 @@ new #[Title('Asset')] class extends Component {
             $this->is_active = (bool) $asset->is_active;
             $this->source_type = $asset->source_type;
             $this->source_id = $asset->source_id;
+            $this->refreshMaterialityDefault();
 
             return;
         }
@@ -126,6 +147,43 @@ new #[Title('Asset')] class extends Component {
                 $this->source_id = $prefilled['source_id'];
             }
         }
+
+        $this->refreshMaterialityDefault();
+    }
+
+    public function updatedCost(): void
+    {
+        $this->refreshMaterialityDefault();
+    }
+
+    public function updatedDepreciationMethod(): void
+    {
+        $this->refreshMaterialityDefault();
+    }
+
+    public function updatedMaterialityLimit(string $value): void
+    {
+        // Typing a limit takes it out of the default's hands; clearing the field
+        // hands it back, and the default reappears.
+        $this->materiality_touched = trim($value) !== '';
+        $this->refreshMaterialityDefault();
+    }
+
+    /**
+     * Keep the materiality field at the default (5% of cost) for as long as the
+     * user has not chosen a limit of their own. Blank until there is a cost.
+     */
+    protected function refreshMaterialityDefault(): void
+    {
+        if ($this->materiality_touched) {
+            return;
+        }
+
+        $cost = Money::tryFromString($this->cost);
+
+        $this->materiality_limit = $cost !== null && $cost->isPositive()
+            ? Money::fromCents(Asset::defaultMaterialityCents($cost->cents))->toDecimalString()
+            : '';
     }
 
     public function updatedAssetCategoryId(?int $value): void
@@ -175,7 +233,18 @@ new #[Title('Asset')] class extends Component {
             'in_service_date' => ['nullable', Rule::requiredIf(fn () => $this->auto_depreciate), 'date'],
             'cost' => ['required', 'string', new MoneyString],
             'salvage_value' => ['required', 'string', new MoneyString],
-            'useful_life_months' => ['nullable', Rule::requiredIf(fn () => $this->auto_depreciate), 'integer', 'min:1', 'max:1200'],
+            // Straight-line needs a life to depreciate at all; declining balance treats one as
+            // optional (it sets where the tail falls); an immediate write-off ignores it.
+            'useful_life_months' => ['nullable', Rule::requiredIf(fn () => $this->auto_depreciate && $this->depreciation_method === DepreciationMethod::StraightLine->value), 'integer', 'min:1', 'max:1200'],
+            'depreciation_method' => ['required', Rule::enum(DepreciationMethod::class)],
+            'depreciation_rate' => $this->depreciation_method === DepreciationMethod::DecliningBalance->value
+                ? ['required', 'numeric', 'between:'.DepreciationMethod::MIN_RATE.','.DepreciationMethod::MAX_RATE, 'decimal:0,3']
+                : ['nullable'],
+            'materiality_limit' => ['nullable', 'string', new MoneyString, function (string $attribute, mixed $value, Closure $fail): void {
+                if ((string) $value !== '' && (Money::tryFromString((string) $value)?->isNegative() ?? false)) {
+                    $fail(__('The materiality limit cannot be negative.'));
+                }
+            }],
             'auto_depreciate' => ['boolean'],
             'status' => ['required', 'string', Rule::in(array_column(AssetStatus::cases(), 'value'))],
             'disposed_at' => ['nullable', 'date', Rule::requiredIf(fn () => in_array($this->status, ['disposed', 'sold', 'lost'], true))],
@@ -184,7 +253,11 @@ new #[Title('Asset')] class extends Component {
             'is_active' => ['boolean'],
         ], [
             'in_service_date.required' => __('Automatic depreciation needs an in-service date.'),
-            'useful_life_months.required' => __('Automatic depreciation needs a useful life in months.'),
+            'useful_life_months.required' => __('Straight-line depreciation needs a useful life in months.'),
+            'depreciation_rate.required' => __('Enter the annual depreciation rate — for example 20 for 20% a year.'),
+            'depreciation_rate.numeric' => __('Enter the rate as a number, for example 20.'),
+            'depreciation_rate.between' => __('The rate must be between :min% and :max% a year.'),
+            'depreciation_rate.decimal' => __('Use at most 3 decimal places.'),
             'accumulated_depreciation_account_id.required' => __('Automatic depreciation needs an accumulated depreciation account.'),
             'depreciation_expense_account_id.required' => __('Automatic depreciation needs a depreciation expense account.'),
         ]);
@@ -204,6 +277,13 @@ new #[Title('Asset')] class extends Component {
             'cost_cents' => Money::fromString($validated['cost'])->cents,
             'salvage_value_cents' => Money::fromString($validated['salvage_value'])->cents,
             'useful_life_months' => $validated['useful_life_months'],
+            'depreciation_method' => $validated['depreciation_method'],
+            'depreciation_rate' => filled($validated['depreciation_rate'] ?? null) ? $validated['depreciation_rate'] : null,
+            // Null keeps the default (5% of cost) so it keeps following the cost; only a
+            // limit the user actually chose is stored.
+            'materiality_limit_cents' => $this->materiality_touched && filled($validated['materiality_limit'] ?? null)
+                ? Money::fromString($validated['materiality_limit'])->cents
+                : null,
             'auto_depreciate' => $validated['auto_depreciate'],
             'status' => $validated['status'],
             'disposed_at' => $validated['disposed_at'] ?: null,
@@ -216,6 +296,23 @@ new #[Title('Asset')] class extends Component {
 
         Flux::toast(variant: 'success', text: __('Asset saved.'));
         $this->redirectRoute('assets.show', ['company' => $this->company->slug, 'asset' => $this->asset->id], navigate: true);
+    }
+
+    /**
+     * Whether the parameters the chosen method needs are filled in — what the
+     * auto-depreciate switch waits for, alongside the date and the two accounts.
+     */
+    #[Computed]
+    public function depreciationConfigured(): bool
+    {
+        return match ($this->depreciation_method) {
+            DepreciationMethod::StraightLine->value => $this->useful_life_months !== null && $this->useful_life_months >= 1,
+            DepreciationMethod::DecliningBalance->value => is_numeric($this->depreciation_rate)
+                && (float) $this->depreciation_rate >= DepreciationMethod::MIN_RATE
+                && (float) $this->depreciation_rate <= DepreciationMethod::MAX_RATE,
+            DepreciationMethod::Immediate->value => true,
+            default => false,
+        };
     }
 
     #[Computed]
@@ -273,7 +370,7 @@ new #[Title('Asset')] class extends Component {
             <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <flux:input type="date" wire:model="acquired_date" :label="__('Acquired date')" required data-test="asset-acquired-date" />
                 <flux:input type="date" wire:model.live="in_service_date" :label="__('In-service date')" />
-                <flux:input wire:model="cost" :label="__('Cost')" data-test="asset-cost-input" />
+                <flux:input wire:model.blur="cost" :label="__('Cost')" data-test="asset-cost-input" />
             </div>
             @if ($source_type && $source_id)
                 <flux:text class="mt-3 text-muted-foreground">
@@ -326,21 +423,51 @@ new #[Title('Asset')] class extends Component {
         <div class="rounded-lg border border-border p-4" data-test="asset-section-depreciation">
             <flux:heading size="sm" class="mb-3">{{ __('Depreciation') }}</flux:heading>
             <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <flux:input type="number" min="1" wire:model.live="useful_life_months" :label="__('Useful life (months)')" data-test="asset-useful-life-input" />
+                <flux:select wire:model.live="depreciation_method" :label="__('Depreciation method')" data-test="asset-method-select">
+                    @foreach (\App\Enums\DepreciationMethod::cases() as $method)
+                        <flux:select.option :value="$method->value">{{ __($method->label()) }}</flux:select.option>
+                    @endforeach
+                </flux:select>
                 <flux:input wire:model="salvage_value" :label="__('Salvage value')" data-test="asset-salvage-input" />
+
+                @if ($depreciation_method === 'declining_balance')
+                    <flux:input type="number" step="0.001" min="1" max="100" wire:model.live="depreciation_rate" :label="__('Annual rate (%)')" data-test="asset-rate-input" />
+                @endif
+
+                @if ($depreciation_method !== 'immediate')
+                    <flux:input type="number" min="1" wire:model.live="useful_life_months" :label="$depreciation_method === 'declining_balance' ? __('Useful life (months) — optional') : __('Useful life (months)')" data-test="asset-useful-life-input" />
+                @endif
+
+                @if ($depreciation_method === 'declining_balance' && $useful_life_months === null)
+                    <flux:input wire:model.blur="materiality_limit" :label="__('Materiality limit')" data-test="asset-materiality-input" />
+                @endif
             </div>
+            <flux:text class="mt-3 text-sm text-muted-foreground" data-test="asset-method-hint">
+                @if ($depreciation_method === 'declining_balance')
+                    {{ __('Each year charges the annual rate on the balance at the start of that year, spread evenly across its months.') }}
+                    @if ($useful_life_months === null)
+                        {{ __('With no useful life, depreciation ends once the balance left would be at or below the materiality limit — that year takes everything. The limit starts at 5% of cost; change it if you like.') }}
+                    @else
+                        {{ __('The final year of the useful life takes whatever balance is left, so the asset ends exactly when its life does.') }}
+                    @endif
+                @elseif ($depreciation_method === 'immediate')
+                    {{ __('The whole depreciable amount (cost less salvage) is written off in the month the asset is placed in service.') }}
+                @else
+                    {{ __('The depreciable amount (cost less salvage) is spread evenly over the useful life.') }}
+                @endif
+            </flux:text>
             @php
                 $autoDepreciationReady = $in_service_date !== ''
-                    && $useful_life_months !== null
+                    && $this->depreciationConfigured
                     && $accumulated_depreciation_account_id
                     && $depreciation_expense_account_id;
             @endphp
             <div class="mt-4 space-y-2">
                 <flux:switch wire:model="auto_depreciate" :label="__('Auto-generate monthly depreciation')" :disabled="! $autoDepreciationReady" data-test="asset-auto-depreciate-switch" />
                 <flux:text class="text-sm text-muted-foreground">
-                    {{ __('Monthly straight-line draft journal entries are generated after each month ends — full-month convention, starting the month the asset is placed in service.') }}
+                    {{ __('Monthly draft journal entries are generated after each month ends — full-month convention, starting the month the asset is placed in service.') }}
                     @unless ($autoDepreciationReady)
-                        {{ __('To enable, set an in-service date, a useful life, and both depreciation accounts.') }}
+                        {{ __('To enable, set an in-service date, the depreciation details for the chosen method (a useful life for straight-line, an annual rate for declining balance), and both depreciation accounts.') }}
                     @endunless
                 </flux:text>
             </div>

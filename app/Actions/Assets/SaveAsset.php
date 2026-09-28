@@ -3,6 +3,7 @@
 namespace App\Actions\Assets;
 
 use App\Enums\AssetStatus;
+use App\Enums\DepreciationMethod;
 use App\Models\Asset;
 use App\Services\Posting\DocumentNumberGenerator;
 use Carbon\CarbonImmutable;
@@ -23,6 +24,12 @@ use Illuminate\Support\Facades\DB;
  *   serial_number: ?string  location: ?string
  *   acquired_date: string   in_service_date: ?string
  *   cost_cents: int  salvage_value_cents: ?int  useful_life_months: ?int
+ *   depreciation_method: string|DepreciationMethod|null (default straight_line; when the
+ *       key is absent on an update, the asset's current method is kept)
+ *   depreciation_rate: ?numeric  annual percent 1–100, declining_balance only (absent on an
+ *       update → current rate kept)
+ *   materiality_limit_cents: ?int  declining_balance only; null → the default, 5% of cost
+ *       (absent on an update → current limit kept)
  *   auto_depreciate: ?bool (default false; opts into generated monthly drafts)
  *   status: ?string (AssetStatus, default in-service)
  *   disposed_at: ?string  disposal_notes: ?string
@@ -41,6 +48,25 @@ final class SaveAsset
         return DB::transaction(function () use ($data, $asset): Asset {
             $company = app('current_company');
 
+            // A method only keeps the parameters it actually uses, so the register
+            // can never hold contradictory data (a useful life on a write-off asset,
+            // a rate or materiality limit on a straight-line one). Keys the caller
+            // did not send fall back to what the asset already has, so a client that
+            // predates depreciation methods cannot silently reset one on update.
+            $existing = $asset !== null && $asset->exists ? $asset : null;
+
+            $method = array_key_exists('depreciation_method', $data)
+                ? $this->methodFrom($data['depreciation_method'])
+                : ($existing?->depreciationMethod() ?? DepreciationMethod::StraightLine);
+
+            $rate = array_key_exists('depreciation_rate', $data)
+                ? $data['depreciation_rate']
+                : $existing?->depreciation_rate;
+
+            $materiality = array_key_exists('materiality_limit_cents', $data)
+                ? $data['materiality_limit_cents']
+                : $existing?->materiality_limit_cents;
+
             $attributes = [
                 'name' => $data['name'],
                 'description' => $data['description'] ?? null,
@@ -56,7 +82,10 @@ final class SaveAsset
                     : null,
                 'cost_cents' => (int) $data['cost_cents'],
                 'salvage_value_cents' => (int) ($data['salvage_value_cents'] ?? 0),
-                'useful_life_months' => $data['useful_life_months'] ?? null,
+                'useful_life_months' => $method->usesUsefulLife() ? ($data['useful_life_months'] ?? null) : null,
+                'depreciation_method' => $method->value,
+                'depreciation_rate' => $method->usesRate() && filled($rate) ? $rate : null,
+                'materiality_limit_cents' => $method->usesMateriality() && filled($materiality) ? (int) $materiality : null,
                 'status' => $data['status'] ?? AssetStatus::InService->value,
                 'disposed_at' => ! empty($data['disposed_at'])
                     ? CarbonImmutable::parse($data['disposed_at'])->toDateString()
@@ -88,5 +117,12 @@ final class SaveAsset
                 'auto_depreciate' => $data['auto_depreciate'] ?? false,
             ]);
         });
+    }
+
+    private function methodFrom(mixed $value): DepreciationMethod
+    {
+        return $value instanceof DepreciationMethod
+            ? $value
+            : (DepreciationMethod::tryFrom((string) $value) ?? DepreciationMethod::StraightLine);
     }
 }

@@ -4,6 +4,7 @@ namespace App\Http\Requests\Api\V1;
 
 use App\Enums\AccountSubtype;
 use App\Enums\AssetStatus;
+use App\Enums\DepreciationMethod;
 use App\Models\Company;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -43,19 +44,21 @@ class UpdateAssetRequest extends FormRequest
             'cost_cents' => ['required', 'integer', 'min:0', 'max:999999999999'],
             'salvage_value_cents' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
             'useful_life_months' => ['nullable', 'integer', 'min:1', 'max:1200'],
-            'status' => ['sometimes', Rule::enum(AssetStatus::class)],
-            'disposed_at' => [
+            // Annual percent for declining_balance, between the enum's MIN_RATE and
+            // MAX_RATE (1–100) with up to 3 decimals; nothing below 1 is accepted.
+            // Ignored, and not stored, for the other methods. Required whenever that
+            // method is chosen, since without it there is nothing to calculate.
+            'depreciation_method' => ['sometimes', Rule::enum(DepreciationMethod::class)],
+            'depreciation_rate' => [
                 'nullable',
-                'date',
-                Rule::requiredIf(fn () => in_array($this->input('status'), [
-                    AssetStatus::Disposed->value,
-                    AssetStatus::Sold->value,
-                    AssetStatus::Lost->value,
-                ], true)),
+                'numeric',
+                'between:'.DepreciationMethod::MIN_RATE.','.DepreciationMethod::MAX_RATE,
+                'decimal:0,3',
+                Rule::requiredIf(fn () => $this->input('depreciation_method') === DepreciationMethod::DecliningBalance->value),
             ],
-            'disposal_notes' => ['nullable', 'string'],
-            'notes' => ['nullable', 'string'],
-            'is_active' => ['sometimes', 'boolean'],
+            // declining_balance with no useful_life_months ends once the balance left
+            // would be within this amount; null (or omitted) means 5% of cost.
+            'materiality_limit_cents' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
         ];
     }
 }

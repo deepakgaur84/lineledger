@@ -94,7 +94,7 @@ new #[Title('Asset')] class extends Component {
     }
 
     /**
-     * The straight-line schedule merged with what the generator has produced:
+     * The book-depreciation schedule merged with what the generator has produced:
      * one pass over DepreciationSchedule::for() against the asset's pivot rows
      * (with their journal entries) keyed by period. Returns the per-month rows
      * plus the accumulated total of months whose entry is posted and not voided.
@@ -211,9 +211,21 @@ new #[Title('Asset')] class extends Component {
                 <dd class="font-mono">{{ number_format($asset->cost_cents / 100, 2) }}</dd>
                 <dt class="text-muted-foreground">{{ __('Salvage value') }}</dt>
                 <dd class="font-mono">{{ number_format($asset->salvage_value_cents / 100, 2) }}</dd>
+                @php
+                    $method = $asset->depreciationMethod();
+                    $rateLabel = $asset->depreciation_rate !== null ? rtrim(rtrim((string) $asset->depreciation_rate, '0'), '.') : null;
+                @endphp
+                @if ($asset->hasDepreciationConfig() || $method->value !== 'straight_line')
+                    <dt class="text-muted-foreground">{{ __('Depreciation method') }}</dt>
+                    <dd data-test="asset-method">{{ __($method->label()) }}@if ($rateLabel !== null) — {{ $rateLabel }}% {{ __('a year') }}@endif</dd>
+                @endif
                 @if ($asset->useful_life_months)
                     <dt class="text-muted-foreground">{{ __('Useful life (months)') }}</dt>
                     <dd>{{ $asset->useful_life_months }}</dd>
+                @endif
+                @if ($method->usesMateriality() && ! $asset->useful_life_months)
+                    <dt class="text-muted-foreground">{{ __('Materiality limit') }}</dt>
+                    <dd class="font-mono" data-test="asset-materiality">{{ number_format($asset->materialityLimitCents() / 100, 2) }}@if ($asset->materiality_limit_cents === null) <span class="font-sans text-xs text-muted-foreground">({{ __('default, 5% of cost') }})</span>@endif</dd>
                 @endif
             </dl>
             @if ($asset->source_type && $asset->source_id)
@@ -254,7 +266,7 @@ new #[Title('Asset')] class extends Component {
             </dl>
         </div>
 
-        @if ($asset->useful_life_months)
+        @if ($asset->hasDepreciationConfig())
             @php $dep = $this->depreciationData; @endphp
             <div class="rounded-lg border border-border p-4 md:col-span-2" data-test="asset-depreciation-card">
                 <div class="mb-3 flex items-center justify-between">
@@ -271,6 +283,20 @@ new #[Title('Asset')] class extends Component {
                     <dt class="text-muted-foreground">{{ __('Net book value') }}</dt>
                     <dd class="font-mono">{{ number_format(($asset->cost_cents - $dep['accumulated_cents']) / 100, 2) }}</dd>
                 </dl>
+                <flux:text class="mb-4 text-sm text-muted-foreground" data-test="asset-depreciation-note">
+                    @if ($method->value === 'declining_balance')
+                        {{ __('Each year charges :rate% of the balance at the start of that year, spread evenly across its months.', ['rate' => $rateLabel]) }}
+                        @if ($asset->useful_life_months)
+                            {{ __('The final year of the useful life takes whatever balance is left.') }}
+                        @else
+                            {{ __('Once the balance left would be at or below the materiality limit, that year takes everything.') }}
+                        @endif
+                    @elseif ($method->value === 'immediate')
+                        {{ __('Written off in full in the month the asset is placed in service.') }}
+                    @else
+                        {{ __('The depreciable amount (cost less salvage) is spread evenly over the useful life.') }}
+                    @endif
+                </flux:text>
                 @if ($dep['rows'] !== [])
                     <div class="overflow-x-auto rounded-lg border border-border">
                         <table class="w-full text-sm" data-test="asset-depreciation-schedule">
