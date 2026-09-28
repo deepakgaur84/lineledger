@@ -42,7 +42,7 @@ new #[Title('Documentation — Fixed assets')] class extends Component {}; ?>
             <li>{{ __('Under Acquisition, set the Acquired date (it defaults to today — a click anywhere in a date field opens the calendar), the In-service date, and the Cost.') }}</li>
             <li>{{ __('Under GL accounts, choose the Asset account and, if you plan to depreciate, the Accumulated depreciation account and Depreciation expense account. The first two pickers list only fixed-asset accounts — the standard chart’s 1510 Accumulated Depreciation is one — and the third lists every active expense account.') }}</li>
             <li>{{ __('Under Details, add a Serial number and Location if you want to track them.') }}</li>
-            <li>{{ __('Under Depreciation, enter the Useful life (months) and the Salvage value, then optionally turn on Auto-generate monthly depreciation (see below).') }}</li>
+            <li>{{ __('Under Depreciation, choose a Depreciation method — Straight-line, Written-down value (declining balance), or 100% on purchase — enter the Salvage value, then whatever that method asks for (see Automatic depreciation below for what each needs), and optionally turn on Auto-generate monthly depreciation.') }}</li>
             <li>{{ __('Under Status, leave the asset In service for now; you set this to Disposed, Sold, or Lost later when you retire it. The Active switch beside it is the same one that Archive turns off.') }}</li>
             <li>{{ __('Add any Notes for your own reference, then select Save asset.') }}</li>
         </ol>
@@ -50,7 +50,7 @@ new #[Title('Documentation — Fixed assets')] class extends Component {}; ?>
         <x-docs.figure
             src="{{ asset('docs/screenshots/fixed-assets/create.png') }}"
             alt="{{ __('The New asset form with Identification, Acquisition, GL accounts, Details, Depreciation, and Status sections, the Auto-generate monthly depreciation switch, and a Notes box above the Save asset button') }}"
-            caption="{{ __('The New asset form. Turn on “Auto-generate monthly depreciation” to have LineLedger draft the entries for you; the switch stays greyed out until the in-service date, useful life, and both depreciation accounts are set.') }}"
+            caption="{{ __('The New asset form. Turn on “Auto-generate monthly depreciation” to have LineLedger draft the entries for you; the switch stays greyed out until the in-service date, the chosen method’s own details, and both depreciation accounts are set.') }}"
         />
 
         <x-docs.callout type="tip">
@@ -83,14 +83,18 @@ new #[Title('Documentation — Fixed assets')] class extends Component {}; ?>
         {{-- ──────────────── Load an existing asset register ──────────────── --}}
         <flux:heading size="lg" class="mt-8">{{ __('Load an existing asset register') }}</flux:heading>
         <flux:text>
-            {{ __('If you are moving to LineLedger with assets you already own, you do not have to key each one in. An Owner can load the whole register — cost and accumulated depreciation to date, one asset per row — from a CSV file in the Opening balances workspace. It is the same importer the QuickBooks migration wizard uses, run on its own, so it also works for an organization that was created without an import and needs its history backfilled.') }}
+            {{ __('There are two ways to bring assets in from a spreadsheet, for two different situations. If you are converting to LineLedger and need each asset to post its cost and its accumulated depreciation to date to the ledger as part of your opening balances, use the Opening balances importer described in this section. If your organization is already up and running on LineLedger and you just need to add several assets to the register at once — with no ledger posting at all — use the standalone Fixed assets importer described further below instead.') }}
+        </flux:text>
+
+        <flux:text>
+            {{ __('An Owner can load the whole register — cost and accumulated depreciation to date, one asset per row — from a CSV file in the Opening balances workspace. It is the same importer the QuickBooks migration wizard uses, run on its own, so it also works for an organization that was created without an import and needs its history backfilled.') }}
         </flux:text>
 
         <p><strong>{{ __('To import your asset register:') }}</strong></p>
         <ol class="list-decimal ps-6 space-y-1">
             <li>{{ __('Open Accounting → Opening balances (the sidebar entry shows for Owners only) and check the As of date — the conversion date your balances carry over on, usually your last year-end in the old system.') }}</li>
             <li>{{ __('In the Other opening data card, find the Fixed assets tile and select Import CSV.') }}</li>
-            <li>{{ __('Select Download template and fill it in. asset_no, name, asset_account_code, and acquired_date are required, and cost must be greater than zero. The rest are optional: category_name, accum_depreciation_account_code, depreciation_expense_account_code, in_service_date, salvage_value, useful_life_months, accumulated_depreciation_to_date, serial_number, location, and description. A row that carries accumulated depreciation must also name its accum_depreciation_account_code.') }}</li>
+            <li>{{ __('Select Download template and fill it in. asset_no, name, asset_account_code, and acquired_date are required, and cost must be greater than zero. The rest are optional: category_name, accum_depreciation_account_code, depreciation_expense_account_code, in_service_date, salvage_value, useful_life_months, depreciation_method, depreciation_rate, accumulated_depreciation_to_date, serial_number, location, and description. A row that carries accumulated depreciation must also name its accum_depreciation_account_code. depreciation_method is straight_line, declining_balance (WDV), or immediate (100%) — leave it blank for straight-line. depreciation_rate is the annual percentage, 1 to 100, and only applies to declining_balance — leave it blank there to get the suggested 20%.') }}</li>
             <li>{{ __('Choose the CSV file and select Preview. The dialog lists the rows it will create and flags any problems by row number; fix them in the file and preview again.') }}</li>
             <li>{{ __('Select Import.') }}</li>
         </ol>
@@ -109,6 +113,26 @@ new #[Title('Documentation — Fixed assets')] class extends Component {}; ?>
             {{ __('The Balance Sheet carries an imported asset at its correct net book value. The asset’s own Depreciation card, however, counts only depreciation entries LineLedger generated and you posted, so an imported asset shows Accumulated (as generated) 0.00 and a Net book value equal to its full cost. Before you turn on automatic depreciation for an imported asset, select Finalize & lock on the Opening balances page (or set a closing date at the conversion date): months ending on or before that date are then marked Locked and skipped, and LineLedger drafts only the months after your conversion. Without a lock it would draft every month back to the In-service date — depreciation the import has already recorded. Import CSV is unavailable while the workspace is finalized; select Un-finalize to load more.') }}
         </x-docs.callout>
 
+        {{-- ──────────────── Import assets without posting to the ledger ──────────────── --}}
+        <flux:heading size="lg" class="mt-8">{{ __('Add several assets at once, without posting to the ledger') }}</flux:heading>
+        <flux:text>
+            {{ __('Once your organization is already running — not mid-conversion — the Fixed assets importer under Tools → Bulk import adds rows to the register the same way typing them in one at a time would: it never touches the general ledger. Use this when the assets’ cost is already in your books from bills, cheques, or journal entries you have already posted, and you just want to save the retyping.') }}
+        </flux:text>
+
+        <p><strong>{{ __('To bulk-import assets:') }}</strong></p>
+        <ol class="list-decimal ps-6 space-y-1">
+            <li>{{ __('Open Tools → Bulk import and choose Fixed Assets.') }}</li>
+            <li>{{ __('Select Download template and fill it in — one asset per row. name, asset_account_code, acquired_date, and cost are required. Leave asset_no blank to have LineLedger number the asset automatically, the same way it would if you typed it in by hand.') }}</li>
+            <li>{{ __('Name a category_name to fill in anything you leave blank on that row — the three GL accounts, the useful life, and the depreciation method and rate — from that category’s own defaults, exactly the way choosing a category does on the New asset form. Unlike the Opening balances importer, this one never creates a category for you: it must already exist under Settings → Lists → Asset categories.') }}</li>
+            <li>{{ __('Set depreciation_method and, for declining_balance, depreciation_rate the same way as the Opening balances importer’s columns above. Set auto_depreciate to yes to have LineLedger start drafting monthly depreciation for the asset right away.') }}</li>
+            <li>{{ __('Choose the CSV file and select Preview.') }}</li>
+            <li>{{ __('Select Import.') }}</li>
+        </ol>
+
+        <x-docs.callout type="warning" heading="{{ __('A back-dated in-service date with auto_depreciate on backfills every month since') }}">
+            {{ __('If in_service_date is months in the past and auto_depreciate is yes, LineLedger drafts every month between then and now that has fully ended and is not locked — the preview tells you exactly how many months and their date range before you commit, and warns you above one month, so this is never a surprise. If that depreciation is already in your books some other way — for example, you brought the asset in through the Opening balances importer above, or recorded it by hand — lock the period first, or leave auto_depreciate off and turn it on later once your books have caught up to the present.') }}
+        </x-docs.callout>
+
         <flux:text>
             {{ __('The rest of the workspace — trial balance targets, customer and vendor balances, outstanding cheques and deposits — is described under') }}
             <a class="underline" href="{{ route('docs.opening-balances') }}" wire:navigate>{{ __('Opening balances') }}</a>{{ __(', and a full QuickBooks conversion under') }}
@@ -118,7 +142,7 @@ new #[Title('Documentation — Fixed assets')] class extends Component {}; ?>
         {{-- ──────────────────────── Review an asset ──────────────────────── --}}
         <flux:heading size="lg" class="mt-8">{{ __('Review an asset') }}</flux:heading>
         <flux:text>
-            {{ __('Open any asset to see everything on one page: its identification, acquisition cost and dates, the three GL accounts, its serial and location details, the depreciation schedule (once a useful life is set), a Disposal section (once it is retired), your Notes, and any files you have attached. Attach the purchase invoice or warranty documents here to keep the paper trail with the record — PDF, images, or Office docs up to 10 MB each. Select Edit to change any of it.') }}
+            {{ __('Open any asset to see everything on one page: its identification, acquisition cost and dates, the three GL accounts, its serial and location details, the depreciation schedule (once its chosen method has what it needs — see Automatic depreciation below), a Disposal section (once it is retired), your Notes, and any files you have attached. Attach the purchase invoice or warranty documents here to keep the paper trail with the record — PDF, images, or Office docs up to 10 MB each. Select Edit to change any of it.') }}
         </flux:text>
 
         <x-docs.figure
@@ -136,19 +160,25 @@ new #[Title('Documentation — Fixed assets')] class extends Component {}; ?>
         {{-- ──────────────────────── Automatic depreciation ──────────────────────── --}}
         <flux:heading size="lg" class="mt-8">{{ __('Automatic depreciation') }}</flux:heading>
         <flux:text>
-            {{ __('LineLedger can keep an asset depreciating on its own using the straight-line method: it spreads the depreciable base — the cost minus the salvage value — evenly across the useful life you entered. It follows a full-month convention: month one is the calendar month that contains the In-service date, with no proration by day, so an asset placed in service on the 28th still takes a whole month. Each night, LineLedger looks for months that have fully ended and drafts the depreciation entry for you, so you no longer have to remember it.') }}
+            {{ __('LineLedger can keep an asset depreciating on its own, using whichever of three methods you choose under Depreciation on the asset form. All three follow a full-month convention: month one is the calendar month that contains the In-service date, with no proration by day, so an asset placed in service on the 28th still takes a whole month. Each night, LineLedger looks for months that have fully ended and drafts the depreciation entry for you, so you no longer have to remember it.') }}
         </flux:text>
+
+        <ul class="list-disc ps-6 space-y-1">
+            <li>{{ __('Straight-line — spreads the depreciable base (cost minus salvage value) evenly across the Useful life (months) you enter.') }}</li>
+            <li>{{ __('Written-down value (declining balance) — each year charges its annual Rate on the balance still left at the start of that year, so the charge shrinks year over year. A Useful life (months) is optional: given one, its final year overrides the usual charge and takes whatever balance is left, so the asset finishes exactly when its life does; left blank, LineLedger instead uses a Materiality limit — once a year’s ordinary charge would leave a balance at or below that limit, that year takes the rest. The limit starts at 5% of the asset’s cost; change it if you like. Leave Rate blank to use the suggested 20% a year.') }}</li>
+            <li>{{ __('100% on purchase — writes the whole depreciable base off in the In-service month. This is deliberately its own method rather than a 100% written-down-value rate: spread monthly, a 100% annual rate does not collapse into a single month, so 100% on purchase is the only way to get a full write-off right away.') }}</li>
+        </ul>
 
         <p><strong>{{ __('To turn on automatic depreciation:') }}</strong></p>
         <ol class="list-decimal ps-6 space-y-1">
             <li>{{ __('Open the asset and select Edit.') }}</li>
-            <li>{{ __('Make sure the In-service date, the Useful life (months), the Accumulated depreciation account, and the Depreciation expense account are all set — the switch stays greyed out until all four are, and the note under it lists those same four prerequisites as a reminder (it does not say which one is still missing, so check each field yourself).') }}</li>
+            <li>{{ __('Make sure the In-service date, both depreciation accounts, and whatever the chosen method needs are all set — a Useful life for Straight-line; a Rate for Written-down value (a Useful life is optional there); nothing further for 100% on purchase. The switch stays greyed out until all of it is, and the note under it lists the same prerequisites as a reminder (it does not say which one is still missing, so check each field yourself).') }}</li>
             <li>{{ __('Under Depreciation, turn on Auto-generate monthly depreciation.') }}</li>
             <li>{{ __('Select Save asset.') }}</li>
         </ol>
 
         <flux:text>
-            {{ __('Once a useful life is set, the asset’s detail page shows a Depreciation card — badged “Auto-depreciation on” or “Auto-depreciation off” — with Accumulated (as generated), the current Net book value, and a month-by-month schedule. Each row in the schedule carries a status:') }}
+            {{ __('Once the chosen method has what it needs, the asset’s detail page shows a Depreciation card — badged “Auto-depreciation on” or “Auto-depreciation off” — with Accumulated (as generated), the current Net book value, and a month-by-month schedule. Each row in the schedule carries a status:') }}
         </flux:text>
 
         <ul class="list-disc ps-6 space-y-1">
@@ -162,7 +192,7 @@ new #[Title('Documentation — Fixed assets')] class extends Component {}; ?>
         <x-docs.figure
             src="{{ asset('docs/screenshots/fixed-assets/depreciation-card.png') }}"
             alt="{{ __('The Depreciation card on the Delivery Van with the green Auto-depreciation on badge, Accumulated (as generated) and Net book value figures, and a month-by-month schedule whose earlier rows show Posted and Draft badges with View entry links and later rows show Pending') }}"
-            caption="{{ __('The Depreciation card. Each month lists its straight-line amount, a status, and a View entry link once a journal entry exists. The final month absorbs any rounding so the schedule totals the depreciable base exactly.') }}"
+            caption="{{ __('The Depreciation card. Each month lists its depreciation amount, a status, and a View entry link once a journal entry exists. The schedule always totals the depreciable base exactly.') }}"
         />
 
         <x-docs.callout type="note" heading="{{ __('What automatic depreciation does to your books') }}">
@@ -181,7 +211,7 @@ new #[Title('Documentation — Fixed assets')] class extends Component {}; ?>
         {{-- ──────────────────────── Manual depreciation ──────────────────────── --}}
         <flux:heading size="lg" class="mt-8">{{ __('Record depreciation manually') }}</flux:heading>
         <flux:text>
-            {{ __('If you would rather not use automatic depreciation — or you need to cover a locked month, or you follow a method other than straight-line — record depreciation yourself with a journal entry on whatever schedule your accountant follows.') }}
+            {{ __('If you would rather not use automatic depreciation — or you need to cover a locked month, or you follow a method LineLedger does not offer (Straight-line, Written-down value, and 100% on purchase are built in) — record depreciation yourself with a journal entry on whatever schedule your accountant follows.') }}
         </flux:text>
 
         <p><strong>{{ __('To record depreciation by hand:') }}</strong></p>
@@ -252,6 +282,7 @@ new #[Title('Documentation — Fixed assets')] class extends Component {}; ?>
             <li>{{ __('Accounting → Journal — review and post the drafted depreciation entries, and record disposal entries.') }}</li>
             <li>{{ __('Accounting → Recurring entries — schedule a manual depreciation entry so a draft is ready to review and post every month.') }}</li>
             <li>{{ __('Accounting → Opening balances (Owners) — load an existing register with cost and accumulated depreciation from CSV; see') }} <a class="underline" href="{{ route('docs.opening-balances') }}" wire:navigate>{{ __('Opening balances') }}</a>{{ __('.') }}</li>
+            <li>{{ __('Tools → Bulk import — add several assets to an already-running organization’s register from CSV, without posting to the ledger.') }}</li>
             <li>{{ __('Settings → Lists → Asset categories — set default accounts, a default useful life, and (for a Canadian organization) a CCA class so new assets fill in consistently; see') }} <a class="underline" href="{{ route('docs.lists') }}" wire:navigate>{{ __('Lists') }}</a>{{ __('.') }}</li>
             <li>{{ __('Purchases → Bills and Banking → Cheques — record the purchase, then use the “Create asset record” button to turn the fixed-asset line into an asset.') }}</li>
             <li>{{ __('Settings → Organizations — the Fixed assets feature toggle; see') }} <a class="underline" href="{{ route('docs.settings') }}" wire:navigate>{{ __('Settings') }}</a>{{ __('.') }}</li>
