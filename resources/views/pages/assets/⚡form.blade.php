@@ -212,6 +212,18 @@ new #[Title('Asset')] class extends Component {
         if ($category->default_useful_life_months && ! $this->useful_life_months) {
             $this->useful_life_months = $category->default_useful_life_months;
         }
+
+        // Only pulled when the method is still at its own default (straight-line)
+        // — a method the user already changed away from that is never overwritten
+        // by picking a category afterwards. default_depreciation_method has a
+        // non-nullable database default, so every category has one to offer.
+        if ($this->depreciation_method === 'straight_line') {
+            $this->depreciation_method = $category->defaultDepreciationMethod()->value;
+        }
+
+        if ($category->default_depreciation_rate !== null && trim($this->depreciation_rate) === '') {
+            $this->depreciation_rate = rtrim(rtrim((string) $category->default_depreciation_rate, '0'), '.');
+        }
     }
 
     public function save(): void
