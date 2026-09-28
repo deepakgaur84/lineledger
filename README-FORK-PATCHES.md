@@ -15,6 +15,21 @@ upstream syncs. The two workflow files themselves (see §8) are the
 exception — GitHub blocks the automation's own token from touching
 `.github/workflows/*`, so those are committed directly to their real path.
 
+This is a hard rule, not a preference: `.fork-patches/` is meant to be a
+complete, standalone record of every change this fork has ever made —
+new features, fixes, schema changes, anything — so that re-deriving the
+whole fork from a bare upstream clone plus this folder is always
+possible, and so a future collision on any of it gets the 3-way-merge
+protection in §7 rather than a raw git conflict. It briefly slipped:
+several deliveries (Bill Payments/Receipts, then the whole depreciation-
+methods feature — §10) went straight to their real paths only, so
+`.fork-patches/` genuinely fell out of sync with what the app was
+actually running. An audit against upstream (diffing every file that
+differs from `upstream/main`, then checking each one has a
+`.fork-patches/` counterpart) found the drift and backfilled it — worth
+re-running that same audit occasionally to catch it early if it ever
+happens again.
+
 ---
 
 ## 1. Global jurisdiction support (non-CA/US companies, e.g. New Zealand)
@@ -269,6 +284,115 @@ design: see `app/Services/BulkImport/README-BULK-IMPORT.md`.** Files:
 ---
 
 ---
+
+## 10. Fixed asset depreciation methods
+
+Book depreciation was straight-line only. Assets can now use straight-line,
+written-down value (declining balance / WDV), or an immediate 100%-on-
+purchase write-off — chosen per asset, with the category system able to
+default new assets onto WDV at a given rate.
+
+- `app/Enums/DepreciationMethod.php` (new) — the three methods, their
+  `label()`, and which of a useful life / an annual rate / a materiality
+  limit each one actually uses. `MIN_RATE`/`MAX_RATE` (1–100%) and
+  `DEFAULT_RATE` (20%, the one suggested whenever WDV is picked with no
+  rate typed) live here as the single source both the form, the API and
+  the importers read from, so they can't drift apart.
+- `database/migrations/2026_09_28_100000_add_depreciation_method_to_assets.php`
+  (new) — `depreciation_method` (defaults every existing asset to
+  `straight_line`, so nothing already in production changes behaviour),
+  `depreciation_rate`, `materiality_limit_cents`.
+- `database/migrations/2026_09_28_110000_add_depreciation_defaults_to_asset_categories.php`
+  (new) — the same `depreciation_method`/`depreciation_rate` pair on
+  `asset_categories`, so a category can hand new assets a starting method
+  and rate the same way it already hands them a default useful life.
+- `app/Services/Assets/DepreciationSchedule.php` — was pure straight-line
+  math; now dispatches on the asset's method. Declining balance runs in
+  annual 12-month blocks (each block charges the rate on the book value
+  at the START of that block, spread evenly across its months — this
+  makes year-end book values match a standard annual reducing-balance
+  calculation exactly, and is why WDV ignores the useful life by
+  default). How WDV ends depends on what the asset has:
+  - **A useful life given** — its final year is the tail: it overrides
+    the normal charge and takes whatever balance is left, so the asset
+    ends exactly when its life does, even if that's mid-year.
+  - **No useful life** — the asset's materiality limit ends it instead:
+    once a year's normal charge would leave a balance at or below the
+    limit, that year takes everything. Defaults to 5% of cost
+    (`Asset::defaultMaterialityCents()`) when none is set.
+  - Immediate is a single row: the whole depreciable base in the
+    in-service month.
+  - A rate must be 1–100%; nothing outside that window produces a
+    schedule at all. **100% WDV is deliberately not the same as
+    Immediate** — investigated and confirmed with real numbers before
+    building: a 100% annual rate on a *monthly* schedule spreads the
+    base across the first twelve months (this class's own "annual-step"
+    convention) or, under a plain rate-÷-12 convention, never finishes
+    within a year at all. Only an unusual "effective-monthly" convention
+    collapses it into month one — which is why Immediate exists as its
+    own, third method rather than a WDV rate of 100.
+- `app/Models/Asset.php` — `depreciationMethod()` (falls back to
+  straight-line if the column is somehow absent),
+  `hasDepreciationConfig()`/`hasDepreciationSchedule()` (replace the old
+  flat "has a useful life ≥ 1" check — `isAutoDepreciable()` now asks
+  each method what it actually needs), `materialityLimitCents()`, and the
+  shared `defaultMaterialityCents()` the category form also calls so the
+  same 5% math can't drift between the two places it's used.
+- `app/Actions/Assets/SaveAsset.php` / `SaveAssetCategory.php` — a method
+  only ever keeps the parameters it uses; anything the caller didn't send
+  falls back to what the record already has, so an older API client that
+  has never heard of methods can't silently reset one on update.
+- `app/Http/Requests/Api/V1/{Store,Update}AssetRequest.php` and the
+  `AssetCategory` equivalents, `AssetResource.php`,
+  `AssetCategoryResource.php`, `resources/api/openapi.yaml` — the new
+  fields validated (rate `Rule::requiredIf` declining balance, 1–100
+  window, 3 decimals), returned, and documented.
+- `resources/views/pages/assets/⚡form.blade.php` — a method picker
+  drives which fields show (useful life; rate + optional life +
+  materiality limit; or nothing, for immediate). The materiality field
+  pre-fills at 5% of cost and keeps following the cost live until the
+  user types their own limit — clearing the field hands it back to the
+  default.
+- `resources/views/pages/assets/⚡show.blade.php` — the depreciation
+  card used to appear only when a useful life existed; now appears for
+  any method that has what it needs, with a plain-language note on how
+  that asset's schedule actually ends.
+- `resources/views/pages/settings/lists/⚡asset-categories.blade.php` —
+  a category's default method and rate, with the same "offer 20% unless
+  something's already typed" behaviour as the asset form.
+- `app/Services/BulkImport/Importers/FixedAssetImporter.php` (new) — one
+  row, one asset, through the real `SaveAsset` action. Register-only,
+  like entering an asset by hand: it never posts to the ledger (the
+  asset's cost is expected to already be there, from whatever bought
+  it). Blank fields fall back to the row's category exactly as the form
+  does. `auto_depreciate: yes` on a back-dated `in_service_date` back-
+  fills every month since — the preview says exactly how many, and warns
+  above one month, so it's never a surprise; if the ledger already
+  carries that depreciation, lock the period first.
+- `app/Services/Migration/Importers/FixedAssetsImporter.php` (the
+  QuickBooks-migration / Opening-Balances importer, shared code — see
+  §9's own note on this pattern) — learned the same
+  `depreciation_method`/`depreciation_rate` columns, sharing the exact
+  same validation. A CSV with neither column still imports, as
+  straight-line, so nothing already relying on the old template breaks.
+- Full test coverage: `tests/Unit/Assets/DepreciationMethodScheduleTest.php`
+  (the schedule math itself — every branch above, plus a sweep across
+  cost/salvage/rate/life combinations asserting the schedule always
+  totals the depreciable base exactly and never goes negative),
+  `tests/Feature/Assets/DepreciationMethodGenerationTest.php` (drafts
+  through the real generator), `AssetDepreciationMethodFormTest.php`,
+  `AssetCategoryDepreciationDefaultsTest.php` (Livewire, both pages),
+  `tests/Feature/Api/V1/AssetDepreciationMethodTest.php` +
+  `AssetCategoryDepreciationDefaultsTest.php`,
+  `tests/Feature/BulkImport/FixedAssetImporterTest.php`,
+  `tests/Feature/Migration/FixedAssetsImporterMethodsTest.php`.
+
+**A mistake worth recording**: an early version of the WDV tail used a
+flat "under $12/year" cutoff, invented before the actual rule was
+specified. The real rule is either the useful-life tail or a materiality
+limit (above) — the $12 version never shipped, but it's a reminder to
+confirm a business rule before assuming a sensible-looking default is
+the intended one.
 
 ## Ongoing maintenance — now partially automated, still worth watching
 
