@@ -68,14 +68,27 @@ items, since they reference *other items* as components — a flat CSV row
 has no clean way to represent that.
 
 **Grouped (multi-line document) entities:** Bills, Invoices, Vendor
-Credits, Credit Memos — the AP/AR pairs, each posted automatically after
-saving (`SaveBill`/`SaveInvoice`/etc. only create a draft; the importer
-also calls the matching `*Poster`). A posting failure (e.g. a locked
-period) still leaves a valid, reviewable draft behind rather than losing
-the row's data — reported as its own distinct message. Vendor/customer
-resolution refuses to guess between two contacts sharing a name, mirroring
-`FindContactTool`'s own ambiguity handling, rather than silently picking
-one and posting against the wrong contact.
+Credits, Credit Memos, Bill Payments, Receipts — the AP/AR pairs, each
+posted automatically after saving (`SaveBill`/`SaveInvoice`/etc. only
+create a draft; the importer also calls the matching `*Poster`). A
+posting failure (e.g. a locked period) still leaves a valid, reviewable
+draft behind rather than losing the row's data — reported as its own
+distinct message. Vendor/customer resolution refuses to guess between two
+contacts sharing a name, mirroring `FindContactTool`'s own ambiguity
+handling, rather than silently picking one and posting against the wrong
+contact.
+
+Bill Payments and Receipts use the same grouped shape for a different
+reason than Bills/Invoices do: one row is one *application* to a bill or
+invoice, not one line item, and the payment/receipt's own total is the sum
+of its rows' `application_amount` rather than a separate column — a
+single payment can apply to several bills at once, one row each, all
+sharing the same `import_ref`. **One real, confirmed asymmetry between
+them**: `StoreBillPaymentRequest` requires the bill be open
+(posted/partial) before a payment can apply to it; `StoreReceiptRequest`
+has no equivalent check for invoices. Both importers mirror their own
+API's validation exactly rather than "fixing" an inconsistency that isn't
+theirs to fix.
 
 **One real, confirmed schema asymmetry worth knowing**: `vendor_credits`
 has no `currency_code`/`fx_rate` columns at all — confirmed directly
@@ -85,6 +98,38 @@ which covers `invoices`, `bills`, and `credit_memos` but not
 importer oversight — `VendorCreditImporter` has no currency columns at
 all, while `CreditMemoImporter` (its AR-side mirror) does, matching what
 each side of the app can actually do.
+
+**Fixed Assets** — one row, one asset, through the real `SaveAsset`
+action, so an imported asset gets identical validation and depreciation
+handling to one entered on the form. **Register-only**: unlike every
+other importer above, it never posts to the ledger — the asset's cost is
+expected to already be there, from whatever bought it (a bill, a cheque,
+a journal entry). To load a register *together with* its accumulated
+depreciation as opening balances, use the Opening Balances importer
+instead (see below), not this one.
+
+Blank fields fall back to the row's asset category exactly the way the
+asset form does: the three GL accounts, the useful life, and the
+depreciation method and rate. A row can name its category by
+`category_name`; a category the row names must already exist (Settings →
+Lists → Asset categories) — this importer doesn't create one, unlike the
+Migration wizard's own fixed-assets importer below.
+
+The three depreciation methods (see the fork's own `README-FORK-PATCHES.md`
+§10 for the full feature) are all supported: `straight_line`,
+`declining_balance` (also accepts `WDV`, `reducing balance`, and similar),
+and `immediate` (also accepts `100%`). A `depreciation_rate` is only valid
+for declining balance — given for any other method, the row is rejected,
+since a rate on a straight-line row is far more likely a mislabelled row
+than genuine intent. Declining balance with no rate anywhere (not on the
+row, not on its category) defaults to 20%, and the preview says so.
+
+**`auto_depreciate: yes` on a back-dated `in_service_date` back-fills every
+month since that has fully ended and isn't locked** — the preview shows
+exactly how many months and their date range before you commit, and warns
+above one month, so this is never a surprise. If the ledger already
+carries that depreciation from elsewhere, lock the period first or leave
+`auto_depreciate` off; generation is capped at 60 months per run regardless.
 
 **Deliberately not built as importers here: Cheques, Deposits,
 Transfers.** The existing bank-statement importer (`/banking/import`,
@@ -172,40 +217,58 @@ affected transaction by hand.
 
 - **Bundle items** — reference other items as components; no clean flat-
   CSV representation.
-- **Bill Payments / Receipts** — need resolving which document(s) a
-  payment applies to, and validating the application amounts don't exceed
-  the payment total (`StoreBillPaymentRequest`'s own `withValidator()`
-  already has this exact check — reuse it, don't reimplement).
 - **Journal Entries** — no existing CSV convention to mimic;
   Migration's own `GeneralLedgerReplayImporter` is a QuickBooks-specific
   full-history replay tool posting raw, already-balanced entries from a
   QB Journal report — a fundamentally different job from "add a new
   journal entry," not reusable.
-- **Fixed Assets** — Migration's own `FixedAssetsImporter` has a genuinely
-  complete, real column set worth mimicking closely (`asset_no, name,
-  category_name, asset_account_code, accum_depreciation_account_code,
-  depreciation_expense_account_code, acquired_date, in_service_date, cost,
-  salvage_value, useful_life_months, accumulated_depreciation_to_date,
-  serial_number, location, description`) — but it posts via
-  `JournalPoster` directly rather than a `Save*` action, so it can't be
-  reused as-is; a real importer here still needs building fresh through
-  `SaveAsset`.
 
 None of this needs a new architecture — `ImporterDefinition` and
 `GroupedImporterDefinition` between them already support arbitrarily
 complex `validate()`/`commit()` logic for any shape of entity. It's real,
 additional work, not a redesign.
 
+## The Opening Balances / QuickBooks-migration fixed-assets importer
+
+Distinct from, and older than, the two importers above:
+`app/Services/Migration/Importers/FixedAssetsImporter.php`, shared by the
+one-time QuickBooks migration wizard and the standalone Opening Balances
+tool (via `app/Services/OpeningBalances/Importers/FixedAssetsCompanyImporter.php`,
+a thin wrapper). It posts an asset's cost **and** its accumulated
+depreciation to date directly via `JournalPoster`, absorbed into the
+Opening Balances maintained entry's own netting — a fundamentally
+different job from this file's own register-only importer above (which
+never touches the ledger), so the two were never merged into one.
+
+It learned the same `depreciation_method`/`depreciation_rate` columns as
+the register-only importer, sharing the exact same validation (1–100%
+window, declining-balance-only, defaults to 20% when blank) — a CSV
+without either column still imports correctly, as straight-line, so
+nothing relying on the old template breaks. A category a row names here
+*is* created if it doesn't already exist (unlike the register-only
+importer above), inheriting the row's method and rate as that new
+category's own defaults.
+
 ## Testing this
 
-No automated tests exist yet for the bulk importer itself — for either
-kind, flat or grouped. Before extending it, worth adding feature tests
-mirroring the existing `tests/Feature/Api/V1/*LifecycleTest.php` pattern —
-create a vendor with a foreign currency via the importer, assert it
-matches what the equivalent API call would produce, and a test asserting
-that a contact created via the importer *without* a currency, later
-resupplied via a second import row, does *not* silently change (matching
-`canChangeCurrency()`'s locked behavior) once it has a posted transaction.
+**Fixed Assets has real coverage** —
+`tests/Feature/BulkImport/FixedAssetImporterTest.php` (the register-only
+importer: category fallbacks, every method spelling, the 1–100% rate
+window, the back-fill preview and its lock-date awareness, duplicate
+detection) and `tests/Feature/Migration/FixedAssetsImporterMethodsTest.php`
+(the Opening-Balances/QuickBooks-wizard one: the same method/rate columns,
+a CSV with neither column still importing as straight-line). Both are a
+reasonable pattern to copy for any importer built here next.
+
+**Every other importer — Vendors through Receipts — still has no
+automated tests of its own.** Before extending one, worth adding feature
+tests mirroring the existing `tests/Feature/Api/V1/*LifecycleTest.php`
+pattern — create a vendor with a foreign currency via the importer, assert
+it matches what the equivalent API call would produce, and a test
+asserting that a contact created via the importer *without* a currency,
+later resupplied via a second import row, does *not* silently change
+(matching `canChangeCurrency()`'s locked behavior) once it has a posted
+transaction.
 
 For the grouped importers specifically, also worth covering: a document
 split across multiple `import_ref`-matched rows genuinely produces one
