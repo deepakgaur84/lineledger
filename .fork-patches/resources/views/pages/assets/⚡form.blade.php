@@ -186,7 +186,13 @@ new #[Title('Asset')] class extends Component {
         // holds the real, current value regardless of which mode set it last.
         if ($value === 'rate' && $this->useful_life_months !== null && $this->useful_life_months >= 1) {
             $rate = round(1200 / $this->useful_life_months, 3);
-            $this->straight_line_rate = rtrim(rtrim((string) $rate, '0'), '.');
+            // number_format(), not (string): a native PHP float's string-cast
+            // drops the decimal point entirely for a whole number (20.0 -> '20'),
+            // which left nothing for rtrim to stop at and it ate the trailing
+            // zero of the integer itself, turning 20 into 2. number_format
+            // always produces the full 3 decimal places, giving rtrim a real
+            // decimal point to protect the integer part.
+            $this->straight_line_rate = rtrim(rtrim(number_format($rate, 3, '.', ''), '0'), '.');
         }
     }
 
