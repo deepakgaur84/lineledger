@@ -59,6 +59,16 @@ new #[Title('Asset')] class extends Component {
 
     public string $depreciation_rate = '';
 
+    // Straight-line only, and never saved: a convenience for entering the useful
+    // life as a rate instead of a month count (common in NZ/AU, where IRD/ATO
+    // publish depreciation rates by asset type, not years). 'months' shows the
+    // useful_life_months field directly; 'rate' shows a rate field instead and
+    // computes useful_life_months from it — that field is still the only thing
+    // actually persisted.
+    public string $useful_life_input_mode = 'months';
+
+    public string $straight_line_rate = '';
+
     public string $materiality_limit = '';
 
     // True once the user has typed a materiality limit of their own. Until then
@@ -166,6 +176,32 @@ new #[Title('Asset')] class extends Component {
         // hands it back, and the default reappears.
         $this->materiality_touched = trim($value) !== '';
         $this->refreshMaterialityDefault();
+    }
+
+    public function updatedUsefulLifeInputMode(string $value): void
+    {
+        // Switching TO rate mode: back-fill a starting rate from whatever useful
+        // life is already there, so the field isn't blank on an existing asset.
+        // Switching TO months mode needs no action — useful_life_months already
+        // holds the real, current value regardless of which mode set it last.
+        if ($value === 'rate' && $this->useful_life_months !== null && $this->useful_life_months >= 1) {
+            $rate = round(1200 / $this->useful_life_months, 3);
+            $this->straight_line_rate = rtrim(rtrim((string) $rate, '0'), '.');
+        }
+    }
+
+    public function updatedStraightLineRate(string $value): void
+    {
+        $rate = is_numeric($value) ? (float) $value : null;
+
+        // A non-numeric or non-positive rate is left alone rather than blanking
+        // useful_life_months out from under a mid-edit value — validation on
+        // save catches a genuinely missing life the same way it always has.
+        if ($rate === null || $rate <= 0) {
+            return;
+        }
+
+        $this->useful_life_months = (int) max(1, min(1200, round(1200 / $rate)));
     }
 
     /**
@@ -445,8 +481,24 @@ new #[Title('Asset')] class extends Component {
                     <flux:input type="number" step="0.001" min="1" max="100" wire:model.live="depreciation_rate" :label="__('Annual rate (%)')" data-test="asset-rate-input" />
                 @endif
 
-                @if ($depreciation_method !== 'immediate')
-                    <flux:input type="number" min="1" wire:model.live="useful_life_months" :label="$depreciation_method === 'declining_balance' ? __('Useful life (months) — optional') : __('Useful life (months)')" data-test="asset-useful-life-input" />
+                @if ($depreciation_method === 'straight_line')
+                    <div class="md:col-span-2">
+                        <flux:radio.group wire:model.live="useful_life_input_mode" variant="segmented" :label="__('Calculate useful life from')" data-test="asset-life-mode-toggle">
+                            <flux:radio value="months" :label="__('Effective life (months)')" />
+                            <flux:radio value="rate" :label="__('Rate')" />
+                        </flux:radio.group>
+                    </div>
+
+                    @if ($useful_life_input_mode === 'rate')
+                        <flux:input type="number" step="0.001" min="0.001" wire:model.live="straight_line_rate" :label="__('Rate (% a year)')" data-test="asset-life-rate-input" />
+                        <flux:text class="self-end pb-2 text-sm text-muted-foreground" data-test="asset-life-rate-result">
+                            {{ __('= :n months useful life', ['n' => $useful_life_months ?? '—']) }}
+                        </flux:text>
+                    @else
+                        <flux:input type="number" min="1" wire:model.live="useful_life_months" :label="__('Useful life (months)')" data-test="asset-useful-life-input" />
+                    @endif
+                @elseif ($depreciation_method !== 'immediate')
+                    <flux:input type="number" min="1" wire:model.live="useful_life_months" :label="__('Useful life (months) — optional')" data-test="asset-useful-life-input" />
                 @endif
 
                 @if ($depreciation_method === 'declining_balance' && $useful_life_months === null)
