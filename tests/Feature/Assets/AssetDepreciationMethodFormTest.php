@@ -302,3 +302,76 @@ it('shows an immediate write-off\'s schedule on the asset page', function () {
         ->assertSeeHtml('data-test="asset-depreciation-schedule"')
         ->assertSee('Written off in full in the month the asset is placed in service.');
 });
+
+it('defaults the useful-life input to months, matching an existing asset\'s stored value', function () {
+    Livewire::test('pages::assets.form', ['company' => $this->company])
+        ->assertSet('useful_life_input_mode', 'months')
+        ->assertSeeHtml('data-test="asset-useful-life-input"')
+        ->assertDontSeeHtml('data-test="asset-life-rate-input"');
+});
+
+it('computes useful life from a rate, matching Xero\'s own formula (100 ÷ years = rate)', function () {
+    Livewire::test('pages::assets.form', ['company' => $this->company])
+        ->set('useful_life_input_mode', 'rate')
+        ->set('straight_line_rate', '20')
+        ->assertSet('useful_life_months', 60)
+        ->set('straight_line_rate', '50')
+        ->assertSet('useful_life_months', 24)
+        ->set('straight_line_rate', '12.5')
+        ->assertSet('useful_life_months', 96);
+});
+
+it('rounds a rate that does not divide evenly into whole months', function () {
+    Livewire::test('pages::assets.form', ['company' => $this->company])
+        ->set('useful_life_input_mode', 'rate')
+        ->set('straight_line_rate', '15')
+        ->assertSet('useful_life_months', 80);
+});
+
+it('ignores a blank, zero, or non-numeric rate rather than blanking out the useful life', function () {
+    $form = Livewire::test('pages::assets.form', ['company' => $this->company])
+        ->set('useful_life_input_mode', 'rate')
+        ->set('straight_line_rate', '20')
+        ->assertSet('useful_life_months', 60);
+
+    foreach (['', '0', '-5', 'abc'] as $bad) {
+        $form->set('straight_line_rate', $bad)->assertSet('useful_life_months', 60);
+    }
+});
+
+it('saves the computed useful life, not the rate itself, on a straight-line asset', function () {
+    methodFormBase()
+        ->set('useful_life_input_mode', 'rate')
+        ->set('straight_line_rate', '20')
+        ->call('save')
+        ->assertHasNoErrors();
+
+    $asset = Asset::query()->where('name', 'Delivery van')->firstOrFail();
+
+    expect($asset->useful_life_months)->toBe(60)
+        ->and($asset->depreciation_rate)->toBeNull();
+});
+
+it('back-fills a starting rate from the stored useful life when switching to rate mode on an existing asset', function () {
+    $asset = Asset::factory()->create([
+        'asset_account_id' => $this->fixedAssetAccount->id,
+        'depreciation_method' => 'straight_line',
+        'useful_life_months' => 60,
+    ]);
+
+    Livewire::test('pages::assets.form', ['company' => $this->company, 'asset' => $asset])
+        ->assertSet('useful_life_input_mode', 'months')
+        ->set('useful_life_input_mode', 'rate')
+        ->assertSet('straight_line_rate', '20');
+});
+
+it('offers no rate/months toggle for declining balance or immediate', function () {
+    $form = Livewire::test('pages::assets.form', ['company' => $this->company]);
+
+    $form->set('depreciation_method', 'declining_balance')
+        ->assertDontSeeHtml('data-test="asset-life-mode-toggle"')
+        ->assertDontSeeHtml('data-test="asset-life-rate-input"');
+
+    $form->set('depreciation_method', 'immediate')
+        ->assertDontSeeHtml('data-test="asset-life-mode-toggle"');
+});
