@@ -36,6 +36,11 @@ final class RenderableReports
                 'label' => 'Trial Balance',
                 'formats' => ['pdf', 'xlsx'],
             ],
+            'reports.fixed-asset-reconciliation' => [
+                'component' => 'pages::reports.fixed-asset-reconciliation',
+                'label' => 'Fixed Asset Reconciliation',
+                'formats' => ['pdf'],
+            ],
             'reports.ar-aging' => [
                 'component' => 'pages::reports.ar-aging',
                 'label' => 'AR Aging',
