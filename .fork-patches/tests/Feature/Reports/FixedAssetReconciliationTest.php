@@ -1,5 +1,6 @@
 <?php
 
+use App\Actions\Accounting\SaveJournalEntry;
 use App\Enums\AccountSubtype;
 use App\Enums\AccountType;
 use App\Enums\CompanyRole;
@@ -11,6 +12,9 @@ use App\Models\Company;
 use App\Models\JournalEntry;
 use App\Models\User;
 use App\Services\Assets\DepreciationGenerator;
+use App\Services\Posting\JournalPoster;
+use App\Services\Reporting\ReportCalculator;
+use App\Support\Reporting\RenderableReports;
 use Carbon\CarbonImmutable;
 use Livewire\Livewire;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
@@ -40,7 +44,7 @@ afterEach(function () {
  */
 function postCostToLedger(Account $account, int $cents, string $date): JournalEntry
 {
-    $entry = app(\App\Actions\Accounting\SaveJournalEntry::class)->handle([
+    $entry = app(SaveJournalEntry::class)->handle([
         'entry_date' => $date,
         'memo' => 'Test posting',
         'lines' => [
@@ -49,7 +53,7 @@ function postCostToLedger(Account $account, int $cents, string $date): JournalEn
         ],
     ]);
 
-    return app(\App\Services\Posting\JournalPoster::class)->post($entry);
+    return app(JournalPoster::class)->post($entry);
 }
 
 /**
@@ -60,7 +64,7 @@ function postCostToLedger(Account $account, int $cents, string $date): JournalEn
  */
 function postDepreciationToLedger(Account $account, int $cents, string $date): JournalEntry
 {
-    $entry = app(\App\Actions\Accounting\SaveJournalEntry::class)->handle([
+    $entry = app(SaveJournalEntry::class)->handle([
         'entry_date' => $date,
         'memo' => 'Test depreciation posting',
         'lines' => [
@@ -69,7 +73,7 @@ function postDepreciationToLedger(Account $account, int $cents, string $date): J
         ],
     ]);
 
-    return app(\App\Services\Posting\JournalPoster::class)->post($entry);
+    return app(JournalPoster::class)->post($entry);
 }
 
 function reconReport(string $start, string $end, string $groupBy = 'account')
@@ -99,7 +103,7 @@ it('shows no difference when the register matches the GL exactly', function () {
     CarbonImmutable::setTestNow('2026-04-15');
     $entries = app(DepreciationGenerator::class)->generateDue($this->company, $this->company->currentDateTime()->startOfDay());
     foreach ($entries as $entry) {
-        app(\App\Services\Posting\JournalPoster::class)->post($entry);
+        app(JournalPoster::class)->post($entry);
     }
     CarbonImmutable::setTestNow();
 
@@ -133,7 +137,7 @@ it('flags the cost as a difference, but not accumulated depreciation, when an as
     CarbonImmutable::setTestNow('2026-04-15');
     $entries = app(DepreciationGenerator::class)->generateDue($this->company, $this->company->currentDateTime()->startOfDay());
     foreach ($entries as $entry) {
-        app(\App\Services\Posting\JournalPoster::class)->post($entry);
+        app(JournalPoster::class)->post($entry);
     }
     CarbonImmutable::setTestNow();
 
@@ -164,14 +168,14 @@ it('negates Accumulated Depreciation into a positive magnitude, matching the Reg
 
     CarbonImmutable::setTestNow('2026-02-15');
     foreach (app(DepreciationGenerator::class)->generateDue($this->company, $this->company->currentDateTime()->startOfDay()) as $entry) {
-        app(\App\Services\Posting\JournalPoster::class)->post($entry);
+        app(JournalPoster::class)->post($entry);
     }
     CarbonImmutable::setTestNow();
 
     // Directly confirm the raw GL balance really is negative before the report
     // negates it — proves the negation is doing real work, not passing through
     // a value that was already positive.
-    $raw = app(\App\Services\Reporting\ReportCalculator::class)->balanceAsOf($this->accumDep, CarbonImmutable::parse('2026-01-31'));
+    $raw = app(ReportCalculator::class)->balanceAsOf($this->accumDep, CarbonImmutable::parse('2026-01-31'));
     expect($raw)->toBeLessThan(0);
 
     $report = reconReport('2026-01-01', '2026-01-31');
@@ -368,7 +372,7 @@ it('shows a message and no crash when there are no fixed assets at all', functio
 });
 
 it('is reachable from the report catalog and renderable outside a Livewire request', function () {
-    expect(\App\Support\Reporting\RenderableReports::supports('reports.fixed-asset-reconciliation', 'pdf'))->toBeTrue();
+    expect(RenderableReports::supports('reports.fixed-asset-reconciliation', 'pdf'))->toBeTrue();
 
     $this->get(route('reports.fixed-asset-reconciliation', ['company' => $this->company->slug]))
         ->assertOk();
