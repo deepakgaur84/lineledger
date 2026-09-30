@@ -11,6 +11,7 @@ use App\Models\Company;
 use App\Services\Reporting\CsvExporter;
 use App\Services\Reporting\PdfExporter;
 use App\Services\Reporting\ReportCalculator;
+use App\Services\Reporting\XlsxExporter;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
 use Livewire\Attributes\Computed;
@@ -253,6 +254,17 @@ new #[Title('Fixed Asset Reconciliation')] class extends Component {
         );
     }
 
+    public function exportXlsx()
+    {
+        return app(XlsxExporter::class)->fixedAssetReconciliation(
+            "fixed-asset-reconciliation-{$this->startDate}-to-{$this->endDate}.xlsx",
+            $this->company,
+            $this->report,
+            $this->startDate,
+            $this->endDate,
+        );
+    }
+
     public function exportPdf()
     {
         return app(PdfExporter::class)->download('pdf.reports.fixed-asset-reconciliation', [
@@ -268,7 +280,7 @@ new #[Title('Fixed Asset Reconciliation')] class extends Component {
 <div>
     <x-reports.control-bar
         title="{{ $this->effectiveTitle('Fixed Asset Reconciliation') }}"
-        :exports="['csv', 'pdf']"
+        :exports="['csv', 'xlsx', 'pdf']"
         subtitle="{{ __('For the period :start to :end', ['start' => \Illuminate\Support\Carbon::parse($startDate)->format('j M Y'), 'end' => \Illuminate\Support\Carbon::parse($endDate)->format('j M Y')]) }}"
         :titleEditable="true"
         :memorizable="true"

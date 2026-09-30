@@ -76,6 +76,18 @@ it('flags ten or more open bank statement lines', function () {
     expect($candidates[0]->headline)->toContain('10');
 });
 
+it('sends the CTA to the screen where these lines are actually matched, not bank reconciliation', function () {
+    // Confirmed bug, not hypothetical: BankStatementLine (Unmatched/Suggested)
+    // is reviewed and matched on the banking.review page — the traditional
+    // banking.reconcile page never references BankStatementLine at all, so a
+    // CTA pointing there sent users to a screen showing nothing, even with
+    // real pending lines sitting in the database.
+    $cta = app(UnmatchedBankLinesDetector::class)->cta($this->company);
+
+    expect($cta['route'])->toBe('banking.review')
+        ->and(route($cta['route'], ['company' => $this->company->slug]))->toBeString();
+});
+
 it('stays silent below ten open lines', function () {
     $bank = Account::query()->where('subtype', AccountSubtype::Bank->value)->orderBy('code')->firstOrFail();
     $import = BankStatementImport::factory()->create(['account_id' => $bank->id]);

@@ -5,6 +5,7 @@ use App\Enums\AccountSubtype;
 use App\Exceptions\Posting\PeriodLockedException;
 use App\Livewire\Attributes\GuardsEditLock;
 use App\Livewire\Concerns\ShowsEditLock;
+use App\Models\Asset;
 use App\Models\Company;
 use App\Models\JournalEntry;
 use App\Models\TaxCode;
@@ -88,6 +89,54 @@ new #[Title('Journal entry')] class extends Component {
         }
 
         return TaxCode::withoutGlobalScopes()->whereIn('id', $ids)->pluck('code', 'id')->all();
+    }
+
+    /**
+     * Journal line ID -> the single, unambiguous in-service asset a credit to
+     * that line's account could be disposing of. Crediting a fixed-asset-type
+     * account (writing an asset's cost off, or clearing its accumulated
+     * depreciation) usually means it is being disposed of — but only offered
+     * when exactly one candidate asset uses that account: with more than one,
+     * there is no way to tell which asset this line is actually for, so
+     * nothing is offered rather than guess and dispose of the wrong one.
+     *
+     * @return array<int, int>
+     */
+    #[Computed]
+    public function disposableAssetIds(): array
+    {
+        $creditLines = $this->entry->lines->filter(
+            fn ($line) => $line->account->subtype === AccountSubtype::FixedAsset && $line->credit_cents > 0
+        );
+
+        if ($creditLines->isEmpty()) {
+            return [];
+        }
+
+        $accountIds = $creditLines->pluck('account_id')->unique()->values();
+
+        $candidates = Asset::withoutGlobalScopes()
+            ->where('company_id', $this->company->id)
+            ->where('status', 'in-service')
+            ->where(function ($q) use ($accountIds) {
+                $q->whereIn('asset_account_id', $accountIds)
+                    ->orWhereIn('accumulated_depreciation_account_id', $accountIds);
+            })
+            ->get(['id', 'asset_account_id', 'accumulated_depreciation_account_id']);
+
+        $map = [];
+
+        foreach ($creditLines as $line) {
+            $matches = $candidates->filter(
+                fn (Asset $a) => $a->asset_account_id === $line->account_id || $a->accumulated_depreciation_account_id === $line->account_id
+            );
+
+            if ($matches->count() === 1) {
+                $map[$line->id] = $matches->first()->id;
+            }
+        }
+
+        return $map;
     }
 
     #[GuardsEditLock]
@@ -292,6 +341,17 @@ new #[Title('Journal entry')] class extends Component {
                                         :href="route('assets.create', ['company' => $company->slug, 'source_type' => 'journal_line', 'source_id' => $line->id])"
                                         wire:navigate
                                         data-test="create-asset-from-journal-line"
+                                    />
+                                </flux:tooltip>
+                            @elseif (isset($this->disposableAssetIds[$line->id]))
+                                <flux:tooltip :content="__('Mark asset disposed')">
+                                    <flux:button
+                                        variant="ghost"
+                                        size="sm"
+                                        icon="archive-box"
+                                        :href="route('assets.edit', ['company' => $company->slug, 'asset' => $this->disposableAssetIds[$line->id], 'dispose_date' => $entry->entry_date->toDateString()])"
+                                        wire:navigate
+                                        data-test="dispose-asset-from-journal-line"
                                     />
                                 </flux:tooltip>
                             @endif

@@ -11,6 +11,7 @@ use App\Services\BulkImport\Importers\FixedAssetImporter;
 use App\Services\BulkImport\Importers\InvoiceImporter;
 use App\Services\BulkImport\Importers\ItemCategoryImporter;
 use App\Services\BulkImport\Importers\ItemImporter;
+use App\Services\BulkImport\Importers\JournalEntryImporter;
 use App\Services\BulkImport\Importers\VendorCreditImporter;
 use App\Services\BulkImport\Importers\VendorImporter;
 
@@ -36,6 +37,7 @@ class BulkImportRegistry
             app(BillPaymentImporter::class),
             app(CustomerReceiptImporter::class),
             app(FixedAssetImporter::class),
+            app(JournalEntryImporter::class),
         ];
     }
 

@@ -84,7 +84,7 @@ final class UnmatchedBankLinesDetector implements InsightDetector
      */
     public function cta(Company $company): array
     {
-        return ['route' => 'banking.reconcile', 'label' => __('Open reconcile')];
+        return ['route' => 'banking.review', 'label' => __('Review transactions')];
     }
 
     /**

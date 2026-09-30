@@ -27,7 +27,7 @@ new #[Title('Documentation — Insights')] class extends Component {}; ?>
         {{-- ───────────────────────── The daily insight ───────────────────────── --}}
         <flux:heading size="lg" class="mt-8">{{ __('The daily insight') }}</flux:heading>
         <flux:text>
-            {{ __('The Daily insight card sits near the top of the Dashboard, above the four summary cards. It shows a headline, a one- or two-sentence explanation, and usually a button that takes you to the page where you can act — View AR aging, View forecast, Open reconcile, and so on. A Past insights button opens the Insights page, and the × in the corner (Dismiss for today) closes the card on this browser for that day only: your colleagues still see it, and the next new insight reappears on its own.') }}
+            {{ __('The Daily insight card sits near the top of the Dashboard, above the four summary cards. It shows a headline, a one- or two-sentence explanation, and usually a button that takes you to the page where you can act — View AR aging, View forecast, Review transactions, and so on. A Past insights button opens the Insights page, and the × in the corner (Dismiss for today) closes the card on this browser for that day only: your colleagues still see it, and the next new insight reappears on its own.') }}
         </flux:text>
 
         <x-docs.figure
@@ -76,7 +76,7 @@ new #[Title('Documentation — Insights')] class extends Component {}; ?>
             <li><strong>{{ __('Heads-up') }}</strong>
                 <ul class="list-disc ps-6 space-y-1">
                     <li>{{ __('Invoices overdue — at least one open invoice past its due date and at least $100 overdue in total; the body says how old the oldest is. View AR aging.') }}</li>
-                    <li>{{ __('Bank lines waiting to be matched — ten or more imported statement lines still Unmatched or Suggested. Open reconcile.') }}</li>
+                    <li>{{ __('Bank lines waiting to be matched — ten or more imported statement lines still Unmatched or Suggested. Review transactions.') }}</li>
                     <li>{{ __('Sales tax to set aside — tax collected has exceeded input credits by more than $500 since your last filed return. View sales tax report.') }}</li>
                     <li>{{ __('Recurring templates paused — a recurring invoice, bill, or journal entry stopped generating on schedule. Review recurring.') }}</li>
                     <li>{{ __('Draft invoices not sent — two or more invoices still in Draft whose invoice date is more than 14 days ago; a single old draft never raises it. Open invoices.') }}</li>

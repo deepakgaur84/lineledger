@@ -217,16 +217,41 @@ affected transaction by hand.
 
 - **Bundle items** — reference other items as components; no clean flat-
   CSV representation.
-- **Journal Entries** — no existing CSV convention to mimic;
-  Migration's own `GeneralLedgerReplayImporter` is a QuickBooks-specific
-  full-history replay tool posting raw, already-balanced entries from a
-  QB Journal report — a fundamentally different job from "add a new
-  journal entry," not reusable.
 
 None of this needs a new architecture — `ImporterDefinition` and
 `GroupedImporterDefinition` between them already support arbitrarily
 complex `validate()`/`commit()` logic for any shape of entity. It's real,
 additional work, not a redesign.
+
+## Journal Entries
+
+One row, one line; rows sharing the same `import_ref` become one entry's
+lines, through the real `SaveJournalEntry` action and `JournalPoster` — an
+imported entry gets identical validation, balance enforcement and
+period-lock handling to one entered by hand. Deliberately not for a
+full-history GL replay from another system: Migration's own
+`GeneralLedgerReplayImporter` already exists for that (a QuickBooks-specific
+tool posting raw, already-balanced entries from a QB Journal report) and is
+a fundamentally different job — this one is for adding new entries to an
+already-running company, the same shape as typing them in by hand.
+
+A row's `debit`/`credit` are plain decimals, and exactly one of the two
+must be non-zero per row — both given, or neither, is rejected outright
+rather than silently dropped. `SaveJournalEntry` itself drops a zero/zero
+line, but a row sitting in a CSV file is presumably there on purpose, so a
+genuinely empty one is treated as a mistake worth surfacing, not ignored.
+
+**The balance check compares in cents, not decimal dollars.** Summing a
+long column of floats can produce a false imbalance purely from ordinary
+floating-point rounding (0.1 + 0.2 famously isn't exactly 0.3 in binary
+floating point) — rounding each side to the nearest cent before comparing
+avoids flagging a genuinely balanced import as broken.
+
+A `contact_name` column resolves against every contact regardless of
+vendor/customer role, since a journal line's contact can be either — unlike
+the AP/AR importers above, which each only search their own side. It
+mirrors those importers' own ambiguity handling all the same: two contacts
+sharing a name is rejected rather than guessed at.
 
 ## The Opening Balances / QuickBooks-migration fixed-assets importer
 
@@ -251,14 +276,18 @@ category's own defaults.
 
 ## Testing this
 
-**Fixed Assets has real coverage** —
+**Fixed Assets and Journal Entries have real coverage** —
 `tests/Feature/BulkImport/FixedAssetImporterTest.php` (the register-only
 importer: category fallbacks, every method spelling, the 1–100% rate
 window, the back-fill preview and its lock-date awareness, duplicate
-detection) and `tests/Feature/Migration/FixedAssetsImporterMethodsTest.php`
+detection), `tests/Feature/Migration/FixedAssetsImporterMethodsTest.php`
 (the Opening-Balances/QuickBooks-wizard one: the same method/rate columns,
-a CSV with neither column still importing as straight-line). Both are a
-reasonable pattern to copy for any importer built here next.
+a CSV with neither column still importing as straight-line), and
+`tests/Feature/BulkImport/JournalEntryImporterTest.php` (both-or-neither
+debit/credit rejection, the cents-based balance check specifically against
+a floating-point-rounding case, contact ambiguity, duplicate entry
+numbers). All three are a reasonable pattern to copy for any importer
+built here next.
 
 **Every other importer — Vendors through Receipts — still has no
 automated tests of its own.** Before extending one, worth adding feature
