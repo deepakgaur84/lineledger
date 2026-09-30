@@ -52,6 +52,26 @@ function postCostToLedger(Account $account, int $cents, string $date): JournalEn
     return app(\App\Services\Posting\JournalPoster::class)->post($entry);
 }
 
+/**
+ * Posts a simple, balanced journal entry crediting $account for $cents,
+ * offset by a debit to Depreciation Expense — matching how depreciation
+ * actually posts (DepreciationGenerator debits expense, credits Accumulated
+ * Depreciation), unlike postCostToLedger() above which always debits.
+ */
+function postDepreciationToLedger(Account $account, int $cents, string $date): JournalEntry
+{
+    $entry = app(\App\Actions\Accounting\SaveJournalEntry::class)->handle([
+        'entry_date' => $date,
+        'memo' => 'Test depreciation posting',
+        'lines' => [
+            ['account_id' => test()->depExpense->id, 'debit_cents' => $cents, 'credit_cents' => 0],
+            ['account_id' => $account->id, 'debit_cents' => 0, 'credit_cents' => $cents],
+        ],
+    ]);
+
+    return app(\App\Services\Posting\JournalPoster::class)->post($entry);
+}
+
 function reconReport(string $start, string $end, string $groupBy = 'account')
 {
     return Livewire::test('pages::reports.fixed-asset-reconciliation', ['company' => test()->company])
@@ -285,8 +305,14 @@ it('sums accumulated depreciation across every distinct account an account-group
     $otherAccumAccount = Account::create(['code' => '1591', 'name' => 'Other Accum Dep', 'subtype' => AccountSubtype::FixedAsset, 'type' => AccountType::Asset, 'normal_balance' => NormalBalance::Debit]);
 
     postCostToLedger($this->assetAccount, 240000, '2026-01-01');
-    postCostToLedger($this->accumDep, 10000, '2026-01-31');
-    postCostToLedger($otherAccumAccount, 15000, '2026-01-31');
+    // CREDIT each accum account, matching how depreciation actually posts —
+    // postCostToLedger() always debits, which is wrong for this side and was
+    // the actual bug: it produced a positive raw balance the report correctly
+    // negated to -25000, while this test wrongly expected +25000. The report's
+    // own negation logic was right all along; the test simulated the wrong
+    // side of the entry.
+    postDepreciationToLedger($this->accumDep, 10000, '2026-01-31');
+    postDepreciationToLedger($otherAccumAccount, 15000, '2026-01-31');
 
     Asset::factory()->create(['asset_account_id' => $this->assetAccount->id, 'accumulated_depreciation_account_id' => $this->accumDep->id, 'cost_cents' => 120000, 'acquired_date' => '2026-01-01']);
     Asset::factory()->create(['asset_account_id' => $this->assetAccount->id, 'accumulated_depreciation_account_id' => $otherAccumAccount->id, 'cost_cents' => 120000, 'acquired_date' => '2026-01-01']);
@@ -297,7 +323,7 @@ it('sums accumulated depreciation across every distinct account an account-group
     expect($report['groups'][0]['closing']['bs_accum'])->toBe(25000);
 });
 
-it('exports to CSV and PDF without error', function () {
+it('exports to CSV, XLSX and PDF without error', function () {
     postCostToLedger($this->assetAccount, 50000, '2026-01-01');
     Asset::factory()->create(['asset_account_id' => $this->assetAccount->id, 'cost_cents' => 50000, 'acquired_date' => '2026-01-01']);
 
@@ -316,7 +342,23 @@ it('exports to CSV and PDF without error', function () {
     $csv = ob_get_clean();
     expect($csv)->toContain($this->assetAccount->name);
 
-    expect($component->instance()->exportPdf())->toBeInstanceOf(BinaryFileResponse::class);
+    expect($component->instance()->exportXlsx())->toBeInstanceOf(BinaryFileResponse::class)
+        ->and($component->instance()->exportPdf())->toBeInstanceOf(BinaryFileResponse::class);
+});
+
+it('does not let a user-controlled group label execute as a spreadsheet formula', function () {
+    // CWE-1236: a category/account name starting with "=" must render as inert
+    // text in the XLSX export, not a live formula — confirmed by exercising
+    // the exact export path with such a name, not just reading the source.
+    $category = AssetCategory::create(['name' => '=cmd|/c calc', 'is_active' => true]);
+    Asset::factory()->create(['asset_account_id' => $this->assetAccount->id, 'asset_category_id' => $category->id, 'cost_cents' => 10000, 'acquired_date' => '2026-01-01']);
+
+    $component = Livewire::test('pages::reports.fixed-asset-reconciliation', ['company' => $this->company])
+        ->set('startDate', '2026-01-01')
+        ->set('endDate', '2026-01-31')
+        ->set('groupBy', 'category');
+
+    expect($component->instance()->exportXlsx())->toBeInstanceOf(BinaryFileResponse::class);
 });
 
 it('shows a message and no crash when there are no fixed assets at all', function () {

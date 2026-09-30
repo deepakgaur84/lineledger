@@ -132,6 +132,24 @@ new #[Title('Asset')] class extends Component {
             $this->is_active = (bool) $asset->is_active;
             $this->source_type = $asset->source_type;
             $this->source_id = $asset->source_id;
+
+            // Arriving from a credit line's "Mark asset disposed" button on the
+            // journal entry page. Never overwrites an asset that is already
+            // disposed — the button only ever appears for an in-service asset
+            // in the first place, but an asset opened straight from an old,
+            // stale link (or a second click after it was already disposed via
+            // some other route) should never silently re-date an existing
+            // disposal out from under whoever already recorded it.
+            // Arrives pre-formatted (toDateString()) from the journal page's own
+            // link — no parsing needed here, and any tampering is still caught
+            // by the normal save-time validation on disposed_at, same as every
+            // other field on this form.
+            $disposeDate = request()->query('dispose_date');
+            if ($disposeDate && $asset->status->value === 'in-service') {
+                $this->status = 'disposed';
+                $this->disposed_at = (string) $disposeDate;
+            }
+
             $this->refreshMaterialityDefault();
 
             return;

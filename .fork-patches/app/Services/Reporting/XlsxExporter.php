@@ -291,6 +291,105 @@ class XlsxExporter
         });
     }
 
+
+    /**
+     * @param  array{group_by: string, groups: list<array{label: string, opening: array<string, int>, closing: array<string, int>}>, totals: array{opening: array<string, int>, closing: array<string, int>}}  $report
+     */
+    public function fixedAssetReconciliation(string $filename, Company $company, array $report, string $startDate, string $endDate): BinaryFileResponse
+    {
+        return $this->buildAndStream($filename, function (Writer $writer) use ($company, $report, $startDate, $endDate) {
+            $sheet = $writer->getCurrentSheet();
+            $sheet->setName('Fixed Asset Reconciliation');
+
+            $sheet->setColumnWidth(30, 1); // Source
+            $sheet->setColumnWidth(16, 2, 7); // the six money columns
+
+            $headerRowsUsed = $this->writeReportHeader($writer, 'Fixed Asset Reconciliation', $company->name, [
+                'Grouped by '.($report['group_by'] === 'category' ? 'category' : 'account'),
+                'For the period '.$startDate.' to '.$endDate,
+            ], totalColumns: 7);
+
+            $headerStyle = $this->makeStyle(bold: true, backgroundColor: self::HEADER_FILL);
+            $writer->addRow(new Row([
+                $this->text('Source', $headerStyle),
+                $this->text('Opening Cost', $headerStyle),
+                $this->text('Opening Accum Dep', $headerStyle),
+                $this->text('Opening Book Value', $headerStyle),
+                $this->text('Closing Cost', $headerStyle),
+                $this->text('Closing Accum Dep', $headerStyle),
+                $this->text('Closing Book Value', $headerStyle),
+            ]));
+            $sheet->setSheetView((new SheetView)->withFreezeRow($headerRowsUsed + 2));
+
+            $groupLabelStyle = $this->makeStyle(bold: true, backgroundColor: self::SUBHEADER_FILL);
+            $groupBlankStyle = $this->makeStyle(backgroundColor: self::SUBHEADER_FILL);
+            $moneyStyle = $this->makeStyle(format: self::MONEY_FORMAT);
+            $diffLabelStyle = $this->makeStyle(italic: true);
+            $diffMoneyStyle = $this->makeStyle(format: self::MONEY_FORMAT);
+            $diffLabelStyleRed = $this->makeStyle(italic: true, fontColor: 'B91C1C');
+            $diffMoneyStyleRed = $this->makeStyle(format: self::MONEY_FORMAT, fontColor: 'B91C1C');
+
+            if ($report['groups'] === []) {
+                $writer->addRow(new Row([$this->text('No fixed assets recorded yet.')]));
+            }
+
+            foreach ($report['groups'] as $group) {
+                // Group label row — an account or category name, always user-controlled,
+                // so this MUST go through text() rather than Cell::fromValue() directly
+                // (CWE-1236: a value starting with "=" would otherwise execute as a live
+                // formula when the sheet is opened).
+                $writer->addRow(new Row([
+                    $this->text($group['label'], $groupLabelStyle),
+                    Cell::fromValue('', $groupBlankStyle),
+                    Cell::fromValue('', $groupBlankStyle),
+                    Cell::fromValue('', $groupBlankStyle),
+                    Cell::fromValue('', $groupBlankStyle),
+                    Cell::fromValue('', $groupBlankStyle),
+                    Cell::fromValue('', $groupBlankStyle),
+                ]));
+
+                foreach (['Balance Sheet' => 'bs', 'Asset Register' => 'reg'] as $rowLabel => $prefix) {
+                    $writer->addRow(new Row([
+                        $this->text($rowLabel),
+                        Cell::fromValue($group['opening'][$prefix.'_cost'] / 100, $moneyStyle),
+                        Cell::fromValue($group['opening'][$prefix.'_accum'] / 100, $moneyStyle),
+                        Cell::fromValue($group['opening'][$prefix.'_book'] / 100, $moneyStyle),
+                        Cell::fromValue($group['closing'][$prefix.'_cost'] / 100, $moneyStyle),
+                        Cell::fromValue($group['closing'][$prefix.'_accum'] / 100, $moneyStyle),
+                        Cell::fromValue($group['closing'][$prefix.'_book'] / 100, $moneyStyle),
+                    ]));
+                }
+
+                $hasDiff = $group['opening']['diff_cost'] !== 0 || $group['opening']['diff_accum'] !== 0
+                    || $group['closing']['diff_cost'] !== 0 || $group['closing']['diff_accum'] !== 0;
+                $labelStyle = $hasDiff ? $diffLabelStyleRed : $diffLabelStyle;
+                $amountStyle = $hasDiff ? $diffMoneyStyleRed : $diffMoneyStyle;
+
+                $writer->addRow(new Row([
+                    $this->text('  Difference', $labelStyle),
+                    Cell::fromValue($group['opening']['diff_cost'] / 100, $amountStyle),
+                    Cell::fromValue($group['opening']['diff_accum'] / 100, $amountStyle),
+                    Cell::fromValue($group['opening']['diff_book'] / 100, $amountStyle),
+                    Cell::fromValue($group['closing']['diff_cost'] / 100, $amountStyle),
+                    Cell::fromValue($group['closing']['diff_accum'] / 100, $amountStyle),
+                    Cell::fromValue($group['closing']['diff_book'] / 100, $amountStyle),
+                ]));
+            }
+
+            if ($report['groups'] !== []) {
+                $this->writeTotalsRow($writer, [
+                    'Total Difference',
+                    $report['totals']['opening']['diff_cost'] / 100,
+                    $report['totals']['opening']['diff_accum'] / 100,
+                    $report['totals']['opening']['diff_book'] / 100,
+                    $report['totals']['closing']['diff_cost'] / 100,
+                    $report['totals']['closing']['diff_accum'] / 100,
+                    $report['totals']['closing']['diff_book'] / 100,
+                ], moneyColumns: [2, 3, 4, 5, 6, 7]);
+            }
+        });
+    }
+
     /**
      * Flat GIFI statement export. Rows are [schedule, section, code, description, amount].
      *
