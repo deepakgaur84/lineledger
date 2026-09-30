@@ -61,8 +61,7 @@ function balancedJournalRows(string $amount = '100.00', array $overrides = []): 
 it('creates and posts a balanced two-line entry', function () {
     $rows = balancedJournalRows('150.00', ['entry_no' => 'JE-5001', 'memo' => 'Test entry']);
 
-    expect($this->importer->validate($rows[0], $this->company))->toBe([])
-        ->and($this->importer->validate($rows[1], $this->company))->toBe([]);
+    expect($this->importer->validateGroup($rows, $this->company))->toBe([]);
 
     $this->importer->commitGroup($rows, $this->company);
 
@@ -92,13 +91,13 @@ it('rejects a duplicate entry_no', function () {
 });
 
 it('rejects a line with both a debit and a credit', function () {
-    $errors = $this->importer->validate(journalRow(['debit' => '100.00', 'credit' => '50.00']), $this->company);
+    $errors = $this->importer->validateGroup([journalRow(['debit' => '100.00', 'credit' => '50.00'])], $this->company);
 
     expect(implode(' ', $errors))->toContain('cannot have both');
 });
 
 it('rejects a line with neither a debit nor a credit', function () {
-    $errors = $this->importer->validate(journalRow(['debit' => '', 'credit' => '']), $this->company);
+    $errors = $this->importer->validateGroup([journalRow(['debit' => '', 'credit' => ''])], $this->company);
 
     expect(implode(' ', $errors))->toContain('needs a debit or a credit');
 });
@@ -147,20 +146,24 @@ it('resolves a contact by name, and rejects an ambiguous one', function () {
 });
 
 it('rejects a contact name that does not exist or is ambiguous', function () {
-    $notFound = $this->importer->validate(journalRow(['contact_name' => 'Nobody Here']), $this->company);
+    $notFound = $this->importer->validateGroup([journalRow(['contact_name' => 'Nobody Here'])], $this->company);
     expect(implode(' ', $notFound))->toContain('not found');
 
     Contact::create(['display_name' => 'Acme Ltd', 'is_vendor' => true]);
     Contact::create(['display_name' => 'Acme Ltd', 'is_customer' => true]);
 
-    $ambiguous = $this->importer->validate(journalRow(['contact_name' => 'Acme Ltd']), $this->company);
+    $ambiguous = $this->importer->validateGroup([journalRow(['contact_name' => 'Acme Ltd'])], $this->company);
     expect(implode(' ', $ambiguous))->toContain('more than one');
 });
 
 it('resolves a tax code as a reporting tag only', function () {
-    $taxCode = TaxCode::create(['code' => 'GST', 'name' => 'GST', 'rate_basis_points' => 1500, 'applies_to' => TaxAppliesTo::Both->value, 'is_active' => true]);
+    // A code deliberately distinct from any of the company's own seeded
+    // defaults (CompanyFactory defaults to Canada, which already seeds a
+    // real "GST" tax code) — this collided with that exact record, a
+    // genuine setup bug in this test, not the importer.
+    $taxCode = TaxCode::create(['code' => 'TEST15', 'name' => 'Test 15%', 'rate_basis_points' => 1500, 'applies_to' => TaxAppliesTo::Both->value, 'is_active' => true]);
 
-    $rows = balancedJournalRows(overrides: ['tax_code' => 'GST']);
+    $rows = balancedJournalRows(overrides: ['tax_code' => 'TEST15']);
     $this->importer->commitGroup($rows, $this->company);
 
     $entry = JournalEntry::query()->latest('id')->firstOrFail();
@@ -170,7 +173,7 @@ it('resolves a tax code as a reporting tag only', function () {
 });
 
 it('rejects an unknown account code', function () {
-    $errors = $this->importer->validate(journalRow(['account_code' => '99999']), $this->company);
+    $errors = $this->importer->validateGroup([journalRow(['account_code' => '99999'])], $this->company);
 
     expect($errors)->not->toBeEmpty();
 });
