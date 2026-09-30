@@ -284,7 +284,13 @@ class JournalEntryImporter implements GroupedImporterDefinition
      * the AP/AR importers, this checks every contact regardless of
      * vendor/customer role, since a journal line's contact can be either.
      *
-     * @param  list<string>  $errors
+     * No @param on $errors here — matching every other importer's own
+     * resolve*() method (e.g. BillImporter::resolveVendor()), none of which
+     * type-hint it either. A list<string> hint here previously conflicted
+     * with __() being typed string|array by Larastan, the exact same
+     * PHPStan error FixedAssetImporter::accountId() hit earlier tonight and
+     * was fixed the same way, by removing the hint rather than casting
+     * every __() call.
      */
     private function resolveContact(string $name, Company $company, int $lineNum, array &$errors): void
     {
