@@ -291,7 +291,6 @@ class XlsxExporter
         });
     }
 
-
     /**
      * @param  array{group_by: string, groups: list<array{label: string, opening: array<string, int>, closing: array<string, int>}>, totals: array{opening: array<string, int>, closing: array<string, int>}}  $report
      */
