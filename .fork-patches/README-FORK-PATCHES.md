@@ -251,9 +251,10 @@ QuickBooks migration wizard, calls the real `Save*` actions directly so
 an imported record gets identical validation and currency handling to
 one entered by hand. Grown considerably since first built: now covers
 both flat, one-row-one-record entities (Vendors, Customers, Item
-Categories, Items) and multi-line documents (Bills, Invoices, Vendor
-Credits, Credit Memos) via a second interface,
-`GroupedImporterDefinition`, added specifically for the latter.
+Categories, Items, Fixed Assets) and multi-line documents (Bills,
+Invoices, Vendor Credits, Credit Memos, Bill Payments, Receipts, Journal
+Entries) via a second interface, `GroupedImporterDefinition`, added
+specifically for the latter.
 
 **Full details, architecture, the FC reasoning, and the grouped-importer
 design: see `app/Services/BulkImport/README-BULK-IMPORT.md`.** Files:
@@ -275,6 +276,25 @@ design: see `app/Services/BulkImport/README-BULK-IMPORT.md`.** Files:
 - `app/Services/BulkImport/Importers/InvoiceImporter.php` (new)
 - `app/Services/BulkImport/Importers/VendorCreditImporter.php` (new)
 - `app/Services/BulkImport/Importers/CreditMemoImporter.php` (new)
+- `app/Services/BulkImport/Importers/BillPaymentImporter.php` (new) —
+  one row is one *application* to a bill, not one line item; the
+  payment's own total is the sum of its rows' `application_amount`
+  rather than a separate column
+- `app/Services/BulkImport/Importers/CustomerReceiptImporter.php` (new)
+  — the AR-side mirror of Bill Payments. One real, deliberate
+  asymmetry confirmed against each one's own API request: Bill
+  Payments requires the bill still be open; Receipts has no equivalent
+  check on the invoice, mirrored exactly rather than "fixed"
+- `app/Services/BulkImport/Importers/FixedAssetImporter.php` (new) —
+  register-only (never posts to the ledger); blank fields fall back to
+  the row's asset category exactly as the asset form does; a
+  back-dated `in_service_date` with `auto_depreciate: yes` back-fills
+  every month since, and the preview says exactly how many before
+  committing
+- `app/Services/BulkImport/Importers/JournalEntryImporter.php` (new) —
+  one row is one line; the balance check (total debits = total
+  credits) compares in cents, not decimal dollars, to avoid a false
+  imbalance from ordinary floating-point rounding on a large file
 - `resources/views/pages/tools/⚡bulk-import.blade.php` (new) — also
   links out to `/banking/import` for Cheques/Deposits/Transfers, which
   are deliberately NOT importers here (see the README for why the
@@ -407,6 +427,105 @@ limit (above) — the $12 version never shipped, but it's a reminder to
 confirm a business rule before assuming a sensible-looking default is
 the intended one.
 
+## 11. Fixed asset reconciliation report, disposal link, and a dashboard insight fix
+
+Three separate pieces, delivered together in one commit.
+
+**Fixed Asset Reconciliation report** — compares the asset register
+(the `assets` table plus actually-posted `AssetDepreciationEntry` rows,
+not the theoretical schedule) against what the general ledger itself
+says, at the start and end of a period. Built directly against a
+reference layout from Xero's own equivalent report. Grouping defaults to
+by account; by category is also offered, using each category's own
+default accounts for the GL side (so an individual asset drifting onto a
+different account than its category's default correctly shows up as a
+difference, rather than being silently absorbed).
+
+A real, confirmed finding from reading the code directly, not assumed:
+Accumulated Depreciation accounts are seeded as Asset-type (not a
+dedicated contra-asset type), and `normal_balance` is derived purely from
+account *type* — so `ReportCalculator::balanceAsOf()` returns it as a
+**negative** number even though it always carries a credit balance. The
+report negates it before display to match both the Register side's own
+positive convention and the reference layout.
+
+A disposed asset drops out of the Register side once its disposal date
+has passed — deliberately, since LineLedger's disposal is a register-only
+status flag with no journal entry of its own, so a disposal with nothing
+removed from the GL now correctly surfaces as a difference, which is
+exactly the gap this report exists to catch.
+
+- `resources/views/pages/reports/⚡fixed-asset-reconciliation.blade.php`
+  (new) — the report itself; CSV and PDF export built in from the start,
+  XLSX added in a follow-up once the nested opening/closing/per-group
+  layout had been worked out properly rather than rushed
+- `app/Services/Reporting/XlsxExporter.php` — `fixedAssetReconciliation()`
+  method added. Uses `$this->text()`, not `Cell::fromValue()`, for the
+  group labels specifically because they're user-controlled (an account
+  or category name) — this file's own docs flag `Cell::fromValue()` on an
+  unsanitized string as a real formula-injection risk (CWE-1236), and a
+  category literally named `=cmd|...` is covered by its own test
+- `app/Support/Reporting/RenderableReports.php` and `ReportCatalog.php` —
+  registered under Accountant & Taxes, alongside Trial Balance
+- `routes/web.php` — one route added (`reports.fixed-asset-reconciliation`)
+- `tests/Feature/Reports/FixedAssetReconciliationTest.php` (new) — the
+  Accum Dep sign negation is checked against the *raw* GL balance
+  directly (confirming it is genuinely negative before the report flips
+  it), not just the already-correct final output
+
+**Disposal link** — a button on a *credit* line to a fixed-asset-type
+account on the journal entry page (mirroring the existing "Create asset
+record" button already there for *debit* lines), opening that asset
+pre-filled as Disposed, dated to the journal entry. Only offered when
+exactly one in-service asset unambiguously uses that account — with more
+than one, there is no way to tell which one the entry is for, so nothing
+is offered rather than guessing and disposing of the wrong asset.
+
+- `resources/views/pages/journal/⚡show.blade.php` — new
+  `disposableAssetIds()` computed method and the button; the first time
+  this fork has customized this file
+- `resources/views/pages/assets/⚡form.blade.php` — a `dispose_date`
+  query-param prefill on the edit branch, arriving pre-formatted from the
+  journal page's own link; never overwrites an asset that is already
+  disposed, even from a stale link
+- `tests/Feature/Journal/JournalEntryAssetDisposalLinkTest.php` (new) —
+  covers the ambiguity rule (zero, one, and multiple matching assets),
+  debit vs. credit direction, matching on either of an asset's two
+  accounts (cost or accumulated depreciation), and the already-disposed
+  guard
+
+**Dashboard insight CTA fix** — `UnmatchedBankLinesDetector`'s "Open
+reconcile" button pointed at `banking.reconcile`, the traditional
+month-end bank-reconciliation screen. Confirmed directly: that page
+never references `BankStatementLine` anywhere in it. The lines this
+insight actually counts (`Unmatched`/`Suggested` statuses) are reviewed
+and matched on `banking.review` instead — a real bug a user hit directly
+(an insight claiming 15 pending lines, with the linked screen showing
+none). Fixed to `banking.review`, relabeled "Review transactions", with
+both references in the in-app docs page updated to match.
+
+- `app/Services/Insights/Detectors/UnmatchedBankLinesDetector.php` —
+  route and label fixed
+- `resources/views/pages/docs/⚡insights.blade.php` — both mentions
+  updated
+- `tests/Feature/Insights/InsightDetectorsTest.php` — a CTA-route test
+  added; the existing test for this detector only ever covered the
+  counting logic, never where the button actually sent anyone, which is
+  exactly why this went unnoticed until a user hit it directly
+
+**Two mistakes worth recording from delivering this one**:
+- `JournalEntryImporter::resolveContact()` shipped with the exact same
+  PHPStan error as `FixedAssetImporter::accountId()` from earlier the
+  same night (an `@param list<string> $errors` hint conflicting with
+  `__()` being typed `string|array` by Larastan) — a lesson already
+  learned once that night and not checked for the second time it was
+  needed.
+- `fixedAssetReconciliation()` landed in `XlsxExporter.php` with two
+  blank lines separating it from the preceding method instead of one,
+  tripping Pint's `class_attributes_separation` rule — caught by CI, not
+  by review beforehand, since there was no PHP runtime available to run
+  Pint directly against the change before delivering it.
+
 ## Ongoing maintenance — now partially automated, still worth watching
 
 `reapply-fork-patches` (see §7) originally just *overwrote* on every
@@ -426,14 +545,30 @@ created before any merge attempt, protected against deletion/force-push
 by the branch-protection ruleset, as a rollback point if an auto-merge
 ever produces something broken.
 
-This is new, and has not yet been exercised against a real, messy
-upstream collision — worth treating the first few times this actually
-fires (a failed run, or a commit message mentioning "some files need
-manual review") as things to check by hand rather than trust blindly,
-until it's proven itself over a few real syncs. When it does fire clean,
-still worth a periodic sanity check: diff upstream's current version of
-a patched file against what's staged in `.fork-patches`, to catch
-anything the automation's own judgement might have gotten wrong.
+This has since been exercised against a real upstream sync, not just
+designed on paper: a sync landed a genuine conflict on three separate
+patched files (`routes/web.php`, `app/Services/Reporting/
+ReportCalculator.php`, `resources/css/app.css`) at once, and all three
+auto-merged cleanly — upstream's changes and this fork's own both kept,
+`.fork-patches` updated to match, nothing flagged for manual review.
+Still worth a periodic sanity check regardless: diff upstream's current
+version of a patched file against what's staged in `.fork-patches`, to
+catch anything the automation's own judgement might have gotten wrong on
+a messier conflict than that first real one happened to be.
+
+**A separate, unrelated mistake worth recording — not the merge system's
+fault, a plain human one**: `.fork-patches/app/Enums/Country.php` (the
+Global-jurisdiction file, §1) was accidentally deleted outright, in a
+commit meant to clean up an unrelated stray duplicate sitting under
+`.github/.fork-patches/...` by mistake — the two paths differ only by
+that one `.github/` segment, and the wrong one was deleted first. The
+real-path file was never touched throughout (so nothing user-facing
+broke), but `.fork-patches` lost its own tracked copy of a real,
+load-bearing customization for about a day and a half before the gap was
+caught and restored. The actual stray duplicate was identified and
+deleted correctly on a second attempt, once the two paths were made
+unmistakable (a direct link to the exact file, with its full breadcrumb
+spelled out) rather than described in prose alone.
 
 ## NAS-side infrastructure (not repo files)
 
