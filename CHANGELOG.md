@@ -69,6 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   higher net. Credit-memo tax now lowers Collected instead of adding to
   Paid, and vendor-credit tax lowers Paid instead of adding to Collected. Net
   figures are unchanged by that split.
+- **Dependencies refreshed** — Laravel 13.34, Livewire 4.4.7, Fortify 1.40; the
+  PHP ^8.5 and Laravel 13 requirements are unchanged. TCPDF stays on 6.x:
+  TCPDF 7 drops the internals FPDI builds on, and the payroll slips and the
+  management report package both print through FPDI.
 
 ### Fixed
 
@@ -92,6 +96,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reversed commission couldn't be coded there. It now lists every active account,
   as the journal entry form does. Picking a revenue account doesn't bring along a
   sales-only default tax code, which never applies to a purchase.
+
+### Security
+
+- **league/commonmark 2.10.3**, which renders the Markdown in outgoing mail. It
+  fixes a quadratic-time denial of service in the GitHub-flavoured table
+  extension ([GHSA-3q6v-r5mr-hxv8](https://github.com/advisories/GHSA-3q6v-r5mr-hxv8))
+  and a bypass of the raw-HTML tag filter
+  ([GHSA-97jj-33gv-5xf9](https://github.com/advisories/GHSA-97jj-33gv-5xf9)).
 
 ## [1.1.0] - 2026-09-18
 
