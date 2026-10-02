@@ -375,3 +375,80 @@ it('offers no rate/months toggle for declining balance or immediate', function (
     $form->set('depreciation_method', 'immediate')
         ->assertDontSeeHtml('data-test="asset-life-mode-toggle"');
 });
+
+it('saves the rate itself, not just the useful life it computes — the original bug', function () {
+    // The original behaviour: typing a rate computed and saved useful_life_months
+    // correctly, but the rate itself was discarded entirely — nothing stored it,
+    // and re-opening the asset never showed it again. This is the regression test
+    // for that exact loss: NZ (and similar jurisdictions) track straight-line
+    // depreciation by rate, not just by a life in months.
+    methodFormBase()
+        ->set('useful_life_input_mode', 'rate')
+        ->set('straight_line_rate', '20')
+        ->call('save')
+        ->assertHasNoErrors();
+
+    $asset = Asset::query()->where('name', 'Delivery van')->firstOrFail();
+
+    expect($asset->useful_life_months)->toBe(60)
+        ->and((float) $asset->depreciation_rate)->toBe(20.0);
+});
+
+it('shows the stored rate again when re-opening a straight-line asset created from one', function () {
+    $asset = Asset::factory()->create([
+        'asset_account_id' => $this->fixedAssetAccount->id,
+        'depreciation_method' => 'straight_line',
+        'useful_life_months' => 60,
+        'depreciation_rate' => 20,
+    ]);
+
+    Livewire::test('pages::assets.form', ['company' => $this->company, 'asset' => $asset])
+        ->assertSet('useful_life_input_mode', 'rate')
+        ->assertSet('straight_line_rate', '20')
+        ->assertSet('depreciation_rate', '20');
+});
+
+it('still defaults to months mode for a straight-line asset with no stored rate', function () {
+    $asset = Asset::factory()->create([
+        'asset_account_id' => $this->fixedAssetAccount->id,
+        'depreciation_method' => 'straight_line',
+        'useful_life_months' => 36,
+        'depreciation_rate' => null,
+    ]);
+
+    Livewire::test('pages::assets.form', ['company' => $this->company, 'asset' => $asset])
+        ->assertSet('useful_life_input_mode', 'months')
+        ->assertSet('useful_life_months', 36);
+});
+
+it('validates a straight-line rate when one is given, but does not require it', function () {
+    // No rate at all — a life typed directly — is still perfectly valid.
+    methodFormBase()
+        ->set('useful_life_months', 48)
+        ->call('save')
+        ->assertHasNoErrors();
+
+    // An out-of-window rate is rejected the same way as declining balance's own.
+    methodFormBase()
+        ->set('useful_life_input_mode', 'rate')
+        ->set('straight_line_rate', '20')
+        ->set('depreciation_rate', '150')
+        ->call('save')
+        ->assertHasErrors(['depreciation_rate']);
+});
+
+it('clears the stored rate when an asset is switched away from straight-line', function () {
+    $asset = Asset::factory()->create([
+        'asset_account_id' => $this->fixedAssetAccount->id,
+        'depreciation_method' => 'straight_line',
+        'useful_life_months' => 60,
+        'depreciation_rate' => 20,
+    ]);
+
+    Livewire::test('pages::assets.form', ['company' => $this->company, 'asset' => $asset])
+        ->set('depreciation_method', 'immediate')
+        ->call('save')
+        ->assertHasNoErrors();
+
+    expect($asset->fresh()->depreciation_rate)->toBeNull();
+});

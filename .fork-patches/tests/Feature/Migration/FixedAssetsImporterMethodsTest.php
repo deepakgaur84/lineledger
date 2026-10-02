@@ -118,16 +118,17 @@ it('takes a rate written with a percent sign', function () {
     expect((float) Asset::withoutGlobalScopes()->where('company_id', $this->company->id)->firstOrFail()->depreciation_rate)->toBe(12.5);
 });
 
-it('refuses an unknown method, a rate outside 1 to 100, and a rate on a method that has none, creating nothing', function () {
+it('refuses an unknown method, a rate outside 1 to 100, and a rate on the one method that has none at all, creating nothing', function () {
     $bad = [
         ['depreciation_method' => 'sum of years'],
         ['depreciation_method' => 'WDV', 'depreciation_rate' => '0.5'],
         ['depreciation_method' => 'WDV', 'depreciation_rate' => '0.99'],
         ['depreciation_method' => 'WDV', 'depreciation_rate' => '101'],
         ['depreciation_method' => 'WDV', 'depreciation_rate' => 'abc'],
-        ['depreciation_method' => 'straight_line', 'depreciation_rate' => '20'],
+        // Immediate is the one method a rate never applies to at all — straight_line's
+        // own rate is covered separately below, as an ACCEPTED case, not a bad one: it
+        // used to be rejected outright before the straight-line rate bug was fixed.
         ['depreciation_method' => '100%', 'depreciation_rate' => '20'],
-        ['depreciation_rate' => '20'],
     ];
 
     foreach ($bad as $overrides) {
@@ -138,6 +139,25 @@ it('refuses an unknown method, a rate outside 1 to 100, and a rate on a method t
     }
 
     expect(Asset::withoutGlobalScopes()->where('company_id', $this->company->id)->count())->toBe(0);
+});
+
+it('accepts a rate on a straight-line row — explicitly, or via the method\'s own default', function () {
+    // Both of these were wrongly rejected before the straight-line rate bug
+    // was fixed: an explicit straight_line method with a rate, and a row
+    // with no depreciation_method at all, which defaults to straight_line.
+    $explicit = openingAssetCsv(openingAssetHeaders(), openingAssetValues(['depreciation_method' => 'straight_line', 'depreciation_rate' => '20']));
+    $defaulted = openingAssetCsv(openingAssetHeaders(), openingAssetValues(['depreciation_rate' => '20']));
+
+    expect(app(FixedAssetsImporter::class)->commit($explicit, $this->ctx)->isOk())->toBeTrue();
+
+    $asset = Asset::withoutGlobalScopes()->where('company_id', $this->company->id)->firstOrFail();
+    expect($asset->depreciationMethod()->value)->toBe('straight_line')
+        ->and((float) $asset->depreciation_rate)->toBe(20.0)
+        ->and($asset->useful_life_months)->toBe(60);
+
+    Asset::withoutGlobalScopes()->where('company_id', $this->company->id)->delete();
+
+    expect(app(FixedAssetsImporter::class)->commit($defaulted, $this->ctx)->isOk())->toBeTrue();
 });
 
 it('drops the useful life of a 100% write-off', function () {

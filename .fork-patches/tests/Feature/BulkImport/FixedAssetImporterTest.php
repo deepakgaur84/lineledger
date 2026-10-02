@@ -356,3 +356,52 @@ it('is available in the bulk-import tool', function () {
     expect($importer)->toBeInstanceOf(FixedAssetImporter::class)
         ->and($importer->label())->toBe('Fixed Assets');
 });
+
+it('accepts a rate for straight-line and computes the useful life from it, storing both', function () {
+    // The actual bug this guards: a straight-line rate used to be rejected
+    // outright ("only applies to the declining_balance method"), the same
+    // bug the asset form itself had before it was fixed to genuinely store
+    // a straight-line rate rather than silently discarding it.
+    $row = fixedAssetRow(['depreciation_method' => 'straight_line', 'depreciation_rate' => '20']);
+
+    expect($this->importer->validate($row, $this->company))->toBe([]);
+
+    $this->importer->commit($row, $this->company);
+
+    $asset = Asset::query()->where('name', 'Delivery van')->firstOrFail();
+
+    expect($asset->useful_life_months)->toBe(60)
+        ->and((float) $asset->depreciation_rate)->toBe(20.0);
+});
+
+it('keeps both exactly as given when a straight-line row has its own useful_life_months too', function () {
+    $row = fixedAssetRow(['depreciation_method' => 'straight_line', 'depreciation_rate' => '20', 'useful_life_months' => '48']);
+
+    $this->importer->commit($row, $this->company);
+
+    $asset = Asset::query()->where('name', 'Delivery van')->firstOrFail();
+
+    // Neither recalculated from the other — the row explicitly gave both.
+    expect($asset->useful_life_months)->toBe(48)
+        ->and((float) $asset->depreciation_rate)->toBe(20.0);
+});
+
+it('lets a row\'s own straight-line rate override a category\'s default useful life', function () {
+    AssetCategory::create(['name' => 'Vehicles', 'default_useful_life_months' => 36, 'is_active' => true]);
+
+    $row = fixedAssetRow(['category_name' => 'Vehicles', 'depreciation_method' => 'straight_line', 'depreciation_rate' => '20']);
+
+    $this->importer->commit($row, $this->company);
+
+    $asset = Asset::query()->where('name', 'Delivery van')->firstOrFail();
+
+    // 20% computes to 60 months — the row's own rate wins over the category's
+    // default life of 36, since the row itself never gave a life directly.
+    expect($asset->useful_life_months)->toBe(60);
+});
+
+it('still refuses a rate on an immediate (100%) row', function () {
+    $errors = $this->importer->validate(fixedAssetRow(['depreciation_method' => '100%', 'depreciation_rate' => '20']), $this->company);
+
+    expect(implode(' ', $errors))->toContain('immediate');
+});

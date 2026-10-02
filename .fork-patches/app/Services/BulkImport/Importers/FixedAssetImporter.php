@@ -66,7 +66,7 @@ class FixedAssetImporter implements ImporterDefinition
             'salvage_value' => 'Optional. Plain decimal; defaults to 0 and cannot exceed the cost.',
             'depreciation_method' => 'Optional. straight_line, declining_balance (also WDV or reducing balance) or immediate (also 100%). Left blank, the category\'s method is used, else straight_line.',
             'useful_life_months' => 'Needed for straight_line depreciation. Optional for declining_balance, where the final year of the life takes whatever balance is left. Ignored for immediate.',
-            'depreciation_rate' => 'declining_balance only: the annual rate, 1 to 100 (a trailing % is fine), up to 3 decimals. Left blank it uses the category\'s rate, else 20. Refused on any other method.',
+            'depreciation_rate' => 'declining_balance or straight_line only — refused for immediate. For declining_balance: 1 to 100 (a trailing % is fine), up to 3 decimals; left blank it uses the category\'s rate, else 20. For straight_line: optional — jurisdictions like NZ track straight-line depreciation by rate, so giving one here computes and stores useful_life_months from it (100 divided by years = rate) unless useful_life_months is also given directly, in which case both are stored exactly as given and neither is recalculated from the other.',
             'materiality_limit' => 'declining_balance with no useful life only: depreciation ends once the balance left would be at or below this amount. Plain decimal. Left blank it is 5% of cost.',
             'auto_depreciate' => "Optional, 'yes'/'no'; defaults to no. Yes drafts monthly depreciation journal entries — see the preview for how many months that would create.",
             'serial_number' => 'Optional.',
@@ -228,8 +228,8 @@ class FixedAssetImporter implements ImporterDefinition
 
             if (! $inWindow) {
                 $errors[] = __('depreciation_rate must be a number from :min to :max (percent a year), with at most 3 decimals.', ['min' => DepreciationMethod::MIN_RATE, 'max' => DepreciationMethod::MAX_RATE]);
-            } elseif (! $method->usesRate()) {
-                $errors[] = __('depreciation_rate only applies to the declining_balance method — set depreciation_method to WDV, or leave the rate blank.');
+            } elseif (! $method->canHaveRate()) {
+                $errors[] = __('depreciation_rate does not apply to the immediate method — set a different depreciation_method, or leave the rate blank.');
             } else {
                 $rate = $rateText;
             }
@@ -249,6 +249,16 @@ class FixedAssetImporter implements ImporterDefinition
 
         // ─── Useful life (like the form, a blank one comes from the category) ─
         $life = $get('useful_life_months') !== '' ? (int) $get('useful_life_months') : $category?->default_useful_life_months;
+
+        // A straight-line rate with no useful_life_months given directly (on the row
+        // itself — a category's own default life is not enough to skip this) computes
+        // the life from the rate, the same arithmetic the asset form's own Rate mode
+        // uses. Given explicitly, useful_life_months always wins over this and the
+        // rate is stored exactly as given, without recalculating either from the other.
+        if ($method === DepreciationMethod::StraightLine && $rate !== null && $get('useful_life_months') === '') {
+            $life = (int) max(1, min(1200, round(1200 / (float) $rate)));
+        }
+
         $effectiveLife = $method->usesUsefulLife() ? $life : null;
 
         // ─── Accounts (a code that is given must be right; a blank one falls back) ─

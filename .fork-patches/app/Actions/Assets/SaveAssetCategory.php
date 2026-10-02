@@ -18,8 +18,9 @@ use App\Models\AssetCategory;
  *   default_useful_life_months: ?int
  *   default_depreciation_method: string|DepreciationMethod|null (default straight_line; absent on
  *       an update → the category's current method is kept)
- *   default_depreciation_rate: ?numeric  annual percent 1–100, declining_balance only; left blank
- *       it becomes 20 (absent on an update → current rate kept)
+ *   default_depreciation_rate: ?numeric  annual percent 1–100; declining_balance defaults a blank
+ *       value to 20, straight_line's is optional and kept exactly as given (never invented
+ *       from nothing), immediate ignores it entirely (absent on an update → current rate kept)
  *   is_active: ?bool
  */
 final class SaveAssetCategory
@@ -47,9 +48,15 @@ final class SaveAssetCategory
             'default_depreciation_expense_account_id' => $data['default_depreciation_expense_account_id'] ?? null,
             'default_useful_life_months' => $data['default_useful_life_months'] ?? null,
             'default_depreciation_method' => $method->value,
-            'default_depreciation_rate' => $method->usesRate()
-                ? (filled($rate) ? $rate : DepreciationMethod::DEFAULT_RATE)
-                : null,
+            // Declining balance defaults a blank rate to the suggested 20% — it always
+            // has one. Straight-line's rate is optional and never invented from nothing:
+            // given, it is kept exactly as given; blank, it stays null rather than
+            // silently acquiring a rate the category was never actually given.
+            'default_depreciation_rate' => match (true) {
+                $method === DepreciationMethod::DecliningBalance => filled($rate) ? $rate : DepreciationMethod::DEFAULT_RATE,
+                $method === DepreciationMethod::StraightLine => filled($rate) ? $rate : null,
+                default => null,
+            },
         ];
 
         if (array_key_exists('cca_class', $data)) {

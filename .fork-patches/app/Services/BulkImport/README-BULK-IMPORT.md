@@ -118,11 +118,20 @@ Migration wizard's own fixed-assets importer below.
 The three depreciation methods (see the fork's own `README-FORK-PATCHES.md`
 §10 for the full feature) are all supported: `straight_line`,
 `declining_balance` (also accepts `WDV`, `reducing balance`, and similar),
-and `immediate` (also accepts `100%`). A `depreciation_rate` is only valid
-for declining balance — given for any other method, the row is rejected,
-since a rate on a straight-line row is far more likely a mislabelled row
-than genuine intent. Declining balance with no rate anywhere (not on the
-row, not on its category) defaults to 20%, and the preview says so.
+and `immediate` (also accepts `100%`). A `depreciation_rate` is refused
+only for immediate — given for either of the other two methods, it's kept.
+Declining balance with no rate anywhere (not on the row, not on its
+category) defaults to 20%, and the preview says so. Straight-line's own
+rate is optional: a row can give `useful_life_months` directly and skip
+the rate entirely, same as always — but given a rate and no
+`useful_life_months`, the life is computed from it (jurisdictions like NZ
+commonly quote straight-line depreciation by rate, so this is a genuine,
+intentional column for that case, not a mistake to reject — §12 of
+`README-FORK-PATCHES.md` covers this fix and a user-reported bug it fixed
+in the asset form itself). Given both a rate and a life directly, neither
+is recalculated from the other — both are stored exactly as the row gave
+them — and the row's own rate always wins over a category's default life
+when the row omits `useful_life_months` itself.
 
 **`auto_depreciate: yes` on a back-dated `in_service_date` back-fills every
 month since that has fully ended and isn't locked** — the preview shows
@@ -266,13 +275,16 @@ different job from this file's own register-only importer above (which
 never touches the ledger), so the two were never merged into one.
 
 It learned the same `depreciation_method`/`depreciation_rate` columns as
-the register-only importer, sharing the exact same validation (1–100%
-window, declining-balance-only, defaults to 20% when blank) — a CSV
-without either column still imports correctly, as straight-line, so
-nothing relying on the old template breaks. A category a row names here
-*is* created if it doesn't already exist (unlike the register-only
-importer above), inheriting the row's method and rate as that new
-category's own defaults.
+the register-only importer, sharing the exact same validation — 1–100%
+window, refused only for immediate, defaults to 20% when blank for
+declining balance, optional and rate-derives the useful life for
+straight-line when no life is given directly (§12 of
+`README-FORK-PATCHES.md`) — a CSV without either column still imports
+correctly, as straight-line, so nothing relying on the old template
+breaks. A category a row names here *is* created if it doesn't already
+exist (unlike the register-only importer above), inheriting the row's
+method and rate — or its row-computed useful life, for straight-line — as
+that new category's own defaults.
 
 ## Testing this
 

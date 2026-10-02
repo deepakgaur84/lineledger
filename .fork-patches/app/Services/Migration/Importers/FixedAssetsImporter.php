@@ -29,9 +29,13 @@ use Throwable;
  * Asset categories are upserted by name.
  *
  * Each row may also carry a depreciation_method (straight_line, declining_balance/WDV or
- * immediate/100% — blank means straight_line) and, for declining balance, an annual
- * depreciation_rate from 1 to 100 (blank means 20). A rate on any other method is refused.
- * The method and rate become the defaults of a category this import creates.
+ * immediate/100% — blank means straight_line) and an annual depreciation_rate from 1 to
+ * 100 (refused for immediate). For declining balance a blank rate means 20. For
+ * straight_line a rate is optional — jurisdictions like NZ track straight-line
+ * depreciation by rate, so a rate with no useful_life_months given directly computes
+ * and stores the life from it (the same arithmetic the asset form's own Rate mode
+ * uses); given both, each is stored exactly as given, with neither recalculated from
+ * the other. The method and rate become the defaults of a category this import creates.
  */
 class FixedAssetsImporter implements Importer
 {
@@ -183,8 +187,8 @@ class FixedAssetsImporter implements Importer
                     continue;
                 }
 
-                if (! $method->usesRate()) {
-                    $errors[] = ['row' => $rowNum, 'message' => 'depreciation_rate only applies to the declining_balance method — set depreciation_method to WDV, or leave the rate blank.'];
+                if (! $method->canHaveRate()) {
+                    $errors[] = ['row' => $rowNum, 'message' => 'depreciation_rate does not apply to the immediate method — set a different depreciation_method, or leave the rate blank.'];
 
                     continue;
                 }
@@ -252,7 +256,8 @@ class FixedAssetsImporter implements Importer
                     $costCents = $a['cost'];
                     $accumCents = $a['accum'];
 
-                    $category = $this->resolveCategory($ctx->company->id, $row['category_name'], $a['asset_account_id'], $a['accum_account_id'], $a['dep_expense_id'], $row['useful_life_months'], $a['method'], $a['rate']);
+                    $categoryLife = $this->effectiveUsefulLifeMonths($a['method'], $row['useful_life_months'], $a['rate']);
+                    $category = $this->resolveCategory($ctx->company->id, $row['category_name'], $a['asset_account_id'], $a['accum_account_id'], $a['dep_expense_id'], $categoryLife !== null ? (string) $categoryLife : null, $a['method'], $a['rate']);
 
                     $asset = Asset::withoutGlobalScopes()->create([
                         'company_id' => $ctx->company->id,
@@ -269,7 +274,7 @@ class FixedAssetsImporter implements Importer
                         'in_service_date' => $row['in_service_date'] ? CarbonImmutable::parse($row['in_service_date']) : null,
                         'cost_cents' => $costCents,
                         'salvage_value_cents' => $a['salvage'],
-                        'useful_life_months' => $a['method']->usesUsefulLife() && $row['useful_life_months'] ? (int) $row['useful_life_months'] : null,
+                        'useful_life_months' => $this->effectiveUsefulLifeMonths($a['method'], $row['useful_life_months'], $a['rate']),
                         'depreciation_method' => $a['method']->value,
                         'depreciation_rate' => $a['rate'],
                         'status' => AssetStatus::InService,
@@ -332,6 +337,31 @@ class FixedAssetsImporter implements Importer
                 'total_accumulated_depreciation_cents' => $totalAccumDepCents,
             ],
         );
+    }
+
+    /**
+     * useful_life_months as given on the row always wins. With none given, a
+     * straight-line rate computes it instead — 100 divided by years = rate,
+     * the same arithmetic the asset form's own Rate mode uses, clamped to the
+     * same 1-1200 month window. Any other method with no life given stores
+     * none at all (declining balance treats a missing life as "no life", not
+     * an error; immediate never has one).
+     */
+    protected function effectiveUsefulLifeMonths(DepreciationMethod $method, ?string $rowLife, ?string $rate): ?int
+    {
+        if (! $method->usesUsefulLife()) {
+            return null;
+        }
+
+        if ($rowLife) {
+            return (int) $rowLife;
+        }
+
+        if ($method === DepreciationMethod::StraightLine && $rate !== null) {
+            return (int) max(1, min(1200, round(1200 / (float) $rate)));
+        }
+
+        return null;
     }
 
     protected function resolveCategory(int $companyId, ?string $name, int $assetAccountId, ?int $accumAccountId, ?int $depExpenseId, ?string $usefulLifeMonths, DepreciationMethod $method, ?string $rate): ?AssetCategory

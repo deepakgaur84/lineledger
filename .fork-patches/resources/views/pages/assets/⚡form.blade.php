@@ -120,6 +120,16 @@ new #[Title('Asset')] class extends Component {
             $this->depreciation_rate = $asset->depreciation_rate !== null
                 ? rtrim(rtrim((string) $asset->depreciation_rate, '0'), '.')
                 : '';
+
+            // A straight-line asset with a stored rate was almost certainly set
+            // up that way (rate is optional for this method — a life typed
+            // directly needs none at all) — opening in Rate mode so the stored
+            // rate is what the user actually sees first, not a blank Rate field
+            // behind a Months view that happens to show the number it implies.
+            if ($asset->depreciationMethod() === DepreciationMethod::StraightLine && $asset->depreciation_rate !== null) {
+                $this->useful_life_input_mode = 'rate';
+                $this->straight_line_rate = $this->depreciation_rate;
+            }
             $this->materiality_touched = $asset->materiality_limit_cents !== null;
             $this->materiality_limit = $asset->materiality_limit_cents !== null
                 ? Money::fromCents((int) $asset->materiality_limit_cents)->toDecimalString()
@@ -226,6 +236,12 @@ new #[Title('Asset')] class extends Component {
         }
 
         $this->useful_life_months = (int) max(1, min(1200, round(1200 / $rate)));
+
+        // Also store the rate itself, not just the useful life it computes —
+        // the previous version threw this away entirely once it had done its
+        // one-time arithmetic, so a typed rate was never actually saved
+        // anywhere and never showed again on re-opening the asset.
+        $this->depreciation_rate = $value;
     }
 
     /**
@@ -308,9 +324,15 @@ new #[Title('Asset')] class extends Component {
             // optional (it sets where the tail falls); an immediate write-off ignores it.
             'useful_life_months' => ['nullable', Rule::requiredIf(fn () => $this->auto_depreciate && $this->depreciation_method === DepreciationMethod::StraightLine->value), 'integer', 'min:1', 'max:1200'],
             'depreciation_method' => ['required', Rule::enum(DepreciationMethod::class)],
-            'depreciation_rate' => $this->depreciation_method === DepreciationMethod::DecliningBalance->value
-                ? ['required', 'numeric', 'between:'.DepreciationMethod::MIN_RATE.','.DepreciationMethod::MAX_RATE, 'decimal:0,3']
-                : ['nullable'],
+            // Declining balance requires a rate; straight-line's is optional (a
+            // useful life typed directly needs no rate at all) but, once given, is
+            // validated the same way — a real, separately-tracked fact, not just a
+            // one-time convenience for computing the useful life.
+            'depreciation_rate' => match ($this->depreciation_method) {
+                DepreciationMethod::DecliningBalance->value => ['required', 'numeric', 'between:'.DepreciationMethod::MIN_RATE.','.DepreciationMethod::MAX_RATE, 'decimal:0,3'],
+                DepreciationMethod::StraightLine->value => ['nullable', 'numeric', 'between:'.DepreciationMethod::MIN_RATE.','.DepreciationMethod::MAX_RATE, 'decimal:0,3'],
+                default => ['nullable'],
+            },
             'materiality_limit' => ['nullable', 'string', new MoneyString, function (string $attribute, mixed $value, \Closure $fail): void {
                 if ((string) $value !== '' && (Money::tryFromString((string) $value)?->isNegative() ?? false)) {
                     $fail(__('The materiality limit cannot be negative.'));

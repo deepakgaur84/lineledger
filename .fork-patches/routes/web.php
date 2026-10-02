@@ -332,6 +332,7 @@ Route::prefix('{company}')
         Route::livewire('reports', 'pages::reports.index')->name('reports.index');
         Route::livewire('reports/trial-balance', 'pages::reports.trial-balance')->name('reports.trial-balance');
         Route::livewire('reports/fixed-asset-reconciliation', 'pages::reports.fixed-asset-reconciliation')->name('reports.fixed-asset-reconciliation');
+        Route::livewire('reports/depreciation-schedule', 'pages::reports.depreciation-schedule')->name('reports.depreciation-schedule');
         Route::livewire('reports/gifi', 'pages::reports.gifi')->name('reports.gifi');
         Route::livewire('reports/t5013', 'pages::reports.t5013')->name('reports.t5013');
         Route::livewire('reports/t2125', 'pages::reports.t2125')->name('reports.t2125');
