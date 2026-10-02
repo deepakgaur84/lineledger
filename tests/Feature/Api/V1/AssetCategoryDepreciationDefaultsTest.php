@@ -59,11 +59,15 @@ it('gives a declining-balance category 20% when no rate is sent', function () {
     expect((float) $response->json('data.default_depreciation_rate'))->toBe(20.0);
 });
 
-it('does not keep a rate for straight-line or immediate', function () {
-    $this->postJson('/api/v1/asset-categories', ['name' => 'A', 'default_depreciation_rate' => 25], categoryDefaultsHeader())
-        ->assertStatus(201)
-        ->assertJsonPath('data.default_depreciation_method', 'straight_line')
-        ->assertJsonPath('data.default_depreciation_rate', null);
+it('keeps a given rate for straight-line, but not for immediate', function () {
+    // Straight-line's own rate used to be discarded here too, the same bug
+    // the asset form itself had before it was fixed (README-FORK-PATCHES.md
+    // §12) — straight-line now genuinely keeps a rate it's given.
+    $response = $this->postJson('/api/v1/asset-categories', ['name' => 'A', 'default_depreciation_rate' => 25], categoryDefaultsHeader());
+
+    $response->assertStatus(201)->assertJsonPath('data.default_depreciation_method', 'straight_line');
+
+    expect((float) $response->json('data.default_depreciation_rate'))->toBe(25.0);
 
     $this->postJson('/api/v1/asset-categories', ['name' => 'B', 'default_depreciation_method' => 'immediate', 'default_depreciation_rate' => 25], categoryDefaultsHeader())
         ->assertStatus(201)
