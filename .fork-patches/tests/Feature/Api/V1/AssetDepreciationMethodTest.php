@@ -142,14 +142,20 @@ it('creates an immediate asset with neither a useful life nor a rate', function 
         ->assertJsonPath('data.depreciation_rate', null);
 });
 
-it('does not store a rate on a straight-line asset', function () {
-    $this->postJson('/api/v1/assets', methodApiPayload([
+it('stores a rate given alongside a straight-line useful life, keeping both exactly as given', function () {
+    // A straight-line rate used to be discarded entirely here — the same
+    // bug the asset form itself had before it was fixed (README-FORK-PATCHES.md
+    // §12). Neither value is recalculated from the other when both are given.
+    $response = $this->postJson('/api/v1/assets', methodApiPayload([
         'useful_life_months' => 60,
         'depreciation_rate' => 30,
-    ]), methodApiHeader())
-        ->assertStatus(201)
+    ]), methodApiHeader());
+
+    $response->assertStatus(201)
         ->assertJsonPath('data.depreciation_method', 'straight_line')
-        ->assertJsonPath('data.depreciation_rate', null);
+        ->assertJsonPath('data.useful_life_months', 60);
+
+    expect((float) $response->json('data.depreciation_rate'))->toBe(30.0);
 });
 
 it('keeps an asset\'s method, rate and materiality limit when a client that predates methods updates it', function () {

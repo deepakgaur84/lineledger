@@ -161,14 +161,6 @@ it('takes a given rate, with or without a percent sign, and refuses any outside 
     expect((float) Asset::query()->where('name', 'Delivery van')->firstOrFail()->depreciation_rate)->toBe(20.0);
 });
 
-it('refuses a rate on a method that does not use one', function () {
-    $straightLine = $this->importer->validate(fixedAssetRow(['depreciation_rate' => '20']), $this->company);
-    $immediate = $this->importer->validate(fixedAssetRow(['depreciation_method' => '100%', 'depreciation_rate' => '20']), $this->company);
-
-    expect(implode(' ', $straightLine))->toContain('declining_balance')
-        ->and(implode(' ', $immediate))->toContain('declining_balance');
-});
-
 it('needs no useful life or rate for a 100% write-off, and drops a life it is given', function () {
     $row = fixedAssetRow(['depreciation_method' => '100%', 'useful_life_months' => '60']);
 

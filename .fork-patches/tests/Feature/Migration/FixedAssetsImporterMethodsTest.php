@@ -146,7 +146,11 @@ it('accepts a rate on a straight-line row — explicitly, or via the method\'s o
     // was fixed: an explicit straight_line method with a rate, and a row
     // with no depreciation_method at all, which defaults to straight_line.
     $explicit = openingAssetCsv(openingAssetHeaders(), openingAssetValues(['depreciation_method' => 'straight_line', 'depreciation_rate' => '20']));
-    $defaulted = openingAssetCsv(openingAssetHeaders(), openingAssetValues(['depreciation_rate' => '20']));
+    // A distinct asset_no from the default's 'FA-1' — Asset uses SoftDeletes, so
+    // deleting the first asset below leaves its row (and asset_no) still present
+    // under the table's own unique(company_id, asset_no) constraint; reusing the
+    // same number here was a genuine bug in this test, not in the importer.
+    $defaulted = openingAssetCsv(openingAssetHeaders(), openingAssetValues(['asset_no' => 'FA-2', 'depreciation_rate' => '20']));
 
     expect(app(FixedAssetsImporter::class)->commit($explicit, $this->ctx)->isOk())->toBeTrue();
 

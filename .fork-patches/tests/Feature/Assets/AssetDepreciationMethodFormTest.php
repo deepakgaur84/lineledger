@@ -339,19 +339,6 @@ it('ignores a blank, zero, or non-numeric rate rather than blanking out the usef
     }
 });
 
-it('saves the computed useful life, not the rate itself, on a straight-line asset', function () {
-    methodFormBase()
-        ->set('useful_life_input_mode', 'rate')
-        ->set('straight_line_rate', '20')
-        ->call('save')
-        ->assertHasNoErrors();
-
-    $asset = Asset::query()->where('name', 'Delivery van')->firstOrFail();
-
-    expect($asset->useful_life_months)->toBe(60)
-        ->and($asset->depreciation_rate)->toBeNull();
-});
-
 it('back-fills a starting rate from the stored useful life when switching to rate mode on an existing asset', function () {
     $asset = Asset::factory()->create([
         'asset_account_id' => $this->fixedAssetAccount->id,

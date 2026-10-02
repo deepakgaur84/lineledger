@@ -108,22 +108,36 @@ it('refuses a default rate below 1% or above 100%', function () {
     expect(AssetCategory::query()->count())->toBe(0);
 });
 
-it('does not keep a rate for straight-line or 100% on purchase', function () {
-    foreach (['straight_line', 'immediate'] as $i => $method) {
-        Livewire::test('pages::settings.lists.asset-categories', ['company' => $this->company])
-            ->call('openCreate')
-            ->set('f_name', "Category {$i}")
-            ->set('f_default_depreciation_method', 'declining_balance')
-            ->set('f_default_depreciation_rate', '25')
-            ->set('f_default_depreciation_method', $method)
-            ->call('save')
-            ->assertHasNoErrors();
+it('keeps a rate switched over from declining balance for straight-line, but not for 100% on purchase', function () {
+    // Straight-line's own rate used to be discarded here too — the same bug
+    // the asset form itself had before it was fixed (README-FORK-PATCHES.md §12).
+    Livewire::test('pages::settings.lists.asset-categories', ['company' => $this->company])
+        ->call('openCreate')
+        ->set('f_name', 'Category straight_line')
+        ->set('f_default_depreciation_method', 'declining_balance')
+        ->set('f_default_depreciation_rate', '25')
+        ->set('f_default_depreciation_method', 'straight_line')
+        ->call('save')
+        ->assertHasNoErrors();
 
-        $category = AssetCategory::query()->where('name', "Category {$i}")->firstOrFail();
+    $slCategory = AssetCategory::query()->where('name', 'Category straight_line')->firstOrFail();
 
-        expect($category->defaultDepreciationMethod()->value)->toBe($method)
-            ->and($category->default_depreciation_rate)->toBeNull();
-    }
+    expect($slCategory->defaultDepreciationMethod()->value)->toBe('straight_line')
+        ->and((float) $slCategory->default_depreciation_rate)->toBe(25.0);
+
+    Livewire::test('pages::settings.lists.asset-categories', ['company' => $this->company])
+        ->call('openCreate')
+        ->set('f_name', 'Category immediate')
+        ->set('f_default_depreciation_method', 'declining_balance')
+        ->set('f_default_depreciation_rate', '25')
+        ->set('f_default_depreciation_method', 'immediate')
+        ->call('save')
+        ->assertHasNoErrors();
+
+    $immediateCategory = AssetCategory::query()->where('name', 'Category immediate')->firstOrFail();
+
+    expect($immediateCategory->defaultDepreciationMethod()->value)->toBe('immediate')
+        ->and($immediateCategory->default_depreciation_rate)->toBeNull();
 });
 
 it('loads a category\'s method and rate when it is edited', function () {
