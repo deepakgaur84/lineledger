@@ -112,9 +112,14 @@ new #[Title('Asset categories')] class extends Component {
             'f_default_depreciation_expense_account_id' => ['nullable', 'integer', Rule::exists('accounts', 'id')->where('company_id', $companyId)->where('type', AccountType::Expense->value)],
             'f_default_useful_life_months' => ['nullable', 'integer', 'min:1', 'max:1200'],
             'f_default_depreciation_method' => ['required', Rule::enum(DepreciationMethod::class)],
-            'f_default_depreciation_rate' => $this->f_default_depreciation_method === DepreciationMethod::DecliningBalance->value
-                ? ['nullable', 'numeric', 'between:'.DepreciationMethod::MIN_RATE.','.DepreciationMethod::MAX_RATE, 'decimal:0,3']
-                : ['nullable'],
+            // Never required, for either method — a category is only a default
+            // template, and SaveAssetCategory itself already turns a blank
+            // declining-balance rate into the suggested 20% at the action level.
+            // When a value IS given, both methods validate it the same way.
+            'f_default_depreciation_rate' => match ($this->f_default_depreciation_method) {
+                DepreciationMethod::DecliningBalance->value, DepreciationMethod::StraightLine->value => ['nullable', 'numeric', 'between:'.DepreciationMethod::MIN_RATE.','.DepreciationMethod::MAX_RATE, 'decimal:0,3'],
+                default => ['nullable'],
+            },
             'f_cca_class' => ['nullable', Rule::enum(\App\Enums\CcaClass::class)],
             'f_is_active' => ['boolean'],
         ], [
@@ -259,8 +264,8 @@ new #[Title('Asset categories')] class extends Component {
                 @endforeach
             </flux:select>
 
-            @if ($f_default_depreciation_method === 'declining_balance')
-                <flux:input type="number" step="0.001" min="1" max="100" wire:model="f_default_depreciation_rate" :label="__('Default annual rate (%)')" data-test="asset-category-rate" />
+            @if (in_array($f_default_depreciation_method, ['declining_balance', 'straight_line'], true))
+                <flux:input type="number" step="0.001" min="1" max="100" wire:model="f_default_depreciation_rate" :label="$f_default_depreciation_method === 'straight_line' ? __('Default annual rate (%) — optional') : __('Default annual rate (%)')" data-test="asset-category-rate" />
             @endif
 
             @if ($company->supports(\App\Enums\JurisdictionCapability::CanadianCapitalCostAllowance))

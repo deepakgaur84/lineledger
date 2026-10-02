@@ -26,7 +26,10 @@ use Illuminate\Support\Facades\DB;
  *   cost_cents: int  salvage_value_cents: ?int  useful_life_months: ?int
  *   depreciation_method: string|DepreciationMethod|null (default straight_line; when the
  *       key is absent on an update, the asset's current method is kept)
- *   depreciation_rate: ?numeric  annual percent 1–100, declining_balance only (absent on an
+ *   depreciation_rate: ?numeric  annual percent 1–100; required for declining_balance,
+ *       optional for straight_line (a genuine, separately-tracked fact — not merely
+ *       derived from useful_life_months — since jurisdictions like NZ commonly quote
+ *       straight-line depreciation as a rate), ignored for immediate (absent on an
  *       update → current rate kept)
  *   materiality_limit_cents: ?int  declining_balance only; null → the default, 5% of cost
  *       (absent on an update → current limit kept)
@@ -84,7 +87,7 @@ final class SaveAsset
                 'salvage_value_cents' => (int) ($data['salvage_value_cents'] ?? 0),
                 'useful_life_months' => $method->usesUsefulLife() ? ($data['useful_life_months'] ?? null) : null,
                 'depreciation_method' => $method->value,
-                'depreciation_rate' => $method->usesRate() && filled($rate) ? $rate : null,
+                'depreciation_rate' => $method->canHaveRate() && filled($rate) ? $rate : null,
                 'materiality_limit_cents' => $method->usesMateriality() && filled($materiality) ? (int) $materiality : null,
                 'status' => $data['status'] ?? AssetStatus::InService->value,
                 'disposed_at' => ! empty($data['disposed_at'])

@@ -41,6 +41,11 @@ final class RenderableReports
                 'label' => 'Fixed Asset Reconciliation',
                 'formats' => ['pdf', 'xlsx'],
             ],
+            'reports.depreciation-schedule' => [
+                'component' => 'pages::reports.depreciation-schedule',
+                'label' => 'Depreciation Schedule',
+                'formats' => ['pdf'],
+            ],
             'reports.ar-aging' => [
                 'component' => 'pages::reports.ar-aging',
                 'label' => 'AR Aging',

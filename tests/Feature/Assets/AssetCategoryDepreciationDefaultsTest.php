@@ -33,17 +33,23 @@ it('starts a new category on straight-line with no rate', function () {
         ->and($category->default_depreciation_rate)->toBeNull();
 });
 
-it('only shows the rate field for declining balance', function () {
+it('shows the rate field for straight-line and declining balance, but not immediate', function () {
+    // Straight-line's own rate field used to be hidden entirely, the same bug
+    // the asset form itself had before it was fixed — this is the regression
+    // test for that fix landing here too.
     $page = Livewire::test('pages::settings.lists.asset-categories', ['company' => $this->company])
         ->call('openCreate')
         ->assertSee('Default depreciation method')
-        ->assertDontSeeHtml('data-test="asset-category-rate"');
+        ->assertSeeHtml('data-test="asset-category-rate"');
 
     $page->set('f_default_depreciation_method', 'declining_balance')
         ->assertSeeHtml('data-test="asset-category-rate"');
 
     $page->set('f_default_depreciation_method', 'immediate')
         ->assertDontSeeHtml('data-test="asset-category-rate"');
+
+    $page->set('f_default_depreciation_method', 'straight_line')
+        ->assertSeeHtml('data-test="asset-category-rate"');
 });
 
 it('suggests 20% when declining balance is picked and no rate is there yet', function () {
@@ -147,4 +153,43 @@ it('shows each category\'s method and rate in the list', function () {
         ->assertSee('Written-down value (declining balance)')
         ->assertSee('30%')
         ->assertSee('Straight-line');
+});
+
+it('accepts and shows a rate on a straight-line category — the bug this guards', function () {
+    // Previously rejected outright: the rate field was entirely hidden for
+    // straight-line, and the save action discarded any rate it was somehow
+    // given anyway, the same bug the asset form itself had.
+    Livewire::test('pages::settings.lists.asset-categories', ['company' => $this->company])
+        ->call('openCreate')
+        ->assertSeeHtml('data-test="asset-category-rate"')
+        ->set('f_name', 'Vehicles')
+        ->set('f_default_depreciation_rate', '20')
+        ->call('save')
+        ->assertHasNoErrors();
+
+    $category = AssetCategory::query()->where('name', 'Vehicles')->firstOrFail();
+
+    expect($category->defaultDepreciationMethod()->value)->toBe('straight_line')
+        ->and((float) $category->default_depreciation_rate)->toBe(20.0);
+});
+
+it('never invents a straight-line default rate out of nothing — unlike declining balance\'s own 20%', function () {
+    Livewire::test('pages::settings.lists.asset-categories', ['company' => $this->company])
+        ->call('openCreate')
+        ->set('f_name', 'Furniture')
+        ->call('save')
+        ->assertHasNoErrors();
+
+    expect(AssetCategory::query()->where('name', 'Furniture')->firstOrFail()->default_depreciation_rate)->toBeNull();
+});
+
+it('does not require a straight-line rate to save the category', function () {
+    Livewire::test('pages::settings.lists.asset-categories', ['company' => $this->company])
+        ->call('openCreate')
+        ->set('f_name', 'Furniture')
+        ->set('f_default_useful_life_months', 36)
+        ->call('save')
+        ->assertHasNoErrors();
+
+    expect(AssetCategory::query()->where('name', 'Furniture')->count())->toBe(1);
 });

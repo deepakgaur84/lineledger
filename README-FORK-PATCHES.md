@@ -526,6 +526,106 @@ both references in the in-app docs page updated to match.
   by review beforehand, since there was no PHP runtime available to run
   Pint directly against the change before delivering it.
 
+## 12. Straight-line depreciation rate (a real, storable fact — not just a
+    one-time conversion), its fallout across three more places, and the new
+    Depreciation Schedule report
+
+Found by a user directly testing the asset creation screen: entering a
+depreciation rate for Straight-line converted it to a useful life and then
+discarded the rate itself — nothing stored it, and it never appeared again.
+In jurisdictions like NZ, Straight-line depreciation is commonly quoted and
+tracked as a rate, not just a life in months, so this was a genuine loss of
+a fact the user had typed in, not merely a UI inconvenience.
+
+**Root cause, confirmed by reading the code directly**: `SaveAsset`'s own
+normalization used `$method->usesRate()` — true only for declining balance
+— to decide whether to keep a submitted `depreciation_rate`, discarding it
+outright for every other method regardless of what was actually sent.
+
+- `app/Enums/DepreciationMethod.php` — new `canHaveRate()`, distinct from
+  `usesRate()` (which still means "required," not "ever storable"): true
+  for straight_line and declining_balance, false for immediate.
+- `app/Actions/Assets/SaveAsset.php` — uses `canHaveRate()` for
+  persistence instead.
+- `resources/views/pages/assets/⚡form.blade.php` — the existing Rate/
+  Months toggle for straight-line now also writes into `depreciation_rate`
+  (the same field declining balance already uses — no new column needed)
+  alongside computing the useful life; validated but not required when
+  given; an existing asset with a stored rate now opens in Rate mode
+  showing it, rather than Months mode hiding it.
+
+**The same stale `usesRate()` check turned out to be sitting in three more
+places, found by searching for the same pattern once the first instance
+was understood** — all genuinely the same bug via a different door, not a
+scope expansion for its own sake:
+
+- `app/Services/BulkImport/Importers/FixedAssetImporter.php` and
+  `app/Services/Migration/Importers/FixedAssetsImporter.php` — both
+  rejected a straight-line rate outright on import ("only applies to the
+  declining_balance method"). Now accepted: a rate with no
+  `useful_life_months` given directly on the row computes the life from
+  it (100 ÷ years = rate, the same arithmetic the form's own Rate mode
+  uses); given both, neither is recalculated from the other, and the row
+  always wins over a category's own default life. A new category created
+  from such a row inherits the same computed life as its own default, not
+  null.
+- `app/Actions/Assets/SaveAssetCategory.php` and
+  `resources/views/pages/settings/lists/⚡asset-categories.blade.php` —
+  the rate field was hidden entirely for straight-line on the category
+  settings page, and the save action discarded it the same way `SaveAsset`
+  once did. Fixed the same way, with one distinction: a category's rate is
+  never *required* for either method (a category is only a default
+  template; `SaveAssetCategory` already turns a blank declining-balance
+  rate into the suggested 20% at the action level) — a mistake briefly
+  introduced while fixing this (making it required for declining balance)
+  and corrected before it went anywhere.
+
+**Depreciation Schedule report** (new) — the fixed-asset register as a
+proper, exportable report, built directly against a reference Xero
+"Depreciation Schedule" export the user provided: one row per asset,
+grouped by category, the same roll-forward shape (Opening + Purchases −
+Disposals − Depreciation = Closing, checked by hand against several of the
+reference's own rows) and per-category/grand totals. A column picker
+(`flux:menu.checkbox` + `keep-open`, mirroring the pattern already
+established on the invoice show page's own "Columns" dropdown, not a new
+UI invention) lets the eleven columns asked for by default be supplemented
+with six more (Category, Useful life, Cost, Opening/Closing Accum Dep,
+Status).
+
+Two of the reference report's own columns — Sale Price and Dep Recovered —
+are deliberately not offered as options at all, not merely hidden by
+default: LineLedger tracks no disposal-proceeds or gain/loss-on-disposal
+data whatsoever (disposal today is a register-only status flag, per §11),
+so those two could only ever show blank. "Disposals" here is the asset's
+own net book value at its disposal date — the roll-forward's write-off
+amount — not a sale price.
+
+- `resources/views/pages/reports/⚡depreciation-schedule.blade.php` (new)
+- `resources/views/pdf/reports/depreciation-schedule.blade.php` (new) —
+  CSV and PDF only; no XLSX yet, consistent with §11's own export scope
+- `routes/web.php`, `RenderableReports.php`, `ReportCatalog.php` — route
+  and catalog registration
+
+**Two mistakes caught before delivery, not after, while building the
+report**:
+- A stray leftover line in the table header's markup that would have
+  rendered garbage on screen.
+- Grand totals computed via `array_merge(...[])` when the register was
+  empty — throws in modern PHP (`array_merge` requires at least one
+  argument) rather than producing zero totals. Replaced with a plain
+  accumulation loop; a dedicated test now exercises the empty-register
+  case specifically.
+
+**Also found and fixed in passing**: two genuinely stale, pre-existing
+test assertions that would have failed against this work — one in
+`FixedAssetsImporterMethodsTest.php` (two "bad" cases, a straight-line
+rate and a blank-method-defaulting-to-straight-line rate, that were
+correctly rejected before this fix and are now correctly accepted) and
+one in `AssetCategoryDepreciationDefaultsTest.php` ("only shows the rate
+field for declining balance," no longer true now that straight-line shows
+it too). Both corrected alongside the fix that made them stale, not left
+to fail in CI.
+
 ## Ongoing maintenance — now partially automated, still worth watching
 
 `reapply-fork-patches` (see §7) originally just *overwrote* on every

@@ -65,6 +65,21 @@ enum DepreciationMethod: string
     }
 
     /**
+     * Whether a rate is ever meaningful to store for this method, distinct
+     * from usesRate() (which gates whether a rate is REQUIRED). Straight-line
+     * doesn't need a rate to calculate anything — useful_life_months alone
+     * drives its schedule — but a rate is still a genuine, useful thing to
+     * keep on record: in jurisdictions like NZ, straight-line depreciation is
+     * commonly quoted and tracked as a rate, not just a life in months, and
+     * the two are simply two ways of writing the same fact (rate = 100 ÷
+     * years). Immediate needs neither.
+     */
+    public function canHaveRate(): bool
+    {
+        return $this !== self::Immediate;
+    }
+
+    /**
      * Lenient parse for spreadsheet/CSV input — "WDV", "straight line",
      * "Reducing balance", "100%" and the enum's own values all resolve. Returns
      * null for anything unrecognised so the caller can report it.
