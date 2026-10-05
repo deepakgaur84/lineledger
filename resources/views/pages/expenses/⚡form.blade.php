@@ -218,6 +218,10 @@ new #[Title('Expense')] class extends Component
 
     public function saveDraft(): void
     {
+        if ($this->finishIfAlreadyPosted()) {
+            return;
+        }
+
         $this->persist();
         Flux::toast(variant: 'success', text: __('Draft saved.'));
         $this->redirectRoute('expenses.edit', ['company' => $this->company->slug, 'expense' => $this->expense->id], navigate: true);
@@ -225,6 +229,10 @@ new #[Title('Expense')] class extends Component
 
     public function postExpense(ExpensePoster $poster): void
     {
+        if ($this->finishIfAlreadyPosted()) {
+            return;
+        }
+
         $this->persist();
 
         try {
@@ -237,6 +245,25 @@ new #[Title('Expense')] class extends Component
 
         Flux::toast(variant: 'success', text: __('Expense posted.'));
         $this->redirectRoute('expenses.show', ['company' => $this->company->slug, 'expense' => $this->expense->id], navigate: true);
+    }
+
+    /**
+     * A second Post or Save draft — a double-click, or Enter pressed again
+     * before the redirect lands — arrives holding the expense the first request
+     * just posted. A posted expense is never edited (void and re-create), so
+     * finish the way the first request did rather than rewrite its lines and
+     * fail on the second post. Reads the row fresh: the posting may have
+     * committed after this request began.
+     */
+    private function finishIfAlreadyPosted(): bool
+    {
+        if (! $this->expense?->exists || ! $this->expense->fresh()?->journal_entry_id) {
+            return false;
+        }
+
+        $this->redirectRoute('expenses.show', ['company' => $this->company->slug, 'expense' => $this->expense->id], navigate: true);
+
+        return true;
     }
 
     protected function persist(): void
