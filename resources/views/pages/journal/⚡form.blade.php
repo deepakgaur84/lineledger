@@ -206,7 +206,10 @@ new #[Title('Journal entry')] class extends Component
     }
 
     /**
-     * @return array<int, array{value: int, label: string}>
+     * The code and name ride alongside the label for the typeable account
+     * picker (<x-account-combo>), which ranks GL-number matches first.
+     *
+     * @return array<int, array{value: int, label: string, code: string, name: string}>
      */
     #[Computed]
     public function accountOptions(): array
@@ -216,7 +219,7 @@ new #[Title('Journal entry')] class extends Component
             ->where('is_active', true)
             ->orderBy('code')
             ->get(['id', 'code', 'name'])
-            ->map(fn (Account $a) => ['value' => $a->id, 'label' => "{$a->code} — {$a->name}"])
+            ->map(fn (Account $a) => ['value' => $a->id, 'label' => "{$a->code} — {$a->name}", 'code' => (string) $a->code, 'name' => $a->name])
             ->all();
     }
 
@@ -687,18 +690,14 @@ new #[Title('Journal entry')] class extends Component
             </div>
 
             <div class="divide-y divide-border">
+                <x-account-combo.options key="accounts" :options="$this->accountOptions" />
                 @foreach ($lines as $i => $line)
                     <div wire:key="line-{{ $i }}" data-test="entry-line-row" class="space-y-3 p-3">
                         {{-- Tier 1: account, debit, credit, memo, remove --}}
                         <div class="{{ $lineGrid }} grid grid-cols-1 gap-3">
                             <div>
                                 <span class="mb-1 block text-xs font-medium text-muted-foreground lg:hidden">{{ __('Account') }}</span>
-                                <flux:select wire:model.live="lines.{{ $i }}.account_id" data-test="line-account">
-                                    <flux:select.option value="">{{ __('— Select —') }}</flux:select.option>
-                                    @foreach ($this->accountOptions as $opt)
-                                        <flux:select.option :value="$opt['value']">{{ $opt['label'] }}</flux:select.option>
-                                    @endforeach
-                                </flux:select>
+                                <x-account-combo model="lines.{{ $i }}.account_id" options="accounts" :placeholder="__('— Select —')" data-test="line-account" />
 
                                 @php($contactRole = $this->contactRequiringAccounts[(int) ($line['account_id'] ?? 0)] ?? null)
                                 @if ($contactRole === 'customer')

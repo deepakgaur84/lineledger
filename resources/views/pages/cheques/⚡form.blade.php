@@ -1021,16 +1021,12 @@ new #[Title('Cheque')] class extends Component
                     </tr>
                 </thead>
                 <tbody class="lg:divide-y lg:divide-border">
+                    <x-account-combo.options key="lineAccounts" :options="$this->lineAccountOptions" />
                     @foreach ($lines as $i => $line)
                         <tr wire:key="line-{{ $i }}" data-test="cheque-line-row" class="block border-b border-border p-3 lg:table-row lg:border-0 lg:p-0">
                             <td class="block px-2 py-1 lg:table-cell lg:py-2">
                                 <span class="mb-1 block text-xs font-medium text-muted-foreground lg:hidden">{{ __('Account') }}</span>
-                                <flux:select wire:model.live="lines.{{ $i }}.account_id" data-test="line-account" data-line-first="{{ $i }}">
-                                    <flux:select.option value="">{{ __('—') }}</flux:select.option>
-                                    @foreach ($this->lineAccountOptions as $opt)
-                                        <flux:select.option :value="$opt->id">{{ $opt->code }} — {{ $opt->name }}</flux:select.option>
-                                    @endforeach
-                                </flux:select>
+                                <x-account-combo model="lines.{{ $i }}.account_id" options="lineAccounts" data-test="line-account" data-line-first="{{ $i }}" />
 
                                 {{-- An Accounts Receivable / Payable line needs its own customer
                                      or vendor: the payee is who the cheque is made out to, which

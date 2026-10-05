@@ -768,6 +768,9 @@ new #[Title('Credit memo')] class extends Component
                     </tr>
                 </thead>
                 <tbody class="lg:divide-y lg:divide-border">
+                    @if ($fieldVisibility['account_column'])
+                        <x-account-combo.options key="accounts" :options="$this->accountOptions" />
+                    @endif
                     @foreach ($lines as $i => $line)
                         <tr wire:key="line-{{ $i }}" data-test="credit-memo-line-row" class="block border-b border-border p-3 lg:table-row lg:border-0 lg:p-0">
                             @if ($fieldVisibility['item_column'])
@@ -789,12 +792,7 @@ new #[Title('Credit memo')] class extends Component
                             @if ($fieldVisibility['account_column'])
                                 <td class="block px-2 py-1 lg:table-cell lg:py-2">
                                     <span class="mb-1 block text-xs font-medium text-muted-foreground lg:hidden">{{ __('Account') }}</span>
-                                    <flux:select wire:model.live="lines.{{ $i }}.account_id" data-test="line-account">
-                                        <flux:select.option value="">{{ __('—') }}</flux:select.option>
-                                        @foreach ($this->accountOptions as $opt)
-                                            <flux:select.option :value="$opt->id">{{ $opt->code }} — {{ $opt->name }}</flux:select.option>
-                                        @endforeach
-                                    </flux:select>
+                                    <x-account-combo model="lines.{{ $i }}.account_id" options="accounts" data-test="line-account" />
                                 </td>
                             @endif
                             @if ($fieldVisibility['qty_column'])
