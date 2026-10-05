@@ -352,6 +352,17 @@ new #[Title('Cheque')] class extends Component
     }
 
     /**
+     * The typed address on one line — what the folded Address block shows in
+     * place of its fields. Built from the same input the save takes, so it
+     * follows a payee pick or an edit on the next render.
+     */
+    #[Computed]
+    public function payeeAddressSummary(): string
+    {
+        return AddressLines::oneLine($this->payeeAddressInput(), $this->company);
+    }
+
+    /**
      * Seed a line's customer / vendor from the cheque's payee when the payee
      * holds the role the line's account requires — the common case, where the
      * cheque goes to the very customer or vendor whose balance it settles.
@@ -965,16 +976,37 @@ new #[Title('Cheque')] class extends Component
             </div>
 
             {{-- Where the cheque gets mailed. Seeded from the payee's record,
-                 editable for this cheque, and printed on the cheque itself. --}}
-            <div class="space-y-3 rounded-lg border border-border p-4 md:col-span-2" data-test="cheque-payee-address">
-                <flux:heading size="sm">{{ __('Address') }}</flux:heading>
-                <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <flux:input wire:model="payee_line1" :label="__('Address line 1')" data-test="cheque-payee-line1" />
-                    <flux:input wire:model="payee_line2" :label="__('Address line 2')" />
-                    <flux:input wire:model="payee_city" :label="__('City')" />
-                    <flux:input wire:model="payee_region" :label="__('Province / State')" />
-                    <flux:input wire:model="payee_postal_code" :label="__('Postal / ZIP')" />
-                    <flux:input wire:model="payee_country" :label="__('Country')" maxlength="2" placeholder="CA" :description="__('Two-letter code')" data-test="cheque-payee-country" />
+                 editable for this cheque, and printed on the cheque itself.
+                 Folded to a one-line summary by default — most cheques go to
+                 the address on file — with Show opening the fields to edit. --}}
+            <div x-data="{ open: false }" class="rounded-lg border border-border p-4 md:col-span-2" data-test="cheque-payee-address">
+                <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0 flex-1">
+                        <flux:heading size="sm">{{ __('Address') }}</flux:heading>
+                        <flux:text class="mt-1" data-test="cheque-address-summary">{{ $this->payeeAddressSummary !== '' ? $this->payeeAddressSummary : __('No address') }}</flux:text>
+                    </div>
+                    <flux:button variant="ghost" size="sm" type="button" class="shrink-0" x-on:click="open = ! open" x-bind:aria-expanded="open" aria-controls="cheque-payee-address-fields" data-test="cheque-address-toggle">
+                        <span x-text="open ? @js(__('Hide')) : @js(__('Show'))">{{ __('Show') }}</span>
+                    </flux:button>
+                </div>
+
+                {{-- A rejected field has to be seen to be fixed, so an error on any
+                     of them opens the block. Alpine state survives the re-render,
+                     so this fires as the error appears, never forcing it back open
+                     after the operator folds it again. --}}
+                @if ($errors->hasAny(['payee_line1', 'payee_line2', 'payee_city', 'payee_region', 'payee_postal_code', 'payee_country']))
+                    <span x-init="open = true" hidden data-test="cheque-address-force-open"></span>
+                @endif
+
+                <div id="cheque-payee-address-fields" x-show="open" x-collapse x-cloak>
+                    <div class="grid grid-cols-1 gap-4 pt-4 md:grid-cols-2">
+                        <flux:input wire:model.blur="payee_line1" :label="__('Address line 1')" data-test="cheque-payee-line1" />
+                        <flux:input wire:model.blur="payee_line2" :label="__('Address line 2')" data-test="cheque-payee-line2" />
+                        <flux:input wire:model.blur="payee_city" :label="__('City')" data-test="cheque-payee-city" />
+                        <flux:input wire:model.blur="payee_region" :label="__('Province / State')" data-test="cheque-payee-region" />
+                        <flux:input wire:model.blur="payee_postal_code" :label="__('Postal / ZIP')" data-test="cheque-payee-postal-code" />
+                        <flux:input wire:model.blur="payee_country" :label="__('Country')" maxlength="2" placeholder="CA" :description="__('Two-letter code')" data-test="cheque-payee-country" />
+                    </div>
                 </div>
             </div>
         </div>
