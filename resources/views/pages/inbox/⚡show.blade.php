@@ -11,6 +11,7 @@ use App\Models\InboxItem;
 use App\Rules\MoneyString;
 use App\Services\Classification\CategorySuggester;
 use App\Support\Money;
+use App\Support\Tax\LineTaxOverrides;
 use Flux\Flux;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
@@ -36,7 +37,7 @@ new #[Title('Review document')] class extends Component {
     public ?int $bankLineId = null;
 
     /**
-     * @var array<int, array{account_id: ?int, description: string, amount: string, tax_code_id: ?int, secondary_tax_code_id: ?int, tax_code_ids: array<int, int>, tax_override: string, auto_tax_cents: int, tax_cents: int, secondary_tax_cents: int, total: int}>
+     * @var array<int, array{account_id: ?int, description: string, amount: string, tax_code_id: ?int, secondary_tax_code_id: ?int, tax_code_ids: array<int, int>, tax_overrides: array<array-key, string>, auto_tax_cents: int, auto_secondary_tax_cents: int, tax_cents: int, secondary_tax_cents: int, total: int}>
      */
     public array $lines = [];
 
@@ -110,7 +111,7 @@ new #[Title('Review document')] class extends Component {
             $codeId = (int) $primaryTax['tax_code_id'];
             $line['tax_code_id'] = $codeId;
             $line['tax_code_ids'] = [$codeId];
-            $line['tax_override'] = Money::fromCents($taxCents)->toDecimalString();
+            $line['tax_overrides'] = LineTaxOverrides::fromStored($codeId, null, $taxCents, null);
         }
 
         return $line;
@@ -165,7 +166,7 @@ new #[Title('Review document')] class extends Component {
         return [
             'account_id' => null, 'description' => '', 'amount' => '0.00',
             'tax_code_id' => null, 'secondary_tax_code_id' => null, 'tax_code_ids' => [],
-            'tax_override' => '', 'auto_tax_cents' => 0, 'tax_cents' => 0, 'secondary_tax_cents' => 0, 'total' => 0,
+            'tax_overrides' => [], 'auto_tax_cents' => 0, 'auto_secondary_tax_cents' => 0, 'tax_cents' => 0, 'secondary_tax_cents' => 0, 'total' => 0,
         ];
     }
 
@@ -242,13 +243,20 @@ new #[Title('Review document')] class extends Component {
 
         $this->lines[$i]['tax_code_ids'] = array_values(array_filter([$line['tax_code_id'], $line['secondary_tax_code_id'] ?? null]));
 
-        $override = trim((string) ($line['tax_override'] ?? ''));
-        $taxCents = $override === '' ? $autoTax : (Money::tryFromString($override)?->cents ?? $autoTax);
+        // A typed amount per selected tax code wins over that code's calculated
+        // tax. Keyed by code, so pruning drops the amount of a code just unticked
+        // and a code that moved slots keeps its own.
+        $overrides = LineTaxOverrides::prune((array) ($line['tax_overrides'] ?? []), [$line['tax_code_id'], $line['secondary_tax_code_id'] ?? null]);
+        $this->lines[$i]['tax_overrides'] = $overrides;
+
+        $taxCents = LineTaxOverrides::cents($overrides, $line['tax_code_id']) ?? $autoTax;
+        $secondaryTaxCents = LineTaxOverrides::cents($overrides, $line['secondary_tax_code_id'] ?? null) ?? $secondaryTax;
 
         $this->lines[$i]['auto_tax_cents'] = $autoTax;
+        $this->lines[$i]['auto_secondary_tax_cents'] = $secondaryTax;
         $this->lines[$i]['tax_cents'] = $taxCents;
-        $this->lines[$i]['secondary_tax_cents'] = $secondaryTax;
-        $this->lines[$i]['total'] = $amount + $taxCents + $secondaryTax;
+        $this->lines[$i]['secondary_tax_cents'] = $secondaryTaxCents;
+        $this->lines[$i]['total'] = $amount + $taxCents + $secondaryTaxCents;
     }
 
     public function promote(PromoteInboxItem $action, MatchInboxItemToStatementLine $matcher): void
@@ -268,7 +276,8 @@ new #[Title('Review document')] class extends Component {
             'lines.*.amount' => ['required', 'string', new MoneyString],
             'lines.*.tax_code_id' => ['nullable', 'integer', Rule::exists('tax_codes', 'id')->where('company_id', $companyId)],
             'lines.*.secondary_tax_code_id' => ['nullable', 'integer', Rule::exists('tax_codes', 'id')->where('company_id', $companyId)],
-            'lines.*.tax_override' => ['nullable', 'string', new MoneyString],
+            'lines.*.tax_overrides' => ['nullable', 'array'],
+            'lines.*.tax_overrides.*' => ['nullable', 'string', new MoneyString],
         ]);
 
         $overrides = [
@@ -283,9 +292,7 @@ new #[Title('Review document')] class extends Component {
                 'amount_cents' => Money::fromString($l['amount'])->cents,
                 'tax_code_id' => $l['tax_code_id'] ?? null,
                 'secondary_tax_code_id' => $l['secondary_tax_code_id'] ?? null,
-                'tax_override_cents' => ($l['tax_override'] ?? '') !== ''
-                    ? Money::fromString($l['tax_override'])->cents
-                    : null,
+                ...LineTaxOverrides::toSlots($l['tax_overrides'] ?? [], $l['tax_code_id'] ?? null, $l['secondary_tax_code_id'] ?? null),
             ], $validated['lines']),
         ];
 
@@ -638,23 +645,15 @@ new #[Title('Review document')] class extends Component {
                             </td>
                             <td class="block px-2 py-1 lg:table-cell lg:py-2">
                                 <span class="mb-1 block text-xs font-medium text-muted-foreground lg:hidden">{{ __('Tax') }}</span>
-                                @php($selectedTaxIds = $line['tax_code_ids'] ?? [])
-                                <flux:dropdown>
-                                    <flux:button variant="outline" size="sm" icon:trailing="chevron-down" class="w-full justify-between font-normal" data-test="inbox-line-tax">
-                                        <span class="truncate">{{ $this->taxCodeOptions->whereIn('id', $selectedTaxIds)->pluck('code')->implode(', ') ?: __('Select tax') }}</span>
-                                    </flux:button>
-                                    <flux:menu>
-                                        <flux:menu.checkbox.group wire:model.live="lines.{{ $i }}.tax_code_ids">
-                                            @foreach ($this->taxCodeOptions as $opt)
-                                                <flux:menu.checkbox value="{{ $opt->id }}" :disabled="count($selectedTaxIds) === 2 && ! in_array($opt->id, $selectedTaxIds)" keep-open>{{ $opt->code }}</flux:menu.checkbox>
-                                            @endforeach
-                                        </flux:menu.checkbox.group>
-                                    </flux:menu>
-                                </flux:dropdown>
-                                <x-amount-input model="lines.{{ $i }}.tax_override" modifiers=".live.debounce.500ms" size="sm"
-                                    class="mt-1 lg:text-right"
-                                    placeholder="{{ number_format($line['auto_tax_cents'] / 100, 2) }}"
-                                    data-test="inbox-line-tax-override" />
+                                <x-line-tax-cell
+                                    :index="$i"
+                                    :line="$line"
+                                    :options="$this->taxCodeOptions"
+                                    :primary-auto="$line['auto_tax_cents'] ?? 0"
+                                    :secondary-auto="$line['auto_secondary_tax_cents'] ?? 0"
+                                    picker-test="inbox-line-tax"
+                                    override-test="inbox-line-tax-override"
+                                />
                             </td>
                             <td class="flex items-center justify-between px-2 py-1 font-mono lg:table-cell lg:py-2 lg:text-right" data-test="inbox-line-total">
                                 <span class="text-xs font-medium text-muted-foreground lg:hidden">{{ __('Total') }}</span>

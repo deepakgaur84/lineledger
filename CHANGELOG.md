@@ -73,6 +73,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PHP ^8.5 and Laravel 13 requirements are unchanged. TCPDF stays on 6.x:
   TCPDF 7 drops the internals FPDI builds on, and the payroll slips and the
   management report package both print through FPDI.
+- **A tax amount for each tax on a purchase line.** On cheques, expenses, bills,
+  reimbursements and the inbox review screen, every tax code ticked on a line now
+  gets its own amount field, labelled with the code and showing its calculated
+  amount. With GST and PST on one line you can correct either or both; the single
+  field used to override only the first tax. A line with no tax code shows no
+  field.
 
 ### Fixed
 
@@ -96,6 +102,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reversed commission couldn't be coded there. It now lists every active account,
   as the journal entry form does. Picking a revenue account doesn't bring along a
   sales-only default tax code, which never applies to a purchase.
+- **A tax amount without a tax code is ignored.** A cheque, expense or bill line
+  could save a typed tax amount with no tax code. The amount went into the total,
+  but with no tax agency to post it to, the journal entry put it in the expense
+  account instead.
+- **Cheque and expense pages show the first tax.** The totals on a cheque's or
+  expense's page left out each line's first tax: a GST-only cheque showed no tax
+  row, and a GST + PST one showed only PST. Display only — the saved amounts and
+  the journal entry were right.
 
 ### Security
 
