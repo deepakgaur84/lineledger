@@ -11,6 +11,7 @@ use App\Models\Item;
 use App\Models\PaymentTerm;
 use App\Models\TaxCode;
 use App\Services\BulkImport\GroupedImporterDefinition;
+use App\Services\BulkImport\ImportDates;
 use App\Services\Posting\BillPoster;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -54,7 +55,7 @@ class BillImporter implements GroupedImporterDefinition
             'bill_no' => 'Optional. Left blank, the bill is numbered automatically the same way one entered by hand would be. Given, must be unique — a bill_no already in use is rejected.',
             'vendor_display_name' => "Required. Must match an existing vendor's display name exactly (case-insensitive) — add the vendor first via the Vendors importer if they don't exist yet. If more than one vendor shares this name, the row is rejected rather than guessing which one.",
             'vendor_reference' => "Optional. The vendor's own invoice/reference number.",
-            'bill_date' => 'Required. Any unambiguous date works, e.g. 01-Apr-2026 or 2026-04-01.',
+            'bill_date' => ImportDates::required(),
             'due_date' => 'Optional. Same date formats as bill_date. Left blank, derived from payment_terms if given, else defaults to bill_date. Must not be before bill_date.',
             'payment_terms' => "Optional. Must match an existing payment term's name exactly (e.g. 'Net 30'). Ignored if due_date is given directly.",
             'memo' => 'Optional. Same on every line of a bill — only the first line\'s value is used.',

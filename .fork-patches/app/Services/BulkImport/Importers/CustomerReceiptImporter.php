@@ -9,6 +9,7 @@ use App\Models\Contact;
 use App\Models\Invoice;
 use App\Models\PaymentMethod;
 use App\Services\BulkImport\GroupedImporterDefinition;
+use App\Services\BulkImport\ImportDates;
 use App\Services\Posting\ReceiptPoster;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -47,7 +48,7 @@ class CustomerReceiptImporter implements GroupedImporterDefinition
             'import_ref' => 'Required. Groups rows into one receipt — every application in the same receipt repeats the same import_ref. Only used to group rows in this file; never stored, and unrelated to receipt_no.',
             'receipt_no' => 'Optional. Left blank, the receipt is numbered automatically the same way one entered by hand would be. Given, must be unique — a receipt_no already in use is rejected.',
             'customer_display_name' => "Required. Must match an existing customer's display name exactly (case-insensitive). If more than one customer shares this name, the row is rejected rather than guessing which one.",
-            'receipt_date' => 'Required. Any unambiguous date works, e.g. 01-Apr-2026 or 2026-04-01.',
+            'receipt_date' => ImportDates::required(),
             'deposit_to_account_code' => 'Required. The code of the bank/asset account the money was deposited into, e.g. 1000 — not the account name.',
             'payment_method' => "Optional. Must match an existing payment method's name exactly (see Settings > Payment Methods).",
             'reference' => 'Optional. A cheque number or bank reference. Same on every row of a receipt — only the first row\'s value is used.',

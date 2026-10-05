@@ -9,6 +9,7 @@ use App\Models\Contact;
 use App\Models\Item;
 use App\Models\TaxCode;
 use App\Services\BulkImport\GroupedImporterDefinition;
+use App\Services\BulkImport\ImportDates;
 use App\Services\Posting\CreditMemoPoster;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -44,7 +45,7 @@ class CreditMemoImporter implements GroupedImporterDefinition
             'import_ref' => 'Required. Groups rows into one credit memo — every line of the same credit memo repeats the same import_ref. Only used to group rows in this file; never stored, and unrelated to credit_memo_no.',
             'credit_memo_no' => 'Optional. Left blank, the credit memo is numbered automatically the same way one entered by hand would be. Given, must be unique — a credit_memo_no already in use is rejected.',
             'customer_display_name' => "Required. Must match an existing customer's display name exactly (case-insensitive) — add the customer first via the Customers importer if they don't exist yet. If more than one customer shares this name, the row is rejected rather than guessing which one.",
-            'credit_memo_date' => 'Required. Any unambiguous date works, e.g. 01-Apr-2026 or 2026-04-01.',
+            'credit_memo_date' => ImportDates::required(),
             'memo' => 'Optional. Same on every line of a credit memo — only the first line\'s value is used.',
             'account_code' => 'Required. The code of an existing income account, e.g. 4000 — not the account name.',
             'item_sku' => 'Optional. An existing item\'s SKU, if this line is for a stocked/service item rather than a plain charge.',

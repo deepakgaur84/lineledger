@@ -523,12 +523,22 @@ new #[Title('Asset')] class extends Component {
                 </flux:select>
                 <flux:input wire:model="salvage_value" :label="__('Salvage value')" data-test="asset-salvage-input" />
 
+                {{--
+                    Every input below that appears or disappears with the method or the life mode
+                    sits in its own wire:key wrapper (display: contents, so the grid ignores it).
+                    Without keys the morph reuses an input by position — the Months box becomes the
+                    Rate box when the toggle flips — and Livewire's wire:model binds ONCE per element,
+                    so the reused box keeps its old binding. Typing a rate then had the stale
+                    useful_life_months binding write the computed months back into the Rate box.
+                --}}
                 @if ($depreciation_method === 'declining_balance')
-                    <flux:input type="number" step="0.001" min="1" max="100" wire:model.live="depreciation_rate" :label="__('Annual rate (%)')" data-test="asset-rate-input" />
+                    <div wire:key="depreciation-rate" class="contents">
+                        <flux:input type="number" step="0.001" min="1" max="100" wire:model.live="depreciation_rate" :label="__('Annual rate (%)')" data-test="asset-rate-input" />
+                    </div>
                 @endif
 
                 @if ($depreciation_method === 'straight_line')
-                    <div class="md:col-span-2">
+                    <div wire:key="life-mode-toggle" class="md:col-span-2">
                         <flux:radio.group wire:model.live="useful_life_input_mode" variant="segmented" :label="__('Calculate useful life from')" data-test="asset-life-mode-toggle">
                             <flux:radio value="months" :label="__('Effective life (months)')" />
                             <flux:radio value="rate" :label="__('Rate')" />
@@ -536,19 +546,27 @@ new #[Title('Asset')] class extends Component {
                     </div>
 
                     @if ($useful_life_input_mode === 'rate')
-                        <flux:input type="number" step="0.001" min="0.001" wire:model.live="straight_line_rate" :label="__('Rate (% a year)')" data-test="asset-life-rate-input" />
-                        <flux:text class="self-end pb-2 text-sm text-muted-foreground" data-test="asset-life-rate-result">
-                            {{ __('= :n months useful life', ['n' => $useful_life_months ?? '—']) }}
-                        </flux:text>
+                        <div wire:key="life-rate" class="contents">
+                            <flux:input type="number" step="0.001" min="0.001" wire:model.live="straight_line_rate" :label="__('Rate (% a year)')" data-test="asset-life-rate-input" />
+                            <flux:text class="self-end pb-2 text-sm text-muted-foreground" data-test="asset-life-rate-result">
+                                {{ __('= :n months useful life', ['n' => $useful_life_months ?? '—']) }}
+                            </flux:text>
+                        </div>
                     @else
-                        <flux:input type="number" min="1" wire:model.live="useful_life_months" :label="__('Useful life (months)')" data-test="asset-useful-life-input" />
+                        <div wire:key="life-months" class="contents">
+                            <flux:input type="number" min="1" wire:model.live="useful_life_months" :label="__('Useful life (months)')" data-test="asset-useful-life-input" />
+                        </div>
                     @endif
                 @elseif ($depreciation_method !== 'immediate')
-                    <flux:input type="number" min="1" wire:model.live="useful_life_months" :label="__('Useful life (months) — optional')" data-test="asset-useful-life-input" />
+                    <div wire:key="life-optional" class="contents">
+                        <flux:input type="number" min="1" wire:model.live="useful_life_months" :label="__('Useful life (months) — optional')" data-test="asset-useful-life-input" />
+                    </div>
                 @endif
 
                 @if ($depreciation_method === 'declining_balance' && $useful_life_months === null)
-                    <flux:input wire:model.blur="materiality_limit" :label="__('Materiality limit')" data-test="asset-materiality-input" />
+                    <div wire:key="materiality-limit" class="contents">
+                        <flux:input wire:model.blur="materiality_limit" :label="__('Materiality limit')" data-test="asset-materiality-input" />
+                    </div>
                 @endif
             </div>
             <flux:text class="mt-3 text-sm text-muted-foreground" data-test="asset-method-hint">

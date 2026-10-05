@@ -9,6 +9,7 @@ use App\Models\Company;
 use App\Models\Contact;
 use App\Models\PaymentMethod;
 use App\Services\BulkImport\GroupedImporterDefinition;
+use App\Services\BulkImport\ImportDates;
 use App\Services\Posting\BillPaymentPoster;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -52,7 +53,7 @@ class BillPaymentImporter implements GroupedImporterDefinition
             'import_ref' => 'Required. Groups rows into one payment — every application in the same payment repeats the same import_ref. Only used to group rows in this file; never stored, and unrelated to payment_no.',
             'payment_no' => 'Optional. Left blank, the payment is numbered automatically the same way one entered by hand would be. Given, must be unique — a payment_no already in use is rejected.',
             'vendor_display_name' => "Required. Must match an existing vendor's display name exactly (case-insensitive). If more than one vendor shares this name, the row is rejected rather than guessing which one.",
-            'payment_date' => 'Required. Any unambiguous date works, e.g. 01-Apr-2026 or 2026-04-01.',
+            'payment_date' => ImportDates::required(),
             'paid_from_account_code' => 'Required. The code of the bank/asset account the payment was made from, e.g. 1000 — not the account name.',
             'payment_method' => "Optional. Must match an existing payment method's name exactly (see Settings > Payment Methods).",
             'reference' => 'Optional. A cheque number or bank reference. Same on every row of a payment — only the first row\'s value is used.',

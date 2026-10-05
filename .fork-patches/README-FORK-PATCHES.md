@@ -626,6 +626,185 @@ field for declining balance," no longer true now that straight-line shows
 it too). Both corrected alongside the fix that made them stale, not left
 to fail in CI.
 
+## 13. Bulk Import: Validate button stuck greyed out after choosing a CSV
+
+Reported while testing the Fixed Assets importer: a CSV is chosen, the file
+input shows its name, no error appears — and Validate stays greyed out.
+
+**Cause.** The button was
+`:disabled="! $upload" wire:loading.attr="disabled" wire:target="upload"`.
+In Livewire 4.4, `wire:loading` with the `.attr` modifier *captures the
+attribute's value when loading starts and puts that value back when loading
+ends*. The button is already disabled at that moment (`$upload` is null until
+the upload lands). The sequence that follows is, per Livewire's own request
+pipeline (`effect` → `morph` → `morphed`, with server-dispatched events such as
+`upload:finished` fired in the last phase): the server's morph enables the
+button, and *then* `livewire-upload-finish` fires and the directive "restores"
+`disabled`. Nothing re-renders afterwards, so it stays greyed out for good.
+Livewire 4.3.4 simply removed the attribute at the end, which is why the page
+worked when it was first built and tested.
+
+Worth recording what this is *not*: it is not a 4.4.7 regression. The loading,
+upload, morph and dispatch code is byte-identical between 4.4.5 and 4.4.7
+(only the navigate plugin differs), and the behaviour change landed between
+4.3.4 and 4.4.5 — i.e. with the 1.1.0 upstream sync, not the October bump.
+It is also not the CSV's content: the button's state depends only on whether
+the server holds the upload, never on what is in the file.
+
+**Fix.** `resources/views/pages/tools/⚡bulk-import.blade.php` — the directive
+is gone. It was redundant anyway: `:disabled="! $upload"` already covers the
+whole of the first upload, because `$upload` is only set once the upload has
+finished. The one thing it also covered, validating the *previous* file while a
+replacement is still uploading, is a window of milliseconds for a CSV and
+harmless (it validates the file the server actually holds). A search of every
+view found this was the only place in the app combining the two.
+
+- `tests/Feature/BulkImport/BulkImportPageTest.php` (new) — the first tests this
+  page has had: a CSV is held server-side and validated for the Fixed Assets
+  importer; switching importer drops the staged upload (by design, so a file is
+  never validated as the wrong kind); and a **static guard** that scans every
+  Blade view for a `wire:loading.attr` sharing a line with a server-rendered
+  `disabled`. The client-side half of this bug cannot be reproduced in PHP, so
+  the guard is the only automated protection against reintroducing it.
+
+**How this was diagnosed, honestly.** From Livewire's JavaScript source
+(v4.3.4, v4.4.5, v4.4.7), not by reproducing it in a browser. The ordering and
+the version difference are verified against that source; the symptom matching
+it exactly is strong evidence rather than a reproduction.
+
+**Found while diagnosing, not fixed here — date formats.** All eight row-based
+importers validate dates with Laravel's `date` rule and parse them with
+`Carbon::parse`, both of which read a slash date as *US month/day*. So
+`27/09/2026` fails as "not a valid date", and — worse — an ambiguous one like
+`05/09/2026` is silently read as 9 May rather than 5 September. Excel on a
+d/m/Y locale rewrites ISO dates into exactly this form when it re-saves a CSV,
+so this is easy to hit from a spreadsheet. The importers' own column help says
+"any unambiguous date works", which is not true for d/m/Y. Unfixed because it
+is a cross-cutting design decision (strict ISO, a company date-format setting,
+or accepting d/m/Y for certain jurisdictions), not a one-line change.
+
+## 14. Asset form: the Rate box turning into the useful-life number
+
+Reported straight after §12 shipped: on the asset form, with Straight-line
+selected and the toggle on **Rate**, typing `67` left the box showing `18` —
+the useful life in months (`1200 ÷ 67`, rounded) — while the "= 18 months
+useful life" text beside it was correct. This is very likely what the original
+"I enter a rate and it converts to useful life" complaint (§12) was describing
+as well: §12 fixed a real persistence bug (the rate was never saved), but the
+box visibly changing under the user's hands is a separate bug, and it survived
+that fix.
+
+**Cause.** The Months input and the Rate input are two branches of one `@if`,
+rendered at the same position with no `wire:key`. Livewire's morph keys elements
+only by `wire:key`/`wire:id`, so flipping the toggle *reuses the Months `<input>`*
+and patches its attributes into the Rate input. But Livewire's `wire:model`
+directive runs **once per element**, and its `x-model` `get()`/`set()` close over
+the property name at that moment (and it registers no cleanup). The reused box
+therefore keeps a live binding to `useful_life_months`. Typing 67 correctly set
+`straight_line_rate` and computed the life (hence the right helper text), then
+the leftover binding re-read `useful_life_months` (18) and wrote it into the box.
+Nothing in the PHP can put `18` in `straight_line_rate`: the only server code
+that writes it is the toggle's back-fill, which derives a rate *from* the life
+(from 18 months it would give `66.667`, from 67 it would give `17.91`) — never
+`18` itself. That is what pointed at the browser layer in the first place.
+
+**Fix.** `resources/views/pages/assets/⚡form.blade.php` — every input in the
+depreciation block that appears or disappears with the method or the life mode
+now sits in its own `wire:key` wrapper (`life-rate`, `life-months`,
+`life-optional`, `depreciation-rate`, `materiality-limit`, plus the toggle's own
+`life-mode-toggle`). The wrappers are `display: contents`, so the grid layout is
+unchanged, and the key is on an element we control rather than relying on which
+inner element Flux forwards attributes to. Different keys mean the morph replaces
+the subtree instead of patching it, so a fresh input gets a fresh binding. Every
+`data-test` hook (31) and `wire:model` binding (26) is identical before and after.
+
+- `tests/Feature/Assets/AssetDepreciationMethodFormTest.php` — two tests. One pins
+  that each branch renders under its own key and never another's, across
+  straight-line (both modes), declining balance and immediate. The other is the
+  server half of the exact sequence reported (toggle to Rate, type 67): the rate
+  stays `67`, the life is `18`, the stored `depreciation_rate` is `67`.
+
+**Verification, honestly.** Diagnosed from Livewire's JavaScript source (v4.4.7)
+and from the one coincidence that `18` is precisely the months value; not
+reproduced in a browser. The DOM reuse itself cannot be exercised from PHP, so the
+key test guards the fix rather than proving the cause. The category settings page
+has the same *shape* of conditional input but no sibling that could be reused
+for the common (non-Canadian) case, and was not changed.
+
+## 15. Bulk Import: say it on the screen — dates, and the Fixed Assets rules
+
+Prompted by a real file: a Fixed Assets CSV saved from Excel with dates like
+`27/09/2026`, a `100%` row that also carried a rate, and a category name that
+was really an account name. None of those was a bug; each was a rule the screen
+had stated badly or buried, and the instruction was to make the screen say it —
+"otherwise there will always be confusions" — with the date example `09-Apr-26`.
+
+**What was actually wrong with the existing help.** Most of it was already
+accurate: `category_name` says "an existing asset category's name",
+`asset_account_code` says "the code … not the account name". But each was one
+line in a list of eighteen columns. The date line was worse than buried — every
+required date column said "Any unambiguous date works, e.g. 01-Apr-2026 or
+2026-04-01", which is only true for dates that cannot be read two ways, and a
+slash date can.
+
+**Dates, verified rather than remembered** (PHP 8.3, running the same checks the
+importers do — Laravel's `date` rule, then `Carbon::parse`): `09-Apr-26` is valid
+and is 9 April 2026; `27/09/2026` is rejected; `05/09/2026` is silently read as
+**9 May** and `09/04/2026` as **4 September**; dashes and dots (`09-04-2026`) are
+day-first, so only slashes are month-first. That silent case is the dangerous
+one — it is a *valid* date, so it passes validation — which is why text on the
+screen alone was not enough.
+
+- `app/Services/BulkImport/ImportDates.php` (new) — one source for the wording and
+  the example, and for recognising date columns by name. Every required date
+  column's help is now `ImportDates::required()`; `in_service_date`, which had no
+  format hint at all, gained one.
+- `app/Services/BulkImport/HasImportNotes.php` (new) — an optional interface so an
+  importer can put a few plain sentences on the screen. Separate from
+  `ImporterDefinition` so no existing importer changes or can break.
+- `app/Services/BulkImport/SlashDateWarnings.php` (new) — after validation, flags
+  each slash date PHP will read as a different day (or refuse), giving what PHP
+  will read, what was probably meant, and the exact text to write instead. Silent
+  when both readings are the same day or only the month-first one exists. Advisory
+  only — nothing is blocked or rewritten.
+- The eight importers with a date column (`Bill`, `BillPayment`, `CreditMemo`,
+  `CustomerReceipt`, `FixedAsset`, `Invoice`, `JournalEntry`, `VendorCredit`) use
+  the shared wording. `FixedAssetImporter` also implements `HasImportNotes`: four
+  sentences, each restating a rule its own `resolve()` enforces (the category must
+  exist and is not an account; codes not names, with the asset account always
+  needed and the depreciation accounts only for auto-depreciate; the method/rate
+  rules, including that a rate on a 100% row is rejected; what auto-depreciate
+  drags in).
+- `resources/views/pages/tools/⚡bulk-import.blade.php` — a "Before you upload"
+  callout (the date guidance, including the Excel `dd-mmm-yy` tip, plus the
+  importer's notes) shown only when there is something to say, and a "Check these
+  dates" warning at the top of the preview.
+
+**Tests.** `tests/Unit/BulkImport/SlashDateWarningsTest.php` includes a check that
+every suggestion round-trips to the day that was meant, for every day-first date
+from 1950 to 2100 (it exists because a two-digit year pivots at 70, so `15/06/1969`
+must be suggested with four digits). `tests/Feature/BulkImport/ImporterHelpTextTest.php`
+fails if any required date column omits the example, if "unambiguous" ever returns,
+or if the example stops parsing to the day it claims. `BulkImportPageTest.php` gained
+five page tests, including a file with one misread date, one rejected, and one fine.
+
+**What was and wasn't executed.** This round had a real PHP runtime, which earlier
+rounds did not: the date behaviour above, `SlashDateWarnings` (28 cases and the
+110,000-date round-trip check), the quoting of every new `{{ }}` expression, and
+`php -l` on every file were all run; so was Laravel Pint, at the exact version CI
+uses (v1.32.1), over every PHP file touched. What could not be run is Pest and the
+Livewire page, because there are no Composer dependencies in that environment — those
+tests were written against the code but have not executed, and PHPStan was not run.
+Running things earned its keep immediately: a test of mine asserted that over 100,000
+dates produced a warning, and executing the loop showed it produces 53,340, so that
+assertion would have failed in CI.
+
+**Not done, on purpose.** Importing d/m/Y files by detecting the format per file.
+The bank statement import's `DateFormatGuesser` could be reused, but a column whose
+every day is 12 or under cannot be decided from the values, so it would still need a
+confirmation step. Only Fixed Assets has importer notes; any other importer can opt in
+by implementing `HasImportNotes`.
+
 ## Ongoing maintenance — now partially automated, still worth watching
 
 `reapply-fork-patches` (see §7) originally just *overwrote* on every

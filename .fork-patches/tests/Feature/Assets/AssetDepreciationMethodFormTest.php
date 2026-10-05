@@ -439,3 +439,49 @@ it('clears the stored rate when an asset is switched away from straight-line', f
 
     expect($asset->fresh()->depreciation_rate)->toBeNull();
 });
+
+it('keys each depreciation input, so a reused element can never keep another input\'s wire:model binding', function () {
+    // The bug this guards: with no keys, the browser's morph reused the Months
+    // input as the Rate input when the toggle flipped, and Livewire binds
+    // wire:model once per element — so the Rate box kept reading
+    // useful_life_months, and typing 67 had the computed 18 written back into it.
+    // That is DOM behaviour and cannot be reproduced here; what can be pinned down
+    // is that every branch renders under its own key and never under another's.
+    $form = Livewire::test('pages::assets.form', ['company' => $this->company]);
+
+    $form->assertSeeHtml('wire:key="life-mode-toggle"')
+        ->assertSeeHtml('wire:key="life-months"')
+        ->assertDontSeeHtml('wire:key="life-rate"');
+
+    $form->set('useful_life_input_mode', 'rate')
+        ->assertSeeHtml('wire:key="life-rate"')
+        ->assertDontSeeHtml('wire:key="life-months"');
+
+    $form->set('useful_life_input_mode', 'months')
+        ->set('depreciation_method', 'declining_balance')
+        ->assertSeeHtml('wire:key="depreciation-rate"')
+        ->assertSeeHtml('wire:key="life-optional"')
+        ->assertSeeHtml('wire:key="materiality-limit"')
+        ->assertDontSeeHtml('wire:key="life-months"')
+        ->assertDontSeeHtml('wire:key="life-mode-toggle"');
+
+    $form->set('depreciation_method', 'immediate')
+        ->assertDontSeeHtml('wire:key="depreciation-rate"')
+        ->assertDontSeeHtml('wire:key="life-optional"')
+        ->assertDontSeeHtml('wire:key="life-months"');
+});
+
+it('still computes the life and keeps the typed rate when it is typed after toggling to rate mode', function () {
+    // The server half of the sequence the user hit: toggle to Rate, then type 67.
+    // The rate must stay 67 (the property the box is bound to) and the life must
+    // be the computed 18 — the two never swap places.
+    $form = Livewire::test('pages::assets.form', ['company' => $this->company])
+        ->set('useful_life_input_mode', 'rate')
+        ->set('straight_line_rate', '67')
+        ->assertSet('straight_line_rate', '67')
+        ->assertSet('useful_life_months', 18)
+        ->assertSet('depreciation_rate', '67');
+
+    $form->assertSeeHtml('data-test="asset-life-rate-result"')
+        ->assertSee('= 18 months useful life');
+});
