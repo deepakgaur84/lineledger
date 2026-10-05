@@ -104,6 +104,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Clearing a cheque line's account no longer breaks the form.** Choosing "—"
   on a line that had an account threw an error instead of emptying the line.
+- **Pressing Post twice on a new journal entry no longer errors.** A
+  double-click, or Enter pressed again before the page moved on, reached the
+  server holding the entry the first click had just posted: it rewrote that
+  posted entry's lines and then failed with "already posted" (a server error on
+  journal entries). The repeat now changes nothing and opens the posted entry.
+  New expenses and transfers get the same guard, and Save draft never rewrites
+  a posted entry.
 - **A saved draft tax return shows its figures.** Its page read 0.00 and "No
   snapshot lines yet" until the return was filed, and the list showed 0.00 too. A
   draft's page now works its figures out live from the ledger. Each save also

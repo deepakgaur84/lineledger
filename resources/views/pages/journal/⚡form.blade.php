@@ -437,6 +437,10 @@ new #[Title('Journal entry')] class extends Component
 
     public function saveDraft(): void
     {
+        if ($this->finishIfAlreadyPosted()) {
+            return;
+        }
+
         $this->persist(post: false);
         Flux::toast(variant: 'success', text: __('Draft saved.'));
         $this->redirectRoute('journal.edit', ['company' => $this->company->slug, 'entry' => $this->entry->id], navigate: true);
@@ -444,6 +448,10 @@ new #[Title('Journal entry')] class extends Component
 
     public function postEntry(JournalPoster $poster): void
     {
+        if ($this->finishIfAlreadyPosted()) {
+            return;
+        }
+
         $this->persist(post: false);
 
         try {
@@ -456,6 +464,25 @@ new #[Title('Journal entry')] class extends Component
 
         Flux::toast(variant: 'success', text: __('Entry posted.'));
         $this->redirectRoute('journal.show', ['company' => $this->company->slug, 'entry' => $this->entry->id], navigate: true);
+    }
+
+    /**
+     * A second Post or Save draft — a double-click, or Enter pressed again
+     * before the redirect lands — arrives holding the entry the first request
+     * just posted. Saving it as a draft would rewrite a posted entry's lines
+     * outside saveChanges() (no lock check, no balance recompute) and posting
+     * it again throws, so finish the way the first request did instead. Reads
+     * the row fresh: the posting may have committed after this request began.
+     */
+    private function finishIfAlreadyPosted(): bool
+    {
+        if (! $this->entry?->exists || ! $this->entry->fresh()?->isPosted()) {
+            return false;
+        }
+
+        $this->redirectRoute('journal.show', ['company' => $this->company->slug, 'entry' => $this->entry->id], navigate: true);
+
+        return true;
     }
 
     /**
