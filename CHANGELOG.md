@@ -50,6 +50,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Type a GL number or a name to pick a line's account.** Every line "Account"
+  picker (cheques, expenses, bills, deposits, journal entries, invoices and the
+  rest of the sales and purchase forms, recurring documents and templates,
+  reimbursements, inbox review, tax return adjustments, budgets, and the bank
+  review categories and splits) is now one search box instead of a long
+  dropdown. "24" lists 2400, 2410… first; "disb" or "bmo usd" finds the account
+  by name, words in any order, ignoring case and punctuation. Arrow keys and
+  Enter pick, Tab takes the highlighted match after you type, Escape backs out,
+  and emptying the box clears the account.
 - **The browser tab title follows `APP_NAME`** instead of a hardcoded "Line
   Ledger". Deployments that want the spaced form should set
   `APP_NAME="Line Ledger"`.
@@ -82,6 +91,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Clearing a cheque line's account no longer breaks the form.** Choosing "—"
+  on a line that had an account threw an error instead of emptying the line.
 - **A saved draft tax return shows its figures.** Its page read 0.00 and "No
   snapshot lines yet" until the return was filed, and the list showed 0.00 too. A
   draft's page now works its figures out live from the ledger. Each save also

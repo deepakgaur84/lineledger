@@ -804,15 +804,11 @@ new #[Title('Make deposit')] class extends Component
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-border">
+                            <x-account-combo.options key="otherAccounts" :options="$this->otherAccountOptions" />
                             @foreach ($otherLines as $i => $line)
                                 <tr wire:key="other-{{ $i }}" data-test="other-line-row">
                                     <td class="px-3 py-2">
-                                        <flux:select wire:model="otherLines.{{ $i }}.account_id">
-                                            <flux:select.option value="">{{ __('—') }}</flux:select.option>
-                                            @foreach ($this->otherAccountOptions as $opt)
-                                                <flux:select.option :value="$opt->id">{{ $opt->code }} — {{ $opt->name }}</flux:select.option>
-                                            @endforeach
-                                        </flux:select>
+                                        <x-account-combo model="otherLines.{{ $i }}.account_id" options="otherAccounts" :live="false" data-test="other-line-account" />
                                     </td>
                                     <td class="px-3 py-2"><flux:input wire:model="otherLines.{{ $i }}.description" /></td>
                                     @if ($this->tracksClasses)

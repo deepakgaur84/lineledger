@@ -1,6 +1,7 @@
 import './charts.js';
 import { evaluateAmountExpression, isAmountExpression, roundHalfUp } from './amount-expression.js';
 import { editLockBlockedPoller, editLockKeeper } from './edit-lock.js';
+import { installAccountCombo } from './account-combo.js';
 import { installEscapeBack } from './escape-back.js';
 import { installDatePicker } from './date-picker.js';
 
@@ -17,6 +18,12 @@ document.addEventListener('alpine:init', () => {
      */
     window.Alpine.data('editLockKeeper', editLockKeeper);
     window.Alpine.data('editLockBlockedPoller', editLockBlockedPoller);
+
+    /**
+     * Typeable account picker for line "Account" columns: search by GL number
+     * or name. See ./account-combo.js and <x-account-combo>.
+     */
+    installAccountCombo(window.Alpine);
 
     /**
      * Guest country-switcher banner (books.lineledger.com vs .ca). Mirrors the

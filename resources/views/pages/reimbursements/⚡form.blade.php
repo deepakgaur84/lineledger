@@ -397,6 +397,7 @@ new #[Title('Reimbursement')] class extends Component {
                     </tr>
                 </thead>
                 <tbody class="lg:divide-y lg:divide-border">
+                    <x-account-combo.options key="expenseAccounts" :options="$this->expenseAccountOptions" />
                     @foreach ($lines as $i => $line)
                         <tr wire:key="line-{{ $i }}" data-test="reimbursement-line-row" class="block border-b border-border p-3 lg:table-row lg:border-0 lg:p-0">
                             <td class="block px-2 py-1 lg:table-cell lg:py-2">
@@ -405,12 +406,7 @@ new #[Title('Reimbursement')] class extends Component {
                             </td>
                             <td class="block px-2 py-1 lg:table-cell lg:py-2">
                                 <span class="mb-1 block text-xs font-medium text-muted-foreground lg:hidden">{{ __('Expense account') }}</span>
-                                <flux:select wire:model.live="lines.{{ $i }}.account_id" data-test="line-account">
-                                    <flux:select.option value="">{{ __('—') }}</flux:select.option>
-                                    @foreach ($this->expenseAccountOptions as $opt)
-                                        <flux:select.option :value="$opt->id">{{ $opt->code }} — {{ $opt->name }}</flux:select.option>
-                                    @endforeach
-                                </flux:select>
+                                <x-account-combo model="lines.{{ $i }}.account_id" options="expenseAccounts" data-test="line-account" />
                             </td>
                             <td class="block px-2 py-1 lg:table-cell lg:py-2">
                                 <span class="mb-1 block text-xs font-medium text-muted-foreground lg:hidden">{{ __('Qty') }}</span>
