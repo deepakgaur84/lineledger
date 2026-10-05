@@ -605,15 +605,15 @@ new #[Title('Review document')] class extends Component {
 
         {{-- Line + tax grid --}}
         <div class="overflow-x-auto rounded-lg border border-border">
-            <table class="w-full text-sm">
+            <table class="w-full text-sm" x-resizable-columns="'inbox-lines'" wire:ignore.self>
                 <thead class="hidden bg-muted lg:table-header-group">
                     <tr>
-                        <th class="w-56 px-2 py-2 text-left">{{ __('Category account') }}</th>
-                        <th class="px-2 py-2 text-left">{{ __('Description') }}</th>
-                        <th class="w-28 px-2 py-2 text-right">{{ __('Amount') }}</th>
-                        <th class="w-36 px-2 py-2 text-left">{{ __('Tax') }}</th>
-                        <th class="w-28 px-2 py-2 text-right">{{ __('Total') }}</th>
-                        <th class="w-10 px-2 py-2"></th>
+                        <th class="relative w-72 px-2 py-2 text-left" data-col="account" data-col-min="120" wire:ignore.self>{{ __('Category account') }}<x-col-resize-handle /></th>
+                        <th class="px-2 py-2 text-left" data-col-flex>{{ __('Description') }}</th>
+                        <th class="relative w-28 px-2 py-2 text-right" data-col="amount" data-col-min="88" wire:ignore.self><x-col-resize-handle edge="start" />{{ __('Amount') }}</th>
+                        <th class="relative w-36 px-2 py-2 text-left" data-col="tax" data-col-min="128" wire:ignore.self><x-col-resize-handle edge="start" />{{ __('Tax') }}</th>
+                        <th class="relative w-28 px-2 py-2 text-right" data-col="total" data-col-min="88" wire:ignore.self><x-col-resize-handle edge="start" />{{ __('Total') }}</th>
+                        <th class="w-15 px-2 py-2"></th>
                     </tr>
                 </thead>
                 <tbody class="lg:divide-y lg:divide-border">

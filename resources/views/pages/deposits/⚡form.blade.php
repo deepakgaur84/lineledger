@@ -788,19 +788,19 @@ new #[Title('Make deposit')] class extends Component
 
             @if (! empty($otherLines))
                 <div class="overflow-x-auto rounded-lg border border-border">
-                    <table class="w-full text-sm">
+                    <table class="w-full text-sm" x-resizable-columns="'deposit-other-lines'" wire:ignore.self>
                         <thead class="bg-muted">
                             <tr>
-                                <th class="px-3 py-2 text-left w-52">{{ __('Account') }}</th>
-                                <th class="px-3 py-2 text-left">{{ __('Description') }}</th>
+                                <th class="relative px-3 py-2 text-left w-72" data-col="account" data-col-min="120" wire:ignore.self>{{ __('Account') }}<x-col-resize-handle /></th>
+                                <th class="px-3 py-2 text-left" data-col-flex>{{ __('Description') }}</th>
                                 @if ($this->tracksClasses)
-                                    <th class="px-3 py-2 text-left w-40">{{ __('Class') }}</th>
+                                    <th class="relative px-3 py-2 text-left w-40" data-col="class" data-col-min="80" wire:ignore.self><x-col-resize-handle edge="start" />{{ __('Class') }}</th>
                                 @endif
                                 @if ($this->tracksLocations)
-                                    <th class="px-3 py-2 text-left w-40">{{ __('Location') }}</th>
+                                    <th class="relative px-3 py-2 text-left w-40" data-col="location" data-col-min="80" wire:ignore.self><x-col-resize-handle edge="start" />{{ __('Location') }}</th>
                                 @endif
-                                <th class="px-3 py-2 text-right w-28">{{ __('Amount') }}</th>
-                                <th class="px-3 py-2 w-10"></th>
+                                <th class="relative px-3 py-2 text-right w-28" data-col="amount" data-col-min="88" wire:ignore.self><x-col-resize-handle edge="start" />{{ __('Amount') }}</th>
+                                <th class="px-3 py-2 w-14"></th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-border">
