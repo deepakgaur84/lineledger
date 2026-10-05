@@ -168,7 +168,7 @@ new #[Title('Documentation — Dashboard')] class extends Component {}; ?>
         <p><strong>{{ __('To open another organization:') }}</strong></p>
         <ol class="list-decimal ps-6 space-y-1">
             <li>{{ __('Select the switcher at the top of the sidebar. The menu, headed Organizations, lists every organization you belong to; the one you are in carries a check mark.') }}</li>
-            <li>{{ __('Select any other organization — each carries a small open-in-new-tab arrow. It opens in a new browser tab on the same page for that organization (Reports stays Reports), and the tab you clicked in stays exactly where it was.') }}</li>
+            <li>{{ __('Select any other organization — each carries a small open-in-new-tab arrow. It opens in a new browser tab on that organization’s Dashboard, and the tab you clicked in stays exactly where it was.') }}</li>
             <li>{{ __('Select New organization at the bottom of the menu to start the setup wizard for another set of books — see') }} <a class="underline" href="{{ route('docs.creating-a-company') }}" wire:navigate>{{ __('Create an organization') }}</a>.</li>
         </ol>
 
