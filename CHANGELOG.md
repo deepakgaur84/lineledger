@@ -111,6 +111,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   journal entries). The repeat now changes nothing and opens the posted entry.
   New expenses and transfers get the same guard, and Save draft never rewrites
   a posted entry.
+- **Two people posting at once no longer breaks a new journal entry.** The New
+  journal entry page fills in the next JE number when it opens, but cheques,
+  bills, invoices and every other posting share that sequence. If anyone posted
+  before you clicked Post, the save failed with a server error. A suggested
+  number is now only a preview: the entry takes the next free number as it
+  saves. A number you type yourself is kept, and if it is already used you get a
+  message under Entry # instead. The number sequence also never hands out a
+  number that is already taken.
 - **A saved draft tax return shows its figures.** Its page read 0.00 and "No
   snapshot lines yet" until the return was filed, and the list showed 0.00 too. A
   draft's page now works its figures out live from the ledger. Each save also

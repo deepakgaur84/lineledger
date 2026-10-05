@@ -181,7 +181,7 @@ new #[Title('Documentation — Accounting')] class extends Component {}; ?>
         <ol class="list-decimal ps-6 space-y-1">
             <li>{{ __('Open Accounting → Journal, then select New entry.') }}</li>
             <li>{{ __('If you have saved templates, a Template selector sits at the top — pick one to fill the lines (see Journal entry templates below).') }}</li>
-            <li>{{ __('The Entry # and Date fill in automatically. You can type your own number, but it must be unique within the organization. A click anywhere in the Date field opens the calendar.') }}</li>
+            <li>{{ __('The Entry # and Date fill in automatically. The suggested Entry # is a preview: every posting in the organization shares the same JE numbers, so if someone posts while you are working, your entry takes the next free number when you save it. You can type your own number instead, but it must be unique within the organization. A click anywhere in the Date field opens the calendar.') }}</li>
             <li>{{ __('Type a Memo describing why you are making the entry.') }}</li>
             <li>{{ __('On the first line, choose an Account. If it is your Accounts Receivable or Accounts Payable account, a “Search or add a customer…” (or vendor) box appears beneath it — pick the name the amount belongs to, or type a new name and add them on the spot.') }}</li>
             <li>{{ __('The Tax code fills in from the account’s default. It is a reporting tag only — it never calculates or changes an amount — so clear it or change it freely.') }}</li>
