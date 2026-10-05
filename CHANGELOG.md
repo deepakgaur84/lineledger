@@ -50,6 +50,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Customer statements get their own page.** Statement… (on the Customers list,
+  a customer's Open balance, or the AR statement report) now opens a Customer
+  statement page that previews the statement like any report, then exports it to
+  PDF or emails it exactly as shown; the old dialog is gone. Pick a Start and End
+  date: an Open invoices statement lists the invoices dated in that range and
+  carries anything older still owing as one **Balance forward** row, so Total Due
+  still matches AR Aging (the default period, All, prints every open invoice as
+  before). A **Columns** menu adds the invoice's **P.O. #**, Terms, Amount Paid
+  and Days Past Due, or hides Memo, Due Date and Original Amount; Account activity
+  can add P.O. # or hide Type and Memo. **Save as default columns** makes a choice
+  the company default (Settings access required).
 - **The browser tab title follows `APP_NAME`** instead of a hardcoded "Line
   Ledger". Deployments that want the spaced form should set
   `APP_NAME="Line Ledger"`.
