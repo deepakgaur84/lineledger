@@ -8,6 +8,7 @@ use App\Models\Company;
 use App\Models\Contact;
 use App\Models\TaxCode;
 use App\Services\BulkImport\GroupedImporterDefinition;
+use App\Services\BulkImport\ImportDates;
 use App\Services\Posting\JournalPoster;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Validator;
@@ -50,7 +51,7 @@ class JournalEntryImporter implements GroupedImporterDefinition
         return [
             'import_ref' => 'Required. Groups rows into one journal entry — every line of the same entry repeats the same import_ref. Only used to group rows in this file; never stored, and unrelated to entry_no.',
             'entry_no' => 'Optional. Left blank, the entry is numbered automatically the same way one entered by hand would be. Given, must be unique — an entry_no already in use is rejected.',
-            'entry_date' => 'Required. Any unambiguous date works, e.g. 15-Jan-2026 or 2026-01-15. Same on every line of an entry — only the first line\'s value is used.',
+            'entry_date' => ImportDates::required().' Same on every line of an entry — only the first line\'s value is used.',
             'memo' => 'Optional. The entry\'s own memo. Same on every line of an entry — only the first line\'s value is used.',
             'account_code' => 'Required per row. The code of an existing account, e.g. 6100 — not the account name.',
             'debit' => 'Required per row unless credit is given. Plain decimal, e.g. 500.00 — not cents. Exactly one of debit or credit must be given per row, never both, and never neither.',

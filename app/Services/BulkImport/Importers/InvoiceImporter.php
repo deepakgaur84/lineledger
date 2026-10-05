@@ -11,6 +11,7 @@ use App\Models\Item;
 use App\Models\PaymentTerm;
 use App\Models\TaxCode;
 use App\Services\BulkImport\GroupedImporterDefinition;
+use App\Services\BulkImport\ImportDates;
 use App\Services\Posting\InvoicePoster;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -48,7 +49,7 @@ class InvoiceImporter implements GroupedImporterDefinition
             'invoice_no' => 'Optional. Left blank, the invoice is numbered automatically the same way one entered by hand would be. Given, must be unique — an invoice_no already in use is rejected.',
             'customer_display_name' => "Required. Must match an existing customer's display name exactly (case-insensitive) — add the customer first via the Customers importer if they don't exist yet. If more than one customer shares this name, the row is rejected rather than guessing which one.",
             'customer_po' => "Optional. The customer's own purchase order number.",
-            'invoice_date' => 'Required. Any unambiguous date works, e.g. 01-Apr-2026 or 2026-04-01.',
+            'invoice_date' => ImportDates::required(),
             'due_date' => 'Optional. Same date formats as invoice_date. Left blank, derived from payment_terms if given, else defaults to invoice_date. Must not be before invoice_date.',
             'payment_terms' => "Optional. Must match an existing payment term's name exactly (e.g. 'Net 30'). Ignored if due_date is given directly.",
             'memo' => 'Optional. Same on every line of an invoice — only the first line\'s value is used.',

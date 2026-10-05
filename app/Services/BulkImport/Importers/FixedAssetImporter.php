@@ -10,6 +10,8 @@ use App\Models\Asset;
 use App\Models\AssetCategory;
 use App\Models\Company;
 use App\Services\Assets\DepreciationSchedule;
+use App\Services\BulkImport\HasImportNotes;
+use App\Services\BulkImport\ImportDates;
 use App\Services\BulkImport\ImporterDefinition;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Validator;
@@ -39,7 +41,7 @@ use Illuminate\Validation\Rule;
  * already carries that depreciation, lock the period first or leave
  * auto_depreciate off.
  */
-class FixedAssetImporter implements ImporterDefinition
+class FixedAssetImporter implements HasImportNotes, ImporterDefinition
 {
     public function key(): string
     {
@@ -60,8 +62,8 @@ class FixedAssetImporter implements ImporterDefinition
             'asset_account_code' => 'Required unless the category supplies one. The code of an existing fixed-asset account, e.g. 1500 — not the account name.',
             'accum_depreciation_account_code' => 'Required for auto_depreciate, unless the category supplies one. The code of an existing account.',
             'depreciation_expense_account_code' => 'Required for auto_depreciate, unless the category supplies one. The code of an existing account.',
-            'acquired_date' => 'Required. Any unambiguous date works, e.g. 15-Jan-2026 or 2026-01-15.',
-            'in_service_date' => 'Optional. Depreciation starts in this month. Left blank with auto_depreciate on, it defaults to acquired_date.',
+            'acquired_date' => ImportDates::required(),
+            'in_service_date' => 'Optional. Same date format as acquired_date. Depreciation starts in this month. Left blank with auto_depreciate on, it defaults to acquired_date.',
             'cost' => 'Required. Plain decimal, e.g. 4500.00 — not cents. Must be greater than 0.',
             'salvage_value' => 'Optional. Plain decimal; defaults to 0 and cannot exceed the cost.',
             'depreciation_method' => 'Optional. straight_line, declining_balance (also WDV or reducing balance) or immediate (also 100%). Left blank, the category\'s method is used, else straight_line.',
@@ -72,6 +74,22 @@ class FixedAssetImporter implements ImporterDefinition
             'serial_number' => 'Optional.',
             'location' => 'Optional.',
             'description' => 'Optional.',
+        ];
+    }
+
+    /**
+     * Each sentence restates a rule resolve() enforces — read from it, not from
+     * memory — so the screen can never promise something the validator refuses.
+     * The per-column help above is accurate too, but it is one line among
+     * eighteen; these are the four things that actually get rows rejected.
+     */
+    public function importNotes(): array
+    {
+        return [
+            __('Category: category_name must match an existing, active asset category (capital letters don\'t matter). Create it first under Settings → Lists → Asset categories — an account name such as "Office Equipment" only works if a category with that name exists.'),
+            __('Accounts: give account codes (e.g. 1500), not names. A blank code falls back to the category\'s default. The asset account is always needed, from the row or the category; the two depreciation accounts only when auto_depreciate is yes.'),
+            __('Method: straight_line spreads the cost over useful_life_months — give a depreciation_rate instead and the life is worked out from it. declining_balance uses a rate; blank takes the category\'s, else 20. 100% (immediate) takes neither: leave the rate blank (a rate on that row is rejected); any useful life is ignored.'),
+            __('auto_depreciate = yes drafts monthly depreciation entries, so it needs both depreciation accounts as above. The in-service date defaults to the acquired date if left blank.'),
         ];
     }
 

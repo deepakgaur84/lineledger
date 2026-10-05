@@ -26,6 +26,17 @@ Two parallel contracts, depending on whether an entity is one row or many:
   methods still fatally failed to load, because PHP requires every method
   an interface (or one it extends) declares, whether or not anything ever
   actually calls it for that class.
+- **`app/Services/BulkImport/HasImportNotes.php`** — *optional*, for an
+  importer whose rules are easy to get wrong from the column list alone:
+  `importNotes()` returns a few plain sentences the screen shows above the
+  columns. A separate interface, not a method on `ImporterDefinition`, so adding
+  it never touches an importer that doesn't need it — the page just checks
+  `instanceof`. Write each note from what the importer's validator actually
+  enforces, so a note can never promise what the validator then refuses (the
+  Fixed Assets importer is the model).
+- **`app/Services/BulkImport/ImportDates.php`** and
+  **`SlashDateWarnings.php`** — how dates are written and what is said about
+  them; see "Dates" below.
 - **`app/Services/BulkImport/Importers/`** — one class per entity type.
   `AbstractContactImporter` holds the shared Vendor/Customer logic;
   `VendorImporter`/`CustomerImporter` are thin subclasses differing only in
@@ -53,6 +64,52 @@ way one entered by hand would be. The two were originally the same
 column; split apart after real user feedback that requiring a real
 `bill_no` up front conflicted with wanting the app's own auto-numbering
 for historical bills that didn't need their original number preserved.
+
+### Dates
+
+Every importer validates a date with Laravel's `date` rule and parses it with
+`Carbon::parse`, and both use PHP's parser — which reads a **slash** date as
+*month/day/year*. Checked against a real PHP 8.3 rather than assumed:
+`27/09/2026` is rejected (there is no month 27), while `05/09/2026` is quietly
+read as **9 May** and `09/04/2026` as **4 September**. Numeric dates with dashes
+or dots (`09-04-2026`, `09.04.2026`) are day-first, and a month written as a word
+(`09-Apr-26`) cannot be read two ways, which is why that is the documented
+example. Two-digit years pivot at 70 (`01-Jan-70` is 1970, `31-Dec-69` is 2069).
+
+This bites in practice because Excel re-saves a CSV's dates in the machine's
+locale — a d/m/Y machine turns an ISO date into `27/09/2026` — and a person who
+writes dd/mm/yyyy by habit sees nothing wrong. So three things, all driven from
+`ImportDates` so they cannot drift apart:
+
+- **Every required date column's help** is `ImportDates::required()` — "Write it
+  like 09-Apr-26 (or 2026-04-09) — not with slashes, which are read as
+  month/day/year." A test fails if any importer's required date column omits the
+  example, and if the old "any unambiguous date works" wording ever returns (it
+  was only ever true for dates that cannot be read two ways, which a slash date
+  can). Another pins that the example really does parse, to the day it claims.
+- **A "Before you upload" panel** on the screen — the date guidance (including
+  the Excel `dd-mmm-yy` tip) for any importer with date columns, and that
+  importer's `HasImportNotes` notes. Date columns are recognised by name
+  (anything containing `date`), so a new importer is covered with no
+  registration.
+- **A warning in the preview** (`SlashDateWarnings`), because the dangerous case
+  is a date that is valid *both* ways: it passes validation and imports as a
+  different day, and nothing else on screen shows it. For each slash date in a
+  date column it says what PHP will read, what was probably meant, and the exact
+  text to write instead (`05/09/2026` → "is read as 9 May 2026; if you meant 5
+  September 2026, write 05-Sep-26"). It stays silent when both readings are the
+  same day (`05/05/2026`) or when only the month-first reading exists (`09/27/2026`,
+  which PHP already reads as written). The suggestion keeps four digits for years
+  outside 1970–2069, where a two-digit year would be a different year — checked
+  for every day-first date from 1950 to 2100. It is advisory and never blocks or
+  rewrites anything: like the bank statement import's `DateFormatGuesser`, it
+  reports the ambiguity for the person to confirm rather than guessing.
+
+Deliberately *not* done: auto-detecting d/m/Y per file and importing it as such.
+`DateFormatGuesser` could be reused for that, but a column whose every day is ≤ 12
+is genuinely undecidable from the values alone, so it would still need a
+confirmation step — a design choice for later, not part of explaining the
+current behaviour.
 
 ## Currently shipped
 

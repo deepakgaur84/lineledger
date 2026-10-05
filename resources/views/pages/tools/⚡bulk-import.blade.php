@@ -3,6 +3,9 @@
 use App\Models\Company;
 use App\Services\BulkImport\BulkImportRegistry;
 use App\Services\BulkImport\GroupedImporterDefinition;
+use App\Services\BulkImport\HasImportNotes;
+use App\Services\BulkImport\ImportDates;
+use App\Services\BulkImport\SlashDateWarnings;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 use Livewire\WithFileUploads;
@@ -34,6 +37,14 @@ new #[Title('Bulk Import')] class extends Component {
 
     public ?int $committedCount = null;
 
+    /**
+     * Slash dates in the upload that PHP will read differently from how they
+     * were probably written — see SlashDateWarnings. Advisory only.
+     *
+     * @var list<array{row: int, column: string, value: string, reads_as: ?string, meant: string, suggest: string}>
+     */
+    public array $dateWarnings = [];
+
     public function mount(Company $company): void
     {
         $this->company = $company;
@@ -50,6 +61,23 @@ new #[Title('Bulk Import')] class extends Component {
         return BulkImportRegistry::find($this->entityType) ?? BulkImportRegistry::all()[0];
     }
 
+    /**
+     * Importer-specific rules worth reading before uploading, if it has any.
+     *
+     * @return array<int, string>
+     */
+    public function importNotes(): array
+    {
+        $importer = $this->currentImporter();
+
+        return $importer instanceof HasImportNotes ? $importer->importNotes() : [];
+    }
+
+    public function hasDateColumns(): bool
+    {
+        return ImportDates::columnsIn(array_keys($this->currentImporter()->csvColumns())) !== [];
+    }
+
     public function updatedEntityType(): void
     {
         $this->resetImportState();
@@ -63,6 +91,7 @@ new #[Title('Bulk Import')] class extends Component {
         $this->invalidCount = 0;
         $this->commitFailures = [];
         $this->committedCount = null;
+        $this->dateWarnings = [];
     }
 
     public function downloadTemplate(): \Symfony\Component\HttpFoundation\StreamedResponse
@@ -94,6 +123,11 @@ new #[Title('Bulk Import')] class extends Component {
 
         $importer = $this->currentImporter();
         $rows = $this->parseCsv($this->upload->getRealPath(), array_keys($importer->csvColumns()));
+
+        // Before the flat/grouped split, so every importer gets it. Slash dates that are
+        // valid both ways pass validation and import as a different day, which nothing
+        // else on this screen would reveal.
+        $this->dateWarnings = SlashDateWarnings::find($rows, ImportDates::columnsIn(array_keys($importer->csvColumns())));
 
         if ($importer instanceof GroupedImporterDefinition) {
             $this->validateGroupedUpload($importer, $rows);
@@ -347,6 +381,36 @@ new #[Title('Bulk Import')] class extends Component {
             @endforeach
         </flux:select>
 
+        @php
+            $importNotes = $this->importNotes();
+        @endphp
+
+        @if ($this->hasDateColumns() || $importNotes !== [])
+            <flux:callout icon="information-circle" variant="secondary" data-test="import-notes">
+                <flux:callout.heading>{{ __('Before you upload') }}</flux:callout.heading>
+                <flux:callout.text>
+                    @if ($this->hasDateColumns())
+                        <div class="space-y-1" data-test="import-dates-note">
+                            <p>
+                                <strong>{{ __('Dates') }}</strong> —
+                                {{ __('write them like :example (day, month as three letters, year) or :iso.', ['example' => ImportDates::EXAMPLE, 'iso' => ImportDates::EXAMPLE_ISO]) }}
+                                {{ __('Don\'t use slashes: 09/04/2026 is read as month/day/year, so 27/09/2026 is rejected and 05/09/2026 quietly becomes 9 May.') }}
+                            </p>
+                            <p>{{ __('Excel often rewrites dates into slashes when it saves a CSV — format the date columns as dd-mmm-yy first (Format Cells → Custom). Two-digit years 00–69 mean 2000–2069; 70–99 mean 1970–1999.') }}</p>
+                        </div>
+                    @endif
+
+                    @if ($importNotes !== [])
+                        <ul class="mt-2 list-inside list-disc space-y-1" data-test="import-notes-list">
+                            @foreach ($importNotes as $note)
+                                <li>{{ $note }}</li>
+                            @endforeach
+                        </ul>
+                    @endif
+                </flux:callout.text>
+            </flux:callout>
+        @endif
+
         <div class="rounded-lg border border-border bg-muted/30 p-4 text-sm">
             <p class="mb-2 font-medium">{{ __('Expected columns') }}</p>
             <ul class="space-y-1">
@@ -369,7 +433,17 @@ new #[Title('Bulk Import')] class extends Component {
                 {{ __('Uploading...') }}
             </p>
 
-            <flux:button wire:click="validateUpload" variant="primary" :disabled="! $upload" wire:loading.attr="disabled" wire:target="upload">
+            {{--
+                Deliberately no "attr" loading modifier on this button. The :disabled binding
+                below already keeps it disabled for the whole of the first upload ($upload is only
+                set once the upload has finished), so that modifier added nothing — and in
+                Livewire 4.4 it actively breaks the button: it captures the attribute's value when
+                loading starts (here, already disabled) and RE-APPLIES it when the upload
+                finishes, which happens after the server's morph has just removed it. The button
+                then stays greyed out with a file selected and no error. (Livewire 4.3 simply
+                removed the attribute afterwards, which is why this used to work.)
+            --}}
+            <flux:button wire:click="validateUpload" variant="primary" :disabled="! $upload">
                 {{ __('Validate') }}
             </flux:button>
         </flux:card>
@@ -377,6 +451,29 @@ new #[Title('Bulk Import')] class extends Component {
 
     @if ($previewRows !== null)
         <flux:card class="space-y-4">
+            @if ($dateWarnings !== [])
+                <flux:callout variant="warning" icon="exclamation-triangle" data-test="import-date-warnings">
+                    <flux:callout.heading>{{ __('Check these dates') }}</flux:callout.heading>
+                    <flux:callout.text>
+                        {{ __('Slash dates are read as month/day/year, which may not be what you meant. Nothing has been imported yet.') }}
+                        <ul class="mt-2 list-inside list-disc space-y-1">
+                            @foreach (array_slice($dateWarnings, 0, 10) as $warning)
+                                <li>
+                                    @if ($warning['reads_as'] !== null)
+                                        {{ __('Row :row, :column: ":value" is read as :reads_as. If you meant :meant, write :suggest.', ['row' => $warning['row'], 'column' => $warning['column'], 'value' => $warning['value'], 'reads_as' => $warning['reads_as'], 'meant' => $warning['meant'], 'suggest' => $warning['suggest']]) }}
+                                    @else
+                                        {{ __('Row :row, :column: ":value" can\'t be read as a date. If you meant :meant, write :suggest.', ['row' => $warning['row'], 'column' => $warning['column'], 'value' => $warning['value'], 'meant' => $warning['meant'], 'suggest' => $warning['suggest']]) }}
+                                    @endif
+                                </li>
+                            @endforeach
+                        </ul>
+                        @if (count($dateWarnings) > 10)
+                            <p class="mt-2">{{ __('…and :count more.', ['count' => count($dateWarnings) - 10]) }}</p>
+                        @endif
+                    </flux:callout.text>
+                </flux:callout>
+            @endif
+
             <div class="flex items-center gap-4">
                 <flux:badge color="green">{{ __(':count valid', ['count' => $validCount]) }}</flux:badge>
                 @if ($invalidCount > 0)
