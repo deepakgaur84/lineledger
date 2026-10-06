@@ -1,18 +1,35 @@
 name: reapply-fork-patches
 
-# Runs automatically on every push to main — including a "Sync fork" merge,
-# which is just a fast-forward push as far as GitHub Actions can tell (there's
-# no separate "sync" event to hook). Also keeps workflow_dispatch so it can
-# still be run by hand if ever needed.
+# Keeps main = upstream + our patches, and keeps it that way without anyone clicking
+# "Sync fork". Every run, in this order:
 #
-# Guard: this job's own commit is itself a push to main, which would
-# otherwise trigger this same workflow again, forever. Skipping whenever the
-# triggering actor is github-actions[bot] breaks that loop — our own commits
-# never re-trigger a second run.
+#   1. Checks whether a MERGE is about to happen: upstream has commits we lack, or the
+#      triggering push also changed a file we patch (which step 4 has to 3-way merge).
+#   2. If one is — and only then — backs main up to a Backup-DD.MM.YYYY branch BEFORE it
+#      merges. A run that merges nothing (a plain patch upload, or the daily check finding
+#      nothing new) makes no backup. Nothing is ever merged without one.
+#   3. Syncs with upstream. If we're behind, upstream is merged in HERE rather than by the
+#      "Sync fork" button, because that button refuses outright ("This branch has conflicts
+#      that must be resolved") the moment upstream edits a line of a file we also patch —
+#      and it can't be told to resolve anything. This step can: see its comments for the
+#      per-file policy.
+#   4. Copies .fork-patches over their real paths (3-way merging any file the triggering
+#      push also changed), commits, pushes, and kicks off the docker build and the tests.
+#
+# Triggers: every push to main (a human upload, or a "Sync fork" that did work); a daily
+# check so upstream fixes arrive on their own; and a manual run. The job's own commits are
+# pushes to main too, which would trigger this workflow again, forever — skipping whenever
+# the triggering actor is github-actions[bot] breaks that loop.
 on:
   push:
     branches: [main]
+  schedule:
+    - cron: '17 3 * * *'   # 03:17 UTC daily (mid-afternoon in NZ)
   workflow_dispatch: {}
+
+env:
+  UPSTREAM_REPO: lineledger/lineledger
+  UPSTREAM_BRANCH: main
 
 # Two rapid pushes to main previously triggered two overlapping runs of this
 # workflow, which raced each other's checkout/copy/commit/push sequence and
@@ -38,6 +55,16 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+
+      - name: Prepare
+        # Git identity for the commits below, and the scratch files the later steps share —
+        # created here, once, so no step can wipe notes an earlier one made.
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          : > /tmp/needs-manual-review.txt
+          : > /tmp/sync-actions.tsv
 
       - name: Detect whether this push also touched a patched file
         id: collisions
@@ -96,31 +123,320 @@ jobs:
             echo "No overlap between this push and our patched files."
           fi
 
-      - name: Create a backup branch before attempting any merge
-        # Only when there's actually a collision to merge through — most
-        # runs are a plain, risk-free copy and don't need one. Named to
-        # match the *backup*/*Backup* branch-protection ruleset (blocks
-        # deletion and force-push) so this is a genuinely safe fallback:
-        # if an auto-merge below produces something broken, this branch is
-        # an exact, protected snapshot of main right before this run
-        # touched anything, to reset back to.
-        if: steps.collisions.outputs.count != '0'
+      - name: Check whether upstream has anything we haven't merged
+        id: upstream
+        # Read-only. Split out of the merge so the backup below can be made BEFORE the merge
+        # and only when there is one: it fetches upstream and records whether we are behind.
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          upstream_url="${UPSTREAM_URL:-https://github.com/${UPSTREAM_REPO}.git}"
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream "$upstream_url"
+          git fetch --no-tags upstream "$UPSTREAM_BRANCH"
 
+          if git merge-base --is-ancestor "upstream/$UPSTREAM_BRANCH" HEAD; then
+            echo "Already contains everything in $UPSTREAM_REPO@$UPSTREAM_BRANCH — nothing to sync."
+            echo "behind=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Upstream has $(git rev-list --count "HEAD..upstream/$UPSTREAM_BRANCH") commit(s) we don't."
+            echo "behind=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Back up main before merging
+        id: backup
+        # Only when a merge is about to happen: an upstream sync (above), or a collision, where
+        # the triggering push also changed a patched file and the copy step 3-way merges it. A
+        # run that merges nothing — a plain patch upload, a daily check with nothing new — makes
+        # no backup. If this step fails, every step after it is skipped, so nothing is ever
+        # merged without one. Named to match the *backup*/*Backup* branch-protection ruleset
+        # (blocks deletion and force-push), so it is a genuinely safe snapshot of main exactly as
+        # it was before anything below changes it.
+        if: steps.collisions.outputs.count != '0' || steps.upstream.outputs.behind == 'true'
+        run: |
+          set -euo pipefail
           branch="Backup-$(date +%d.%m.%Y)"
           if git ls-remote --exit-code --heads origin "$branch" > /dev/null 2>&1; then
-            # Already one for today (an earlier collision run) — suffix
-            # with this run's id so today's second rollback point doesn't
-            # overwrite the first one.
+            # Already one for today — suffix with this run's id so a second rollback
+            # point doesn't overwrite the first.
             branch="${branch}-${{ github.run_id }}"
           fi
 
           git branch "$branch" HEAD
           git push origin "$branch"
-          echo "Backup branch created: $branch"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "Backup branch created: $branch ($(git rev-parse --short HEAD))"
+
+      - name: Sync with upstream, merging through any conflicts
+        id: sync
+        if: steps.upstream.outputs.behind == 'true'
+        # See the header for why this exists. Per-file policy when upstream and we both
+        # changed a file (everything outside a conflicting hunk always merges normally):
+        #   - a file we patch: a true 3-way merge; a conflicting hunk that is only comments
+        #     and where one side merely ADDED lines keeps both (nothing lost, not flagged);
+        #     any other conflicting hunk keeps OUR side of that hunk only, and is flagged;
+        #   - a file we do not patch: upstream's version, flagged;
+        #   - a workflow file: ours, flagged, with the upstream diff in the run summary.
+        # A merged result that fails `php -l` falls back to our whole copy, flagged.
+        env:
+          BACKUP_BRANCH: ${{ steps.backup.outputs.branch }}
+        run: |
+          set -euo pipefail
+
+          # Upstream was fetched by the check step above; we only get here when we are behind it.
+          up="upstream/$UPSTREAM_BRANCH"
+
+          base="$(git merge-base HEAD "$up")"
+          git log --format='%h %s' "HEAD..$up" > /tmp/upstream-commits.txt
+          echo "Upstream has $(wc -l < /tmp/upstream-commits.txt) commit(s) we don't:"
+          sed 's/^/  /' /tmp/upstream-commits.txt | head -40
+
+          record() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> /tmp/sync-actions.tsv; }
+          review() { printf '%s — %s\n' "$1" "$2" >> /tmp/needs-manual-review.txt; }
+
+          # Put a path back exactly as it is on OUR side of the merge.
+          restore_ours() {
+            if git cat-file -e "HEAD:$1" 2>/dev/null; then git checkout HEAD -- "$1"; else git rm -f -q -- "$1"; fi
+          }
+
+          cat > /tmp/resolve_conflicts.py <<'PYEOF'
+          #!/usr/bin/env python3
+          """Resolve the conflict hunks in the output of `git merge-file --diff3 --marker-size=15`.
+
+          usage: resolve_conflicts.py <merge-file-output> <repo-path> <out-dir>
+            stdout        the resolved file
+            <out>/how.txt a one-line, human-readable description of what was done
+            <out>/flag.txt '1' if any hunk needs a human look, else '0'
+
+          Policy, hunk by hunk (everything outside a conflicting hunk was already merged cleanly):
+            * A COMMENT-ONLY hunk where one side merely ADDED lines to the common base loses nothing if
+              we keep the other side's wording and re-add those lines. Resolved automatically.
+            * Anything else (code, or comments both sides rewrote): our side wins that hunk only, and it
+              is flagged. Keeping both sides of a code hunk can lint cleanly and still do the wrong
+              thing (a duplicated statement, a repeated array key), so it is never done automatically.
+          """
+          import difflib
+          import json
+          import os
+          import re
+          import sys
+
+          src, path, out_dir = sys.argv[1:4]
+          MARK = 15
+          OURS, BASE, SEP, THEIRS = ('<' * MARK + ' ', '|' * MARK + ' ', '=' * MARK, '>' * MARK + ' ')
+
+          # Only for languages where a leading marker means "this line is a comment".
+          COMMENT_EXTS = {'.php', '.js', '.ts', '.css', '.scss', '.yml', '.yaml', '.sh'}
+          COMMENT_LINE = re.compile(r'^\s*(\*/?|/\*+|//|#|\{\{--|--\}\})')
+
+
+          def commentish(lines):
+              return all(l.strip() == '' or COMMENT_LINE.match(l) for l in lines)
+
+
+          def pure_insertion(base, other):
+              """The lines `other` ADDED to `base` — or None if it also changed or removed any base line."""
+              added = []
+              for tag, _i1, _i2, j1, j2 in difflib.SequenceMatcher(None, base, other, autojunk=False).get_opcodes():
+                  if tag in ('replace', 'delete'):
+                      return None
+                  if tag == 'insert':
+                      added.extend(other[j1:j2])
+              return added
+
+
+          def keep_new(added, already):
+              # A bare ' *' / blank separator is kept even if the other side has one; real text only if new.
+              return [l for l in added if l.strip() in ('', '*') or l not in already]
+
+
+          def resolve(ours, base, theirs, ext):
+              if ext in COMMENT_EXTS and commentish(ours + base + theirs):
+                  ours_added = pure_insertion(base, ours)
+                  if ours_added is not None:
+                      return theirs + keep_new(ours_added, theirs), "comment hunk: kept upstream's wording and re-added our lines", False
+                  theirs_added = pure_insertion(base, theirs)
+                  if theirs_added is not None:
+                      return ours + keep_new(theirs_added, ours), "comment hunk: kept our wording and re-added upstream's lines", False
+              return ours, "overlapping edits that can't be combined safely: our side kept, upstream's side of that hunk dropped", True
+
+
+          ext = os.path.splitext(path)[1].lower()
+          lines = open(src, encoding='utf-8', errors='surrogateescape', newline='').read().split('\n')
+
+          out, results, i = [], [], 0
+          while i < len(lines):
+              if lines[i].startswith(OURS):
+                  ours, base, theirs, mode = [], [], [], 'ours'
+                  i += 1
+                  while i < len(lines) and not lines[i].startswith(THEIRS):
+                      ln = lines[i]
+                      if ln.startswith(BASE):
+                          mode = 'base'
+                      elif ln == SEP:
+                          mode = 'theirs'
+                      else:
+                          {'ours': ours, 'base': base, 'theirs': theirs}[mode].append(ln)
+                      i += 1
+                  resolved, how, review = resolve(ours, base, theirs, ext)
+                  out.extend(resolved)
+                  results.append((how, review))
+              else:
+                  out.append(lines[i])
+              i += 1
+
+          sys.stdout.write('\n'.join(out))
+          os.makedirs(out_dir, exist_ok=True)
+          summary = '; '.join(sorted({h for h, _ in results})) or 'no conflicting hunks'
+          n = len(results)
+          open(os.path.join(out_dir, 'how.txt'), 'w').write(f"{n} conflicting hunk{'s' if n != 1 else ''} — {summary}")
+          open(os.path.join(out_dir, 'flag.txt'), 'w').write('1' if any(r for _, r in results) else '0')
+          PYEOF
+
+          # ── 1. Start the merge. Conflicts here are expected and are resolved below, so a non-zero
+          #       exit is only fatal if git failed for some OTHER reason (no unmerged files to fix).
+          set +e
+          git merge --no-commit --no-ff "$up" > /tmp/merge.log 2>&1
+          merge_rc=$?
+          set -e
+          cat /tmp/merge.log
+          if [ "$merge_rc" -ne 0 ] && [ -z "$(git diff --name-only --diff-filter=U)" ]; then
+            echo "::error::git merge failed without any content conflict (see the log above) — nothing was merged."
+            git merge --abort 2>/dev/null || true
+            exit 1
+          fi
+
+          # ── 2. Files we patch that upstream also changed. These are redone with a TRUE 3-way merge:
+          #       ours = our .fork-patches copy (the source of truth for our intent), theirs = upstream's
+          #       new file, base = the file at the real merge-base with upstream. git's own merge only
+          #       sees "HEAD's copy", which can lag a patch that's waiting to be applied, and the copy
+          #       step below has no true base to work from; this has both. The result is written to the
+          #       real path AND to .fork-patches, so the copy step that follows is a no-op for these
+          #       files instead of overwriting upstream's changes with a stale copy.
+          resolve_patched() {
+            local path="$1" status="$2" ours=".fork-patches/$1" work final how flag rc
+            work="$(mktemp -d)"
+
+            if [ "$status" = "D" ]; then
+              mkdir -p "$(dirname "$path")"
+              cp "$ours" "$path"
+              git add -- "$path"
+              record "$path" "upstream deleted this file; our patched copy was kept" 1
+              review "$path" "upstream deleted this file but we patch it — our copy was kept; decide whether the patch is still wanted"
+              return 0
+            fi
+
+            cp "$ours" "$work/ours"
+            git show "$up:$path" > "$work/theirs"
+            if git cat-file -e "$base:$path" 2>/dev/null; then git show "$base:$path" > "$work/base"; else : > "$work/base"; fi
+
+            rc=0
+            git merge-file -p --diff3 --marker-size=15 -L ours -L base -L theirs \
+              "$work/ours" "$work/base" "$work/theirs" > "$work/merged" 2> "$work/err" || rc=$?
+
+            final="$work/merged"; how="merged cleanly — upstream's change and ours both kept"; flag=0
+            if [ "$rc" -ge 128 ]; then
+              final="$work/ours"; how="could not be 3-way merged ($(head -1 "$work/err")); our copy was kept"; flag=1
+            elif [ "$rc" -gt 0 ]; then
+              # Overlapping edits. Resolve hunk by hunk — everything outside a conflicting hunk is
+              # already merged, so upstream's other changes to this file are NOT lost.
+              if python3 /tmp/resolve_conflicts.py "$work/merged" "$path" "$work/rep" > "$work/resolved"; then
+                final="$work/resolved"; how="$(cat "$work/rep/how.txt")"; flag="$(cat "$work/rep/flag.txt")"
+              else
+                final="$work/ours"; how="the conflict resolver failed; our copy was kept"; flag=1
+              fi
+            fi
+
+            # Belt and braces: never commit a file that still has conflict markers or won't parse.
+            if grep -qE '^(<{15} |={15}$|>{15} |\|{15} )' "$final"; then
+              final="$work/ours"; how="conflict markers survived resolution; our copy was kept"; flag=1
+            fi
+            case "$path" in
+              *.php)
+                if command -v php > /dev/null 2>&1 && ! php -l "$final" > /dev/null 2>&1; then
+                  final="$work/ours"; how="the merged file failed php -l; our copy was kept"; flag=1
+                fi
+                ;;
+            esac
+
+            mkdir -p "$(dirname "$path")"
+            cp "$final" "$path"
+            cp "$final" "$ours"
+            git add -- "$path" "$ours"
+            record "$path" "$how" "$flag"
+            if [ "$flag" = "1" ]; then review "$path" "$how"; fi
+          }
+
+          git -c core.quotepath=false diff --name-status --no-renames "$base" "$up" > /tmp/upstream-changes.txt
+          while IFS=$'\t' read -r status path; do
+            [ -n "$path" ] && [ -f ".fork-patches/$path" ] || continue
+            resolve_patched "$path" "$status"
+          done < /tmp/upstream-changes.txt
+
+          # ── 3. Anything still conflicted is NOT one of our patches. By this fork's own rule every
+          #       intentional customization lives in .fork-patches, so upstream's version is the
+          #       right default — but it is flagged, since a direct edit may have been lost (the
+          #       backup branch still has it).
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            case "$path" in .github/workflows/*) continue ;; esac
+            if git cat-file -e "$up:$path" 2>/dev/null; then git checkout "$up" -- "$path"; else git rm -f -q -- "$path"; fi
+            record "$path" "conflicted and is not one of our patches — upstream's version was taken" 1
+            review "$path" "conflicted and is not tracked in .fork-patches, so upstream's version was taken — check no direct edit we meant to keep was lost (the backup branch has the old file)"
+          done < <(git -c core.quotepath=false diff --name-only --diff-filter=U)
+
+          # ── 4. Workflow files. The Actions token is not allowed to push changes to
+          #       .github/workflows/, so a merge that carried any would be rejected outright and the
+          #       whole sync would fail every night. Keep our copies, and say exactly what upstream
+          #       changed so it can be applied by hand.
+          : > /tmp/upstream-workflow-diff.txt
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            git diff "HEAD" "$up" -- "$path" >> /tmp/upstream-workflow-diff.txt || true
+            restore_ours "$path"
+            record "$path" "upstream changed this workflow; our copy was kept (the Actions token cannot push workflow changes)" 1
+            review "$path" "upstream changed this workflow file; the bot cannot push workflow changes — apply it by hand (the run summary shows the diff)"
+          done < <(git -c core.quotepath=false diff --name-only HEAD -- .github/workflows)
+
+          if [ -n "$(git diff --name-only --diff-filter=U)" ]; then
+            echo "::error::Some files are still unresolved after the sync step:"
+            git diff --name-only --diff-filter=U
+            git merge --abort 2>/dev/null || true
+            exit 1
+          fi
+
+          # ── 5. Commit the merge. It is pushed by the commit step below, together with the
+          #       patch reapply, so the whole run lands atomically or not at all.
+          body="$(sed 's/^/Upstream: /' /tmp/upstream-commits.txt)"
+          if [ -s /tmp/sync-actions.tsv ]; then
+            body="$body"$'\n\n'"Resolutions:"$'\n'"$(awk -F'\t' '{printf "- %s: %s\n", $1, $2}' /tmp/sync-actions.tsv)"
+          fi
+          git commit -q -m "Merge $UPSTREAM_REPO@$UPSTREAM_BRANCH into main (automatic sync)" -m "$body"
+          echo "merged=true" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Upstream sync"
+            echo
+            echo "Merged **$(wc -l < /tmp/upstream-commits.txt)** upstream commit(s) from \`$UPSTREAM_REPO@$UPSTREAM_BRANCH\`. A backup of main from before the merge: \`$BACKUP_BRANCH\`."
+            echo
+            sed 's/^/- /' /tmp/upstream-commits.txt
+            if [ -s /tmp/sync-actions.tsv ]; then
+              echo
+              echo "### Files that needed a decision"
+              echo
+              echo "| File | What happened | Needs a look |"
+              echo "|---|---|---|"
+              awk -F'\t' '{printf "| `%s` | %s | %s |\n", $1, $2, ($3 == "1" ? "yes" : "no") }' /tmp/sync-actions.tsv
+            fi
+            if [ -s /tmp/upstream-workflow-diff.txt ]; then
+              echo
+              echo "### Upstream workflow changes to apply by hand"
+              echo
+              echo '```diff'
+              cat /tmp/upstream-workflow-diff.txt
+              echo '```'
+            fi
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+
 
       - name: Copy patch files over their real paths, merging where this push also changed one
         run: |
@@ -129,8 +445,6 @@ jobs:
             echo "No .fork-patches directory found — nothing to reapply."
             exit 0
           fi
-
-          : > /tmp/needs-manual-review.txt
 
           find .fork-patches -type f | while read -r src; do
             dest="${src#.fork-patches/}"
@@ -200,54 +514,73 @@ jobs:
 
       - name: Commit and push if anything changed
         id: commit_and_push
-        # Retries on a rejected push: this workflow's own concurrency guard
-        # only serializes overlapping runs of ITSELF — it can't stop a
-        # direct human commit (or anything else) landing on main in the
-        # narrow window between this job's checkout and its own push. That
-        # produces a normal, expected "fetch first" rejection, not a real
-        # conflict — our change and theirs are almost always to different
-        # files. Rebase onto whatever's new and try again, a few times,
-        # before actually giving up.
+        # Retries on a rejected push: this workflow's own concurrency guard only serializes
+        # overlapping runs of ITSELF — it can't stop a direct human commit landing on main
+        # in the narrow window between this job's checkout and its own push. That is a
+        # normal, expected "fetch first" rejection, not a real conflict. Rebase onto
+        # whatever's new and try again, a few times, before giving up. --rebase-merges
+        # matters now: a plain rebase would flatten the upstream merge commit this run may
+        # have made into re-applied copies of upstream's commits.
+        env:
+          SYNC_MERGED: ${{ steps.sync.outputs.merged }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # `git diff --quiet` (no args) only compares already-tracked
-          # files — it is blind to a brand-new file the copy step just
-          # placed at a path that's never been committed before. Staging
-          # everything first and diffing the INDEX against HEAD catches
-          # both modifications and additions. This was a real, confirmed
-          # bug: every genuinely new file introduced via .fork-patches
-          # silently never got committed here, even though the copy step
-          # above placed it correctly — only updates to already-existing
-          # files ever worked.
+          # `git diff --quiet` (no args) only compares already-tracked files — it is blind
+          # to a brand-new file the copy step just placed at a path never committed before.
+          # Staging everything first and diffing the INDEX against HEAD catches both
+          # modifications and additions. (A real, confirmed bug: every genuinely new file
+          # introduced via .fork-patches silently never got committed here.)
           git add -A
-          if git diff --cached --quiet; then
+          committed=false
+          if ! git diff --cached --quiet; then
+            if [ -s /tmp/needs-manual-review.txt ]; then
+              commit_msg="Reapply fork patches after upstream sync (some files need manual review)"
+            else
+              commit_msg="Reapply fork patches after upstream sync"
+            fi
+            git commit -m "$commit_msg"
+            committed=true
+          fi
+
+          # The upstream merge is already a commit by now (made in the sync step), so
+          # "nothing staged" no longer means "nothing to push".
+          if [ "$committed" = "false" ] && [ "${SYNC_MERGED:-false}" != "true" ]; then
             echo "No changes — sync didn't touch any patched file, or patches already applied."
             echo "pushed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if [ -s /tmp/needs-manual-review.txt ]; then
-            commit_msg="Reapply fork patches after upstream sync (some files need manual review)"
-          else
-            commit_msg="Reapply fork patches after upstream sync"
-          fi
-          git commit -m "$commit_msg"
-
           for attempt in 1 2 3 4 5; do
-            if git push origin main; then
+            if push_out="$(git push origin main 2>&1)"; then
+              echo "$push_out"
               echo "pushed=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
+            echo "$push_out"
+
+            # Not a race — retrying can never fix this, so say what it is and stop. The Actions
+            # token is not allowed to push a change to .github/workflows/; the sync step keeps
+            # our copies of those files to avoid it, but if GitHub still objects the only fix is
+            # a personal access token with the `workflow` scope (or syncing by hand).
+            if printf '%s' "$push_out" | grep -qiE 'workflows?[` ]*(permission|scope)|refusing to allow .*workflow'; then
+              echo "::error::GitHub refused the push because it touches a workflow file, which the Actions token may not change. Nothing was pushed — main is unchanged (the backup branch is untouched too). Either apply upstream's workflow changes by hand and re-run, or add a personal access token with the workflow scope."
+              exit 1
+            fi
+
             echo "Push rejected (attempt ${attempt}/5) — something else pushed to main first. Rebasing and retrying..."
             git fetch origin main
-            git rebase origin/main
+            if ! git rebase --rebase-merges origin/main; then
+              git rebase --abort || true
+              echo "::error::The rebase onto the new main hit a genuine conflict. Nothing was pushed — main is unchanged. Re-run this workflow once main has settled."
+              exit 1
+            fi
             sleep 2
           done
 
-          echo "::error::Failed to push after 5 attempts — main is moving too fast for this job to keep up, or there's a genuine conflict this rebase couldn't resolve. Manual push needed."
+          echo "::error::Failed to push after 5 attempts — main is moving too fast for this job to keep up. Re-run this workflow."
           exit 1
 
       - name: Trigger the docker build for this commit
@@ -284,20 +617,20 @@ jobs:
             -d '{"ref":"main"}'
 
       - name: Fail loudly if any file needed manual review
-        # Runs after the commit/push/trigger above already went through —
-        # the app is already deployed and working either way (every
-        # conflicted file kept our own version as a safe fallback). This
-        # step's only job is to make the run show red so a failure
-        # notification fires; a plain ::warning:: annotation does not
-        # trigger GitHub's failure-notification email, only a genuinely
-        # failed run does.
+        # Runs after the commit/push/trigger above already went through — the app is
+        # deployed and working either way (a file that could not be merged cleanly kept
+        # one side, never a broken mix). This step's only job is to make the run show red
+        # so a failure notification fires; a plain ::warning:: annotation does not trigger
+        # GitHub's failure-notification email, only a genuinely failed run does.
+        env:
+          BACKUP_BRANCH: ${{ steps.backup.outputs.branch }}
         run: |
           set -euo pipefail
           if [ ! -s /tmp/needs-manual-review.txt ]; then
-            echo "Nothing needed manual review — any collisions this run found merged cleanly."
+            echo "Nothing needed manual review."
             exit 0
           fi
 
-          echo "::error::This push touched a file we've patched, and it couldn't be merged automatically — the change genuinely overlaps ours. Our version was kept (the app is fine), but a real upstream improvement may have been discarded. Diff upstream's current version of each file below against .fork-patches before assuming nothing was lost. A backup branch from right before this run was also created, matching the Backup-DD.MM.YYYY pattern, if anything here needs rolling back instead:"
+          echo "::error::These files need a human look. The run itself went through and the app is fine, but a decision was made for each file below that may have dropped something real — see the run summary for the detail. A backup of main from right before this run is the branch ${BACKUP_BRANCH}, if anything needs rolling back:"
           sed 's/^/::error::  - /' /tmp/needs-manual-review.txt
           exit 1
