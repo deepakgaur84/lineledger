@@ -883,6 +883,95 @@ recalled. Pest and the Livewire form were not run (no Composer dependencies in t
 was written in), and MySQL's strict-mode rejection comes from the production log, not a local
 reproduction.
 
+## 17. Upstream sync that merges through conflicts, with a backup on every run
+
+**The problem.** "Sync fork" refused: *"This branch has conflicts that must be resolved"*,
+two commits behind. The button cannot be told to resolve anything — it works only when git
+can merge with no human, and it stops dead the moment upstream edits a line of a file we also
+patch. The real conflict was one hunk in `app/Enums/Country.php`: upstream rewrote the lines of
+a docblock to explain a BC/Yukon timezone fix, and we had appended a paragraph about the Global
+jurisdiction directly beneath them. The two edits touch, so git calls it a conflict — but
+nothing in it actually disagrees. Everything functional in that file merged cleanly.
+
+**What the workflow does now** (`.github/workflows/reapply-fork-patches.yml`, committed by hand
+like every workflow here — the Actions token cannot push changes to that directory). On every
+run, in this order:
+
+1. **Check for a merge.** Does upstream have commits we lack, or did the triggering push also
+   change a file we patch? Read-only.
+2. **Back up main — only if so, immediately before merging** — to `Backup-DD.MM.YYYY` (suffixed
+   with the run id for a second one the same day). A run that merges nothing, such as a plain
+   patch upload or a daily check with nothing new, makes none. If the backup fails every later
+   step is skipped, so nothing is ever merged without one. (An earlier version of this change took
+   one on every run; it was changed because that left a branch a day even when nothing happened.)
+3. **Sync with upstream.** If we are behind, upstream is merged *here*. Triggers are every push
+   to main, a daily check at 03:17 UTC so upstream fixes arrive on their own, and a manual run.
+4. **Reapply patches**, commit, push, and dispatch the docker build and the tests — unchanged.
+
+**Per-file policy when upstream and we both changed a file** (everything outside a conflicting
+hunk always merges normally, so upstream's other changes to the file are never lost):
+
+| Case | What happens | Flagged red? |
+|---|---|---|
+| A file we patch, merges cleanly | Both sides kept; `.fork-patches` updated to match | no |
+| A file we patch, conflicting hunk is *only comments* and one side merely added lines | Keep both — upstream's wording plus our lines (or the reverse) | no |
+| A file we patch, any other conflicting hunk | **Our side of that hunk only**; upstream's side of it is dropped | **yes** |
+| A merged file that fails `php -l` | Falls back to our whole copy | **yes** |
+| A file upstream deleted that we patch | Our copy kept | **yes** |
+| A file we do **not** patch | Upstream's version (every intentional customization lives in `.fork-patches`) | **yes** |
+| A workflow file | Ours kept; upstream's diff is written to the run summary to apply by hand | **yes** |
+
+"Flagged" means the run ends red *after* the push — the app is already merged, deployed and
+tested, so this is purely a notification that a human decision was made. The run's Summary page
+lists every file with what happened and whether it needs a look.
+
+**Two design decisions worth knowing about.**
+
+*A true merge base.* The existing collision merge uses "the real file at the last commit that
+touched our patch" as its base. That is wrong whenever the real file was *already patched* at that
+moment (as `Country.php` was when its patch copy was restored after being deleted by mistake — see
+Ongoing maintenance): the base then contains our own
+changes, so the merge treats them as unchanged by us and can drop them. The sync step uses the real
+`git merge-base` with upstream instead, takes *our* side from `.fork-patches` (the source of truth,
+which can be ahead of the real file while a patch waits to be applied), and writes the result to both
+the real path and `.fork-patches` — so the copy step that follows is a no-op for those files rather
+than overwriting upstream's changes with a stale copy. (The old collision merge is untouched, and
+still handles a human "Sync fork" push that did succeed.)
+
+*Workflow files never sync.* The Actions token is refused outright if a push changes anything under
+`.github/workflows/`, so a merge carrying such a change would fail every night. The sync step keeps
+our copy of any workflow file, flags it, and prints upstream's diff in the run summary. If GitHub
+still refuses a push for that reason, the commit step now stops immediately with an explanation
+(retrying can never fix it) and main is left unchanged.
+
+**What was run to check it.** The real workflow file was executed step by step against a local
+origin, with the real upstream and your real fork: the actual conflict resolved to upstream's new
+wording plus our Global paragraph (0 of our 57 added lines and 0 of upstream's 7 missing from
+`Country.php`; 13 and 3 in `Company.php`), the result linted, the patch store matched the real files
+byte for byte, and `source-map-js` arrived at 1.2.2. Nine further scenarios were built from synthetic
+upstream histories rooted at the real merge base: a real code conflict, a non-patched file, an upstream
+workflow edit, an upstream deletion, a merge that would not lint, nothing to sync (no backup is made), an ordinary
+human patch upload (no backup, and a regression check on the pre-existing flow), a patched-file collision with
+nothing to sync (backed up, because the copy step is about to merge), and a push rejected mid-run (the merge
+commit survives the rebase). The backup is checked to be exactly main as it was before the merge. 45 assertions,
+all passing. Two scenarios were initially wrong — one never produced a conflict
+(git merged it cleanly, which is the workflow being right and my test being wrong), the other truncated its own
+input — and were fixed in the test, not the workflow.
+
+**What was not, and the known costs.**
+- GitHub's server-side workflow-permission rule can't be exercised from outside GitHub. The design keeps the
+  merge's tree free of workflow changes; whether GitHub also objects to workflow changes in the *history* being
+  pushed is unverified. The failure mode is loud and harmless (above), and the fallback is a personal access token
+  with the `workflow` scope.
+- **Backup branches accumulate:** one per *merge* — an upstream sync, or a patched-file collision — not one per run,
+  so a quiet week makes none. The ruleset deliberately blocks deleting them, so pruning means temporarily relaxing
+  it under Settings → Rules.
+- GitHub pauses scheduled workflows after 60 days with no activity on a repository.
+- The first real run will merge the two pending upstream commits, including the `Country.php` conflict. It does
+  **not** fix the `security` workflow's failing `npm audit`: `source-map-js` is fixed by the merge, but a newer
+  advisory on `shell-quote` (pulled in by `concurrently`, declared by upstream as a regular dependency) is upstream's
+  to fix, and the daily check will bring their fix in when it lands.
+
 ## Ongoing maintenance — now partially automated, still worth watching
 
 `reapply-fork-patches` (see §7) originally just *overwrote* on every
@@ -898,9 +987,11 @@ sync touches a file we've also patched, combining both changes
 automatically when they don't genuinely overlap, and only falling back to
 "our version wins, flagged for manual review" when there's a real
 textual conflict it can't reconcile. A `Backup-DD.MM.YYYY` branch is
-created before any merge attempt, protected against deletion/force-push
-by the branch-protection ruleset, as a rollback point if an auto-merge
-ever produces something broken.
+created immediately before any merge — an upstream sync, or a collision where a
+push also changed a patched file — and only then (§17), protected against
+deletion/force-push by the branch-protection ruleset, as a rollback point if an
+auto-merge ever produces something broken. The upstream merge itself now happens
+inside this workflow rather than via the "Sync fork" button — also §17.
 
 This has since been exercised against a real upstream sync, not just
 designed on paper: a sync landed a genuine conflict on three separate
