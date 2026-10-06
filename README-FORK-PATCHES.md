@@ -805,6 +805,84 @@ every day is 12 or under cannot be decided from the values, so it would still ne
 confirmation step. Only Fixed Assets has importer notes; any other importer can opt in
 by implementing `HasImportNotes`.
 
+## 16. A blank Class / Location / Fund made saves fail with a 500
+
+Reported on a real entry (JE-000015, six small purchases reclassed from an expense account
+into Office Equipment): Post, and also Save draft, gave a blank "500 Server Error" modal.
+
+**Found from the Laravel log**, not guessed. Three identical errors, one per attempt:
+`SQLSTATE[HY000]: General error: 1366 Incorrect integer value: '' for column 'class_id' at
+row 1 … insert into journal_lines`, raised from `SaveJournalEntry.php`. The bound values on
+the failing line were the giveaway: `contact_id`, `tax_code_id`, `location_id` and `fund_id`
+were all `NULL`, but `class_id` was an empty string — the credit line, whose Class was left
+on "—".
+
+**Cause.** A blank select ("—") submits `''`. The forms pass it straight to the save action
+as `$line['class_id'] ?? null`, and `??` catches a *missing* value, not an empty string.
+Validation lets it through too (`nullable|integer` skips an empty string entirely), so `''`
+reached the insert and MySQL in strict mode refused it for an integer column. The journal
+form already knew the trick for one field — `tax_code_id` is built with `?: null`, which is
+why the tax code left on "—" was fine and the class was not. Draft and Post share
+`SaveJournalEntry`, which is why both died. It is an **upstream bug**: their current `main`
+has the same code, unnoticed there because a SQLite test database quietly accepts `''` in an
+integer column. This repo's suite runs on MySQL, so the tests below fail for real without
+the fix. Nothing was half-saved: the whole save is one `DB::transaction`.
+
+**Fix, in two layers.**
+
+1. *The reported path, explicitly.* `app/Actions/Accounting/SaveJournalEntry.php` and
+   `SaveRecurringJournalEntry.php` normalise their optional ids through an `optionalId()`
+   helper copied from `SaveJournalEntryTemplate`, where upstream had already fixed this exact
+   problem — in one of three sibling actions.
+2. *Everything else, once.* `app/Providers/BlankTrackingIdsServiceProvider.php` (new, fork-owned)
+   listens to `eloquent.saving: *` and turns an empty-string `class_id`, `location_id` or
+   `fund_id` into `NULL` before any model is saved. It is registered first in
+   `bootstrap/providers.php`, the only upstream file this layer touches.
+
+**Why a listener instead of editing every action.** The first survey found thirteen more
+actions with the same `$line['x'] ?? null` write (`SaveBill`, `SaveExpense`, `SaveVendorCredit`,
+`SavePurchaseOrder`, `SaveInvoice`, `SaveCreditMemo`, `SaveEstimate`, `SaveSalesOrder`,
+`SaveSalesReceipt`, `SaveInvoiceTemplate`, `SaveStockAdjustment`, `SaveDeposit`, `SaveCheque`).
+A wider one found six more using `$data[...]` that the first regex could not match
+(`SaveBudget`, `SaveDonation`, `SaveGrant`, `SaveEmployeePayrollProfile`, `SaveTimeEntry`,
+`SaveOwnTimeEntry`), and twenty-three models carry these columns, including some no action grep
+found at all (`PayRunLineEarning`, `RecurringDocumentLine`, `JournalEntryTemplateLine`). Editing
+nineteen upstream files would have been nineteen future merge points and would still have left
+every path the regex missed broken. Every one of those paths ends in saving a model, so the guard
+sits there: complete today and for code not yet written, for one line of upstream churn.
+
+**Verified against Laravel 13.34.0's source, because a global hook can break things quietly.**
+`Model::save()` fires `saving` through `until` — halt mode — under the name
+`eloquent.saving: <Class>`; a wildcard listener receives `[$model]` and its return value is passed
+straight back; and in halt mode the first non-null return ends the chain and skips every listener
+after it. So the listener returns nothing at all, and a test proves a listener registered after it
+still runs.
+
+**Deliberately narrow.** Only those three names (every migration declares them `foreignId`, 30 of
+30, so a blank can never be a legitimate string there); only the exact empty string (a real id,
+null, and every other attribute — a blank memo stays a blank memo — are untouched); and it never
+blocks or fails a save.
+
+**What it does not cover.** Writes that skip model events — `Model::query()->update(...)`,
+`insert()`, `upsert()`, `DB::table(...)` — none of which the survey found writing these columns from
+user input. And other optional ids (`tax_code_id`, `contact_id`, `item_id`, …): there is no evidence
+they fail (the journal form already guards the tax code), so they were left alone rather than
+widening a global hook on a hunch.
+
+- `tests/Feature/Journal/JournalBlankOptionalIdsTest.php` — the exact failing entry through the form
+  for both Save draft and Post, blank ids through the journal action, real ids kept, and recurring.
+- `tests/Feature/Support/BlankTrackingIdsGuardTest.php` — a blank saved straight onto a model and on
+  update; a scan of `app/Models` proving every model with these columns (23 today) is covered, so a
+  new one is caught the day it is written; real ids and other attributes untouched; and the
+  does-not-halt-other-listeners rule.
+
+**Verification, honestly.** `php -l` and Laravel Pint (CI's exact version, v1.32.1) pass on every
+touched file. The listener's own logic was executed under real PHP against stubbed models — scope,
+real ids kept, and the return-null rule included. Laravel's semantics were read from its source, not
+recalled. Pest and the Livewire form were not run (no Composer dependencies in the environment this
+was written in), and MySQL's strict-mode rejection comes from the production log, not a local
+reproduction.
+
 ## Ongoing maintenance — now partially automated, still worth watching
 
 `reapply-fork-patches` (see §7) originally just *overwrote* on every

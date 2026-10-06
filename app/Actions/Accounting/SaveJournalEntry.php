@@ -82,15 +82,15 @@ final class SaveJournalEntry
 
                 $entry->lines()->create([
                     'account_id' => $line['account_id'],
-                    'contact_id' => $line['contact_id'] ?? null,
+                    'contact_id' => $this->optionalId($line['contact_id'] ?? null),
                     'debit_cents' => $debit,
                     'credit_cents' => $credit,
                     'memo' => $line['memo'] ?? null,
-                    'tax_code_id' => $line['tax_code_id'] ?? null,
+                    'tax_code_id' => $this->optionalId($line['tax_code_id'] ?? null),
                     'line_order' => $order++,
-                    'class_id' => $line['class_id'] ?? null,
-                    'location_id' => $line['location_id'] ?? null,
-                    'fund_id' => $line['fund_id'] ?? null,
+                    'class_id' => $this->optionalId($line['class_id'] ?? null),
+                    'location_id' => $this->optionalId($line['location_id'] ?? null),
+                    'fund_id' => $this->optionalId($line['fund_id'] ?? null),
                     ...($currencyCode !== null ? [
                         'currency_code' => $currencyCode,
                         'fx_rate' => $line['fx_rate'] ?? null,
@@ -104,5 +104,20 @@ final class SaveJournalEntry
 
             return $entry;
         });
+    }
+
+    /**
+     * Normalize an optional foreign key: '' / null / 0 → null, anything else → int.
+     *
+     * A blank Class / Location / Fund / Tax code select ("—") submits an empty
+     * string, and `?? null` only catches a missing value, not that. MySQL in
+     * strict mode refuses '' in an integer column ("Incorrect integer value: ''
+     * for column 'class_id'"), so the whole save — draft or post — failed with a
+     * 500. Validation lets it through ('nullable|integer' skips an empty string).
+     * SaveJournalEntryTemplate already does exactly this; this is the same fix.
+     */
+    private function optionalId(mixed $value): ?int
+    {
+        return filled($value) && (int) $value > 0 ? (int) $value : null;
     }
 }
