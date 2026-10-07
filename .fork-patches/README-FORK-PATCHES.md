@@ -883,7 +883,7 @@ recalled. Pest and the Livewire form were not run (no Composer dependencies in t
 was written in), and MySQL's strict-mode rejection comes from the production log, not a local
 reproduction.
 
-## 17. Upstream sync that merges through conflicts, with a backup on every run
+## 17. Upstream sync that merges through conflicts, with a backup before every merge
 
 **The problem.** "Sync fork" refused: *"This branch has conflicts that must be resolved"*,
 two commits behind. The button cannot be told to resolve anything — it works only when git
@@ -967,10 +967,63 @@ input — and were fixed in the test, not the workflow.
   so a quiet week makes none. The ruleset deliberately blocks deleting them, so pruning means temporarily relaxing
   it under Settings → Rules.
 - GitHub pauses scheduled workflows after 60 days with no activity on a repository.
-- The first real run will merge the two pending upstream commits, including the `Country.php` conflict. It does
-  **not** fix the `security` workflow's failing `npm audit`: `source-map-js` is fixed by the merge, but a newer
-  advisory on `shell-quote` (pulled in by `concurrently`, declared by upstream as a regular dependency) is upstream's
-  to fix, and the daily check will bring their fix in when it lands.
+- The first real run merged the two pending upstream commits, including the `Country.php` conflict, 16 seconds after the
+  workflow was committed. That fixed the `source-map-js` advisory; the `security` check was still red on a separate
+  `shell-quote` advisory, which §19 explains and fixes at the fork level.
+
+## 18. Depreciation Schedule PDF: landscape, and a table that fits the page
+
+**The problem.** The PDF ran off the right edge: the last column ("Closing Value") was cut to `CL` / `1,1…`, and asset names and
+method labels wrapped onto four lines each. Eleven columns at the shared report layout's 11px type and 8px cell padding need about
+1,200px; a portrait A4 page offers about 700. The old test only asserted that `exportPdf()` returned a file, so nothing noticed.
+
+**The fix**, all in this report's own view (`pdf/reports/depreciation-schedule.blade.php`) — not the shared
+`_layout.blade.php`, which is an upstream file used by about twenty reports:
+
+- `@page { size: A4 landscape; }`. dompdf merges an `@page` rule from the view over the layout's, so the layout's margin is kept
+  and only this report changes. Because every route (download, email attachment) renders this same view, they all follow.
+- A tighter table: 9px type and 4px/5px padding (8px and 3px/4px past 12 columns), numbers never wrap, rows are not split across a
+  page break, and the header repeats on each page.
+- **Which columns may wrap is decided from the data, not column names.** A column whose longest cell is 14 characters or fewer is an
+  id, a date or a number and never breaks; longer cells (name, method, category) wrap. This was added after a render showed a date
+  splitting as `2026-09-` / `30`. Totals rows count, so a long "Total <category>" label makes its column wrappable.
+
+**What was run.** dompdf 3.1.6 — the exact version pinned in `composer.lock`, with its dependencies fetched at the locked commits —
+with barryvdh/laravel-dompdf's real default options, on your actual report data. The current view was rendered first and
+reproduced your problem exactly (A4 portrait, text running to 599 pt on a 595 pt page). The fixed view then rendered at 842 x 595 pt
+with text ending at 816 pt. Stress cases: all 17 columns, all 17 with very long names, 45 assets across two categories, and an empty
+report. All landscape, none clipped, header on every page, zero mid-token date breaks; 45 assets drop from 4 pages to 2.
+
+**What was not.** The three Pest tests added to `DepreciationScheduleTest.php` (page size read from the PDF's own `/MediaBox`; all 17
+columns; the wrap rules) were **not run** — there is no Laravel app or database where this was built. Their assertion strings and the
+`/MediaBox` regex were checked against the rendered output instead. Blade itself was not run either: a small purpose-built compiler
+covering the 15 constructs these two templates use stood in for it. The first push to main will run the real tests.
+
+**Known limits.** Seventeen columns render at 8px (about 6 pt): legible, but small. The page is A4 only, matching every other PDF in
+the app (there is no per-company paper setting).
+
+## 19. The `security` check: a `shell-quote` override
+
+**The problem.** After the upstream sync fixed `source-map-js`, `npm audit --audit-level=high` still failed on a critical advisory in
+`shell-quote` (versions 1.8.4 to 1.10.0, GHSA-pqg4-j6r4-53mv). The lockfile had 1.9.0, pulled in by `concurrently@10.0.5`, which pins
+`shell-quote` to **exactly** 1.9.0. Fixed releases (1.11.0, 1.12.0) existed, but npm could not use them without breaking that pin, so its
+only suggested fix was a breaking *downgrade* of `concurrently`. An earlier note here said the fix was upstream's to make; the cause is
+an exact pin, which an npm `overrides` entry is the standard answer to.
+
+**The fix.** `"overrides": { "shell-quote": "^1.11.0" }` in `package.json`, and `shell-quote`'s lockfile entry moved to 1.12.0 — three
+lines in each file. A regenerated lockfile was rejected: it touched 26 packages, 25 of them unrelated platform binaries whose versions had
+not changed (a difference between the npm that built it and the one used here). Instead the one entry was edited into the committed
+lockfile, after checking the serializer reproduces that file byte for byte (4-space indent).
+
+**What was run.** `npm ci` (which fails if the two files disagree, and is what CI and the Docker build run): succeeded.
+`npm audit --audit-level=high`: 0 vulnerabilities, exit 0. `npm ls`: `shell-quote@1.12.0 overridden` under `concurrently`.
+`concurrently` was run with it and executed two commands correctly. **Not run:** the Docker build and the vite build, and `composer dev`
+on the NAS. `concurrently` is used only by that composer `dev` script, with fixed arguments, so real exposure was low; the cost of leaving
+it was a permanently red check that would hide the next genuine finding.
+
+**Upkeep.** `package.json` and `package-lock.json` are now patched files. Future upstream edits to them are 3-way merged by the sync
+step (§17); a conflicting hunk keeps our side and is flagged. To retire the override, once `npm view concurrently dependencies` shows a
+`shell-quote` at 1.11.0 or later: delete both files from `.fork-patches` and take upstream's copies.
 
 ## Ongoing maintenance — now partially automated, still worth watching
 

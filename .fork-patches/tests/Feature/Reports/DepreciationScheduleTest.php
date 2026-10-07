@@ -349,3 +349,81 @@ it('is reachable from the report catalog and renderable outside a Livewire reque
     $this->get(route('reports.depreciation-schedule', ['company' => $this->company->slug]))
         ->assertOk();
 });
+
+/**
+ * The page size dompdf wrote into the first page of a PDF response, as [width, height] in points.
+ *
+ * Reads the PDF's own /MediaBox rather than trusting the view's CSS: the bug this guards was a PDF
+ * that "exported fine" — the response was a PDF, which is all the older test above checked — but ran
+ * off the right edge of a portrait page, clipping the last column.
+ *
+ * @return array{0: float, 1: float}
+ */
+function pdfPageSize(BinaryFileResponse $response): array
+{
+    $bytes = (string) file_get_contents($response->getFile()->getPathname());
+
+    expect(preg_match('/\/MediaBox\s*\[\s*0(?:\.0+)?\s+0(?:\.0+)?\s+([\d.]+)\s+([\d.]+)\s*\]/', $bytes, $m))->toBe(1);
+
+    return [(float) $m[1], (float) $m[2]];
+}
+
+it('prints the PDF on landscape A4, because the default columns cannot fit a portrait page', function () {
+    Asset::factory()->create(['asset_account_id' => $this->assetAccount->id, 'name' => 'Laptop', 'cost_cents' => 50000, 'acquired_date' => '2026-01-01']);
+
+    $component = Livewire::test('pages::reports.depreciation-schedule', ['company' => $this->company])
+        ->set('startDate', '2026-01-01')
+        ->set('endDate', '2026-01-31');
+
+    [$width, $height] = pdfPageSize($component->instance()->exportPdf());
+
+    expect($width)->toBeGreaterThan($height)
+        ->and(round($width))->toBe(842.0)
+        ->and(round($height))->toBe(595.0);
+});
+
+it('stays landscape with every one of the 17 columns switched on', function () {
+    Asset::factory()->create(['asset_account_id' => $this->assetAccount->id, 'name' => 'Laptop', 'cost_cents' => 50000, 'acquired_date' => '2026-01-01']);
+
+    $component = Livewire::test('pages::reports.depreciation-schedule', ['company' => $this->company])
+        ->set('startDate', '2026-01-01')
+        ->set('endDate', '2026-01-31')
+        ->set('hiddenColumns', []);
+
+    expect($component->instance()->visibleColumns)->toHaveCount(17);
+
+    [$width, $height] = pdfPageSize($component->instance()->exportPdf());
+
+    expect($width)->toBeGreaterThan($height);
+});
+
+it('only lets free-text columns wrap in the PDF, so ids, dates and numbers never break mid-token', function () {
+    $data = fn (int $columns) => [
+        'company' => $this->company,
+        'title' => 'Depreciation Schedule',
+        'startDate' => '2026-01-01',
+        'endDate' => '2026-01-31',
+        'columnLabels' => $columns === 4 ? ['Number', 'Name', 'Disposed', 'Cost'] : array_map(fn (int $i): string => "Column {$i}", range(1, $columns)),
+        'alignRight' => $columns === 4 ? [false, false, false, true] : array_fill(0, $columns, false),
+        'groups' => [[
+            'label' => 'Office Equipment',
+            'rows' => [$columns === 4 ? ['AST000001', 'Laptop - Microsoft Surface Book 3', '2026-09-30', '1,259.00'] : array_fill(0, $columns, 'x')],
+            'totals' => $columns === 4 ? ['', 'Total Office Equipment', '', '1,259.00'] : array_fill(0, $columns, ''),
+        ]],
+        'grandTotals' => $columns === 4 ? ['', 'Total', '', '1,259.00'] : array_fill(0, $columns, ''),
+    ];
+
+    $html = view('pdf.reports.depreciation-schedule', $data(4))->render();
+
+    // A date was splitting across two lines as "2026-09-" / "30". Short cells are flagged no-wrap;
+    // the long free-text name is not, so it is the one thing allowed to wrap.
+    expect($html)->toContain('<td class=" nw">AST000001</td>')
+        ->and($html)->toContain('<td class=" nw">2026-09-30</td>')
+        ->and($html)->toContain('<td class="num nw">1,259.00</td>')
+        ->and($html)->toContain('<td class="">Laptop - Microsoft Surface Book 3</td>')
+        ->and($html)->toContain('@page { size: A4 landscape; }')
+        ->and($html)->not->toContain('schedule dense');
+
+    // Past 12 columns the type drops a size so the table still fits.
+    expect(view('pdf.reports.depreciation-schedule', $data(13))->render())->toContain('class="data schedule dense"');
+});
