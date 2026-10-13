@@ -2,6 +2,7 @@
 
 namespace App\Enums;
 
+use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 
 /**
@@ -52,7 +53,7 @@ enum DateFormat: string
     /** A fixed sample (1 April 2026) — unambiguous in every format shown. */
     public function example(): string
     {
-        return \Carbon\CarbonImmutable::create(2026, 4, 1)->format($this->pattern());
+        return CarbonImmutable::create(2026, 4, 1)->format($this->pattern());
     }
 
     public function label(): string

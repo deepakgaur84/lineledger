@@ -6,6 +6,7 @@ use App\Enums\DateFormat;
 use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
+use Illuminate\Support\Carbon as IlluminateCarbon;
 use Illuminate\Support\Facades\Auth;
 
 /**
@@ -19,9 +20,13 @@ final class DateDisplay
 {
     public static function current(): DateFormat
     {
-        $format = Auth::user()?->date_format ?? null;
+        $value = Auth::user()?->getAttributeValue('date_format');
 
-        return $format instanceof DateFormat ? $format : DateFormat::default();
+        if ($value instanceof DateFormat) {
+            return $value;
+        }
+
+        return (is_string($value) ? DateFormat::tryFrom($value) : null) ?? DateFormat::default();
     }
 
     public static function format(CarbonInterface|string|null $date, string $empty = ''): string
@@ -39,10 +44,13 @@ final class DateDisplay
 
     public static function register(): void
     {
-        $macro = fn (): string => DateDisplay::current()->format($this);
+        $macro = function (): string {
+            /** @var CarbonInterface $this */
+            return DateDisplay::current()->format($this);
+        };
 
         Carbon::macro('displayDate', $macro);
         CarbonImmutable::macro('displayDate', $macro);
-        \Illuminate\Support\Carbon::macro('displayDate', $macro);
+        IlluminateCarbon::macro('displayDate', $macro);
     }
 }

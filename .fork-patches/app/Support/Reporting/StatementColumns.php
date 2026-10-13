@@ -3,7 +3,7 @@
 namespace App\Support\Reporting;
 
 use App\Enums\CustomerStatementType;
-use Carbon\CarbonImmutable;
+use App\Support\DateDisplay;
 
 /**
  * The columns a customer-facing statement can show, per statement type. The
@@ -249,7 +249,7 @@ final class StatementColumns
         $value = $row[$definition['field']] ?? null;
 
         return match ($definition['format']) {
-            'date' => is_string($value) && $value !== '' ? \App\Support\DateDisplay::format($value) : '—',
+            'date' => is_string($value) && $value !== '' ? DateDisplay::format($value) : '—',
             'money' => self::money((int) $value),
             'money_or_blank' => (int) $value !== 0 ? self::money((int) $value) : '',
             'days' => (int) $value > 0 ? (string) (int) $value : '',
