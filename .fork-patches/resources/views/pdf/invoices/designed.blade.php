@@ -5,6 +5,11 @@
     Expects what InvoicePdfRenderer passes: $company, $invoice, $settings,
     $style (?FormStyle), $design (App\Support\Sales\InvoiceDesign), $taxSummary.
 
+    The body below the header is a list of sections ($design->sections: parties,
+    lines, totals, schedule, payment, footer) — each lives in
+    pdf/invoices/sections/_<name>.blade.php and can be reordered or hidden per
+    style.
+
     Layout is plain tables — dompdf has no flexbox or grid. Each template only
     contributes a stylesheet (pdf/invoices/templates/_<name>.blade.php) plus the
     few structural switches below keyed on $design->template.
@@ -170,151 +175,9 @@
         </table>
     @endif
 
-    {{-- ───────────── Parties ───────────── --}}
-    <table class="full plain parties">
-        <tr>
-            <td style="width: {{ $showShip ? '48%' : '100%' }};">
-                <div class="party">
-                    <div class="label">{{ __('Bill To') }}</div>
-                    @foreach ($billLines as $line)
-                        <div>{{ $line }}</div>
-                    @endforeach
-                </div>
-            </td>
-            @if ($showShip)
-                <td style="width: 4%;"></td>
-                <td style="width: 48%;">
-                    <div class="party">
-                        <div class="label">{{ __('Ship To') }}</div>
-                        @foreach ($shipLines as $line)
-                            <div>{{ $line }}</div>
-                        @endforeach
-                    </div>
-                </td>
-            @endif
-        </tr>
-    </table>
-
-    {{-- ───────────── Lines ───────────── --}}
-    <table class="lines">
-        <thead>
-            <tr>
-                @if ($settings->show_item_column) <th style="width: 18%;">{{ __('Item') }}</th> @endif
-                <th>{{ __('Description') }}</th>
-                @if ($settings->show_qty_column) <th class="num" style="width: 8%;">{{ __('Qty') }}</th> @endif
-                @if ($settings->show_tax_column) <th style="width: 8%;">{{ __('Tax') }}</th> @endif
-                @if ($settings->show_unit_column) <th class="num" style="width: 14%;">{{ __('Price Each') }}</th> @endif
-                <th class="num" style="width: 14%;">{{ __('Amount') }}</th>
-            </tr>
-        </thead>
-        <tbody>
-            @php($rowIndex = 0)
-            @foreach ($invoice->lines as $line)
-                {{-- Same guard as the classic view: a line that carries a value always prints,
-                     so the visible rows still sum to the stored invoice totals. --}}
-                @if ($settings->hide_zero_qty_lines && (float) $line->quantity == 0.0 && (int) $line->line_subtotal_cents === 0)
-                    @continue
-                @endif
-                @php($rowIndex++)
-                <tr class="{{ $striped && $rowIndex % 2 === 0 ? 'zebra' : '' }}">
-                    @if ($settings->show_item_column)
-                        <td>{{ optional($line->item)->name }}</td>
-                    @endif
-                    <td>
-                        {!! \App\Support\Text\LineDescription::toHtml($line->description) !!}
-                        @if ($settings->show_service_date_column && $line->service_date)
-                            <div class="muted" style="font-size: 9px;">{{ __('Service date') }}: {{ $line->service_date->displayDate() }}</div>
-                        @endif
-                    </td>
-                    @if ($settings->show_qty_column)
-                        <td class="num">{{ rtrim(rtrim((string) $line->quantity, '0'), '.') }}</td>
-                    @endif
-                    @if ($settings->show_tax_column)
-                        <td>{{ optional($line->taxCode)->code }}</td>
-                    @endif
-                    @if ($settings->show_unit_column)
-                        <td class="num">
-                            {{ number_format($line->unit_price_cents / 100, 2) }}
-                            @if ($line->line_discount_cents)
-                                <div class="muted" style="font-size: 9px;">{{ __('less :amt disc', ['amt' => number_format($line->line_discount_cents / 100, 2)]) }}</div>
-                            @endif
-                        </td>
-                    @endif
-                    <td class="num">{{ number_format($line->line_subtotal_cents / 100, 2) }}</td>
-                </tr>
-            @endforeach
-        </tbody>
-    </table>
-
-    {{-- ───────────── Totals ───────────── --}}
-    <table class="totals">
-        <tr>
-            <td>{{ __('Subtotal') }}</td>
-            <td class="num">{{ number_format($invoice->subtotal_cents / 100, 2) }}</td>
-        </tr>
-        @foreach ($taxSummary as $tax)
-            <tr>
-                <td>{{ $tax['label'] }} {{ number_format($tax['rate'], 2) }}%</td>
-                <td class="num">{{ number_format($tax['tax_cents'] / 100, 2) }}</td>
-            </tr>
-        @endforeach
-        <tr class="grand">
-            <td>{{ __('Total') }}</td>
-            <td class="num">${{ number_format($invoice->total_cents / 100, 2) }}</td>
-        </tr>
-        @if ($invoice->amount_paid_cents > 0)
-            <tr>
-                <td>{{ __('Paid') }}</td>
-                <td class="num">{{ number_format($invoice->amount_paid_cents / 100, 2) }}</td>
-            </tr>
-            <tr class="due">
-                <td>{{ __('Balance Due') }}</td>
-                <td class="num">${{ number_format($invoice->balanceCents() / 100, 2) }}</td>
-            </tr>
-        @endif
-    </table>
-
-    @php($schedule = $invoice->paymentRequests->isNotEmpty() ? app(\App\Services\Sales\PaymentRequestScheduleStatus::class)->for($invoice) : collect())
-    @if ($settings->show_payment_schedule && $schedule->isNotEmpty())
-        <table class="lines schedule" style="margin-top: 16px;">
-            <thead>
-                <tr>
-                    <th colspan="2">{{ __('Payment Schedule') }}</th>
-                    <th class="num">{{ __('Amount') }}</th>
-                    <th class="num">{{ __('Status') }}</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach ($schedule as $row)
-                    <tr>
-                        <td>{{ $row['request']->label }}</td>
-                        <td>{{ $row['request']->due_date?->displayDate() }}</td>
-                        <td class="num">{{ number_format($row['request']->amount_cents / 100, 2) }}</td>
-                        <td class="num">{{ $row['status']->label() }}</td>
-                    </tr>
-                @endforeach
-            </tbody>
-        </table>
-    @endif
-
-    {{-- ───────────── Footer ───────────── --}}
-    @if (filled($paymentInstructions))
-        <div class="pay-box">
-            <div class="label">{{ __('Payment details') }}</div>
-            <div style="white-space: pre-line;">{{ $paymentInstructions }}</div>
-        </div>
-    @endif
-
-    <div class="footer">
-        @if ($settings->show_tax_number && filled($company->tax_number))
-            <div class="taxno">{{ __('Tax No.') }} {{ $company->tax_number }}</div>
-        @endif
-        @if (filled($invoice->customer_message))
-            <div class="message">{{ $invoice->customer_message }}</div>
-        @endif
-        @if (filled($footerMessage))
-            <div class="message">{{ $footerMessage }}</div>
-        @endif
-    </div>
+    {{-- ───────────── Body sections, in the order (and with the visibility) the style chose ───────────── --}}
+    @foreach ($design->sections as $section)
+        @include('pdf.invoices.sections._'.$section->value)
+    @endforeach
 </body>
 </html>

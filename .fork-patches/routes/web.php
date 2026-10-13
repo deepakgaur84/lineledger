@@ -527,6 +527,8 @@ Route::prefix('{company}')
         Route::livewire('settings/lists/funds', 'pages::settings.lists.funds')->name('lists.funds');
         Route::livewire('settings/lists/membership-levels', 'pages::settings.lists.membership-levels')->name('lists.membership-levels');
         Route::livewire('settings/lists/form-styles', 'pages::settings.lists.form-styles')->name('lists.form-styles');
+        Route::get('settings/lists/form-styles/preview', [PreviewFormStyleController::class, 'draft'])
+            ->name('lists.form-styles.preview-draft');
         Route::get('settings/lists/form-styles/{style}/preview', PreviewFormStyleController::class)
             ->whereNumber('style')
             ->name('lists.form-styles.preview');

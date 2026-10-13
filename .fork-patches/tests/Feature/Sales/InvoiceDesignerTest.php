@@ -5,6 +5,7 @@ use App\Enums\AccountSubtype;
 use App\Enums\CompanyRole;
 use App\Enums\InvoiceFont;
 use App\Enums\InvoiceLayout;
+use App\Enums\InvoiceSection;
 use App\Enums\LogoPosition;
 use App\Models\Account;
 use App\Models\Company;
@@ -202,7 +203,7 @@ it('loads a saved style back into the form when editing', function () {
         ->assertSet('f_title_text', 'STATEMENT')
         ->assertSet('f_show_ship_to', false)
         ->assertSet('f_zebra_rows', true)
-        ->assertSeeHtml('data-test="style-preview-saved"');
+        ->assertSeeHtml('data-test="style-preview-draft"');
 });
 
 it('switches the accent with the layout unless the user chose their own colour', function () {
@@ -339,4 +340,169 @@ it('does not preview another company\'s style', function () {
 
     $this->get(route('lists.form-styles.preview', ['company' => $this->company, 'style' => $foreign->id]))
         ->assertNotFound();
+});
+
+it('previews unsaved designer settings as an inline PDF', function () {
+    $response = $this->get(route('lists.form-styles.preview-draft', [
+        'company' => $this->company,
+        'layout' => 'ledger',
+        'font_family' => 'serif',
+        'logo_position' => 'right',
+        'logo_max_height' => '80',
+        'accent_color' => '#0f766e',
+        'title_text' => 'TAX INVOICE',
+        'show_logo' => 1,
+        'show_ship_to' => 0,
+        'zebra_rows' => 1,
+    ]));
+
+    $response->assertOk();
+    expect($response->headers->get('Content-Type'))->toBe('application/pdf')
+        ->and($response->getContent())->toStartWith('%PDF')
+        ->and(FormStyle::query()->count())->toBe(0);
+});
+
+it('shows the preview button on a brand-new style form', function () {
+    Livewire::test('pages::settings.lists.form-styles', ['company' => $this->company])
+        ->call('openCreate')
+        ->assertSeeHtml('data-test="style-preview-draft"');
+});
+
+it('rejects a draft preview with an unknown layout', function () {
+    $this->get(route('lists.form-styles.preview-draft', ['company' => $this->company, 'layout' => 'neon']))
+        ->assertSessionHasErrors('layout');
+});
+
+it('lists every section, visible and in default order, when a style stores nothing', function () {
+    expect(InvoiceDesign::for(FormStyle::factory()->make(['layout' => InvoiceLayout::Modern]))->sections)->toBe([
+        InvoiceSection::Parties,
+        InvoiceSection::Lines,
+        InvoiceSection::Totals,
+        InvoiceSection::Schedule,
+        InvoiceSection::Payment,
+        InvoiceSection::Footer,
+    ]);
+});
+
+it('repairs stored sections: drops unknown and repeated keys and appends missing ones', function () {
+    $normalized = InvoiceSection::normalize([
+        ['key' => 'footer', 'visible' => true],
+        ['key' => 'bogus', 'visible' => true],
+        ['key' => 'lines', 'visible' => false],
+        ['key' => 'footer', 'visible' => false],
+    ]);
+
+    expect(array_column($normalized, 'key'))->toBe(['footer', 'lines', 'parties', 'totals', 'schedule', 'payment'])
+        ->and($normalized[1]['visible'])->toBeFalse()
+        ->and($normalized[2]['visible'])->toBeTrue();
+});
+
+it('parses the compact form used by the preview URL', function () {
+    $parsed = InvoiceSection::parse('totals:1,lines:0,junk:1');
+
+    expect(array_slice(array_column($parsed, 'key'), 0, 2))->toBe(['totals', 'lines'])
+        ->and($parsed[1]['visible'])->toBeFalse()
+        ->and(InvoiceSection::parse(null))->toHaveCount(6);
+});
+
+it('saves the section order and visibility', function () {
+    $style = app(SaveFormStyle::class)->handle([
+        'name' => 'Reordered',
+        'layout' => 'modern',
+        'sections' => [
+            ['key' => 'totals', 'visible' => true],
+            ['key' => 'lines', 'visible' => true],
+            ['key' => 'parties', 'visible' => false],
+        ],
+    ]);
+
+    expect(array_column($style->sections, 'key'))->toBe(['totals', 'lines', 'parties', 'schedule', 'payment', 'footer'])
+        ->and(InvoiceDesign::for($style)->sections)->toBe([
+            InvoiceSection::Totals,
+            InvoiceSection::Lines,
+            InvoiceSection::Schedule,
+            InvoiceSection::Payment,
+            InvoiceSection::Footer,
+        ]);
+});
+
+it('moves sections by drag position and by the up/down buttons', function () {
+    $component = Livewire::test('pages::settings.lists.form-styles', ['company' => $this->company])
+        ->call('openCreate')
+        ->call('sortSection', 'footer', 0);
+
+    expect(array_column($component->get('f_sections'), 'key')[0])->toBe('footer');
+
+    $component->call('moveSection', 'footer', 1);
+
+    expect(array_slice(array_column($component->get('f_sections'), 'key'), 0, 2))->toBe(['parties', 'footer']);
+
+    $component->call('moveSection', 'parties', -1);
+
+    expect(array_column($component->get('f_sections'), 'key')[0])->toBe('parties');
+});
+
+it('ignores a drag of an unknown section', function () {
+    $component = Livewire::test('pages::settings.lists.form-styles', ['company' => $this->company])
+        ->call('openCreate')
+        ->call('sortSection', 'nonsense', 0);
+
+    expect(array_column($component->get('f_sections'), 'key')[0])->toBe('parties');
+});
+
+it('saves a reordered style from the page and loads it back', function () {
+    Livewire::test('pages::settings.lists.form-styles', ['company' => $this->company])
+        ->call('openCreate')
+        ->set('f_name', 'Totals first')
+        ->call('sortSection', 'totals', 0)
+        ->set('f_sections.0.visible', true)
+        ->call('save')
+        ->assertHasNoErrors();
+
+    $style = FormStyle::query()->where('name', 'Totals first')->firstOrFail();
+
+    expect(array_column($style->sections, 'key')[0])->toBe('totals');
+
+    Livewire::test('pages::settings.lists.form-styles', ['company' => $this->company])
+        ->call('openEdit', $style->id)
+        ->assertSet('f_sections.0.key', 'totals');
+});
+
+it('prints sections in the chosen order and leaves out hidden ones', function () {
+    $style = app(SaveFormStyle::class)->handle([
+        'name' => 'Custom order',
+        'layout' => 'modern',
+        'sections' => [
+            ['key' => 'footer', 'visible' => true],
+            ['key' => 'parties', 'visible' => false],
+            ['key' => 'totals', 'visible' => true],
+            ['key' => 'lines', 'visible' => true],
+        ],
+    ]);
+
+    $html = renderDesignedHtml($this->company, designerInvoice($this, $style->id));
+
+    expect($html)->not->toContain('Bill To')
+        ->and(strpos($html, 'class="footer"'))->toBeLessThan(strpos($html, 'class="totals"'))
+        ->and(strpos($html, 'class="totals"'))->toBeLessThan(strpos($html, 'class="lines"'));
+});
+
+it('previews the unsaved section order', function () {
+    $response = $this->get(route('lists.form-styles.preview-draft', [
+        'company' => $this->company,
+        'layout' => 'banner',
+        'sections' => 'totals:1,lines:1,parties:0',
+    ]));
+
+    $response->assertOk();
+    expect($response->getContent())->toStartWith('%PDF');
+});
+
+it('explains that Classic has a fixed structure', function () {
+    Livewire::test('pages::settings.lists.form-styles', ['company' => $this->company])
+        ->call('openCreate')
+        ->assertSeeHtml('data-test="section-order"')
+        ->set('f_layout', 'classic')
+        ->assertDontSeeHtml('data-test="section-order"')
+        ->assertSeeHtml('data-test="section-order-classic-note"');
 });

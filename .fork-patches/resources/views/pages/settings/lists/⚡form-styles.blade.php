@@ -3,6 +3,7 @@
 use App\Actions\Sales\SaveFormStyle;
 use App\Enums\InvoiceFont;
 use App\Enums\InvoiceLayout;
+use App\Enums\InvoiceSection;
 use App\Enums\LogoPosition;
 use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Company;
@@ -40,6 +41,9 @@ new #[Title('Form styles')] class extends Component {
 
     public bool $f_zebra_rows = false;
 
+    /** @var list<array{key: string, visible: bool}> */
+    public array $f_sections = [];
+
     public string $f_footer_message = '';
 
     public bool $f_is_default = false;
@@ -56,13 +60,14 @@ new #[Title('Form styles')] class extends Component {
         $this->releaseEditLock();
         $this->reset([
             'editingId', 'f_name', 'f_layout', 'f_show_logo', 'f_logo_position', 'f_logo_max_height', 'f_accent_color',
-            'f_font_family', 'f_title_text', 'f_show_ship_to', 'f_zebra_rows', 'f_footer_message', 'f_is_default', 'f_is_active',
+            'f_font_family', 'f_title_text', 'f_show_ship_to', 'f_zebra_rows', 'f_sections', 'f_footer_message', 'f_is_default', 'f_is_active',
         ]);
         // New styles start from a designed layout; Classic stays available.
         $this->f_layout = InvoiceLayout::Modern->value;
         $this->f_accent_color = InvoiceLayout::Modern->defaultAccent() ?? '';
         $this->f_show_logo = true;
         $this->f_show_ship_to = true;
+        $this->f_sections = InvoiceSection::normalize(null);
         $this->f_is_active = true;
         Flux::modal('form-styles-form')->show();
     }
@@ -86,6 +91,7 @@ new #[Title('Form styles')] class extends Component {
         $this->f_title_text = $s->title_text ?? '';
         $this->f_show_ship_to = (bool) $s->show_ship_to;
         $this->f_zebra_rows = (bool) $s->zebra_rows;
+        $this->f_sections = InvoiceSection::normalize($s->getAttributeValue('sections'));
         $this->f_footer_message = $s->footer_message ?? '';
         $this->f_is_default = $s->is_default;
         $this->f_is_active = $s->is_active;
@@ -108,6 +114,32 @@ new #[Title('Form styles')] class extends Component {
         }
     }
 
+    /** Drag-and-drop: move the section with this key to a zero-based position. */
+    public function sortSection(string $key, int $position): void
+    {
+        $sections = InvoiceSection::normalize($this->f_sections);
+        $index = collect($sections)->search(fn (array $entry) => $entry['key'] === $key);
+
+        if ($index === false) {
+            return;
+        }
+
+        [$moved] = array_splice($sections, (int) $index, 1);
+        array_splice($sections, max(0, min($position, count($sections))), 0, [$moved]);
+
+        $this->f_sections = $sections;
+    }
+
+    /** Keyboard/button alternative to dragging: -1 moves up, 1 moves down. */
+    public function moveSection(string $key, int $direction): void
+    {
+        $index = collect(InvoiceSection::normalize($this->f_sections))->search(fn (array $entry) => $entry['key'] === $key);
+
+        if ($index !== false) {
+            $this->sortSection($key, (int) $index + ($direction < 0 ? -1 : 1));
+        }
+    }
+
     public function save(): void
     {
         if ($this->editingId !== null && ! $this->ensureEditLockForSave(FormStyle::class, $this->editingId)) {
@@ -125,6 +157,9 @@ new #[Title('Form styles')] class extends Component {
             'f_title_text' => ['nullable', 'string', 'max:40'],
             'f_show_ship_to' => ['boolean'],
             'f_zebra_rows' => ['boolean'],
+            'f_sections' => ['array'],
+            'f_sections.*.key' => ['required', Rule::enum(InvoiceSection::class)],
+            'f_sections.*.visible' => ['boolean'],
             'f_footer_message' => ['nullable', 'string'],
             'f_is_default' => ['boolean'],
             'f_is_active' => ['boolean'],
@@ -148,6 +183,7 @@ new #[Title('Form styles')] class extends Component {
             'title_text' => $validated['f_title_text'] ?: null,
             'show_ship_to' => $validated['f_show_ship_to'],
             'zebra_rows' => $validated['f_zebra_rows'],
+            'sections' => $validated['f_sections'],
             'footer_message' => $validated['f_footer_message'] ?: null,
             'is_default' => $validated['f_is_default'],
             'is_active' => $validated['f_is_active'],
@@ -237,6 +273,32 @@ new #[Title('Form styles')] class extends Component {
                 <flux:error name="f_layout" />
             </div>
 
+            @if ($f_layout !== 'classic')
+                <div data-test="section-order">
+                    <flux:label>{{ __('Page sections') }}</flux:label>
+                    <flux:description class="mt-1">{{ __('Drag to reorder what appears below the header, or switch a section off. The header always stays on top.') }}</flux:description>
+                    <ul wire:sort="sortSection" class="mt-2 divide-y divide-border rounded-lg border border-border">
+                        @foreach ($f_sections as $i => $entry)
+                            @php($section = \App\Enums\InvoiceSection::from($entry['key']))
+                            <li wire:key="section-{{ $entry['key'] }}" wire:sort:item="{{ $entry['key'] }}" class="flex items-center gap-3 bg-card px-3 py-2 @if (! $entry['visible']) opacity-60 @endif" data-test="section-row-{{ $entry['key'] }}">
+                                <span wire:sort:handle class="cursor-grab text-muted-foreground" title="{{ __('Drag to reorder') }}" data-test="section-handle-{{ $entry['key'] }}">
+                                    <flux:icon name="bars-3" class="size-5" />
+                                </span>
+                                <div class="min-w-0 flex-1">
+                                    <div class="text-sm font-medium">{{ __($section->label()) }}</div>
+                                    <div class="text-xs text-muted-foreground">{{ __($section->description()) }}</div>
+                                </div>
+                                <flux:button type="button" size="xs" variant="ghost" icon="chevron-up" wire:click="moveSection('{{ $entry['key'] }}', -1)" :disabled="$loop->first" :tooltip="__('Move up')" data-test="section-up-{{ $entry['key'] }}" />
+                                <flux:button type="button" size="xs" variant="ghost" icon="chevron-down" wire:click="moveSection('{{ $entry['key'] }}', 1)" :disabled="$loop->last" :tooltip="__('Move down')" data-test="section-down-{{ $entry['key'] }}" />
+                                <flux:switch wire:model.live="f_sections.{{ $i }}.visible" :aria-label="__('Show :section', ['section' => __($section->label())])" data-test="section-visible-{{ $entry['key'] }}" />
+                            </li>
+                        @endforeach
+                    </ul>
+                </div>
+            @else
+                <flux:text class="text-sm text-muted-foreground" data-test="section-order-classic-note">{{ __('The Classic layout has a fixed structure. Pick another layout to reorder its sections.') }}</flux:text>
+            @endif
+
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                     <flux:label>{{ __('Accent colour') }}</flux:label>
@@ -276,16 +338,50 @@ new #[Title('Form styles')] class extends Component {
                 <flux:switch wire:model="f_is_active" :label="__('Active')" />
             </div>
 
-            <div class="flex items-center justify-between gap-2">
-                <div>
-                    @if ($editingId)
-                        <flux:button variant="ghost" icon="eye" :href="route('lists.form-styles.preview', ['company' => $company, 'style' => $editingId])" target="_blank" data-test="style-preview-saved">{{ __('Preview saved version') }}</flux:button>
-                    @endif
+            <div
+                x-data="{
+                    on: false,
+                    src: '',
+                    timer: null,
+                    base: @js(route('lists.form-styles.preview-draft', ['company' => $company])),
+                    url() {
+                        const w = $wire;
+                        return this.base + '?' + new URLSearchParams({
+                            layout: w.f_layout,
+                            font_family: w.f_font_family,
+                            logo_position: w.f_logo_position,
+                            logo_max_height: w.f_logo_max_height ?? '',
+                            accent_color: w.f_accent_color ?? '',
+                            title_text: w.f_title_text ?? '',
+                            footer_message: w.f_footer_message ?? '',
+                            show_logo: w.f_show_logo ? 1 : 0,
+                            show_ship_to: w.f_show_ship_to ? 1 : 0,
+                            zebra_rows: w.f_zebra_rows ? 1 : 0,
+                            sections: (w.f_sections ?? []).map(s => s.key + ':' + (s.visible ? 1 : 0)).join(','),
+                        }).toString();
+                    },
+                    refresh() { this.src = this.url(); },
+                }"
+                x-effect="if (on) { const next = url(); clearTimeout(timer); timer = setTimeout(() => src = next, 700); }"
+                data-test="style-live-preview"
+            >
+                <div class="flex items-center justify-between gap-2">
+                    <flux:label>{{ __('Live preview') }}</flux:label>
+                    <div class="flex gap-2">
+                        <flux:button type="button" size="sm" variant="ghost" icon="eye" x-show="! on" x-on:click="on = true" data-test="style-preview-show">{{ __('Show preview') }}</flux:button>
+                        <flux:button type="button" size="sm" variant="ghost" icon="arrow-path" x-show="on" x-cloak x-on:click="refresh()" data-test="style-preview-refresh">{{ __('Refresh') }}</flux:button>
+                        <flux:button type="button" size="sm" variant="ghost" icon="arrow-top-right-on-square" x-show="on" x-cloak x-on:click="window.open(url(), '_blank')" data-test="style-preview-draft">{{ __('Open in new tab') }}</flux:button>
+                    </div>
                 </div>
-                <div class="flex gap-2">
-                    <flux:modal.close><flux:button variant="filled">{{ __('Cancel') }}</flux:button></flux:modal.close>
-                    <flux:button variant="primary" type="submit" data-test="style-save-button">{{ __('Save') }}</flux:button>
-                </div>
+                <flux:description class="mt-1">{{ __('Drawn on your latest invoice (or a sample) using the settings above, before you save.') }}</flux:description>
+                <template x-if="on">
+                    <iframe :src="src" class="mt-2 h-[560px] w-full rounded-lg border border-border bg-white" title="{{ __('Invoice preview') }}"></iframe>
+                </template>
+            </div>
+
+            <div class="flex justify-end gap-2">
+                <flux:modal.close><flux:button variant="filled">{{ __('Cancel') }}</flux:button></flux:modal.close>
+                <flux:button variant="primary" type="submit" data-test="style-save-button">{{ __('Save') }}</flux:button>
             </div>
         </form>
     </flux:modal>
