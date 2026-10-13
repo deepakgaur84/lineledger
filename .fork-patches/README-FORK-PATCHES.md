@@ -1124,3 +1124,38 @@ everywhere (screens, PDFs, statements). Default is `01-Apr-26`.
   membership tests updated to the new default.
 - **On upstream sync:** new upstream views that use a hard-coded date format
   won't follow the setting — re-run the replacement above on them.
+
+## 21. Invoice designer (Settings → Lists → Form styles)
+
+Form styles are now a small invoice designer: a **layout gallery** plus style
+controls, applied to invoice PDFs everywhere (staff print, customer portal,
+invoice emails — all go through `InvoicePdfRenderer`).
+
+- **Layouts** (`app/Enums/InvoiceLayout.php`): Classic (the original view,
+  untouched in look), Modern, Minimal, Banner, Ledger, Elegant. Classic renders
+  `pdf.invoices.invoice`; the others render `pdf.invoices.designed` plus one
+  stylesheet partial in `resources/views/pdf/invoices/templates/_<layout>.blade.php`.
+  Add a layout = an enum case + a partial + a thumbnail branch in
+  `resources/views/partials/invoice-layout-thumb.blade.php`.
+- **Controls** (new `form_styles` columns, migration `2026_10_14_000001`): layout,
+  accent colour, font (sans / serif / mono — dompdf-bundled DejaVu only, so no
+  "?" for unusual characters), logo position + height, document title (e.g.
+  TAX INVOICE), show ship-to, striped rows, footer message. Defaults reproduce the
+  old look. Logo position applies to the designed layouts (Elegant always centres
+  it); Classic keeps it left but honours title, ship-to, font, stripes and height.
+- **`app/Support/Sales/InvoiceDesign.php`** resolves a style into render values
+  (accent tint, readable text colours, long-title flag). Plain hex only —
+  dompdf has no rgba().
+- Designed layouts also print the company's **payment instructions** (from
+  Invoice settings) as a "Payment details" block; Classic does not.
+- **Preview**: the eye button on each style opens a PDF of the company's latest
+  invoice (or a built-in sample, `SampleInvoice`) drawn with the saved style —
+  `PreviewFormStyleController`, route `lists.form-styles.preview`. Preview shows
+  the *saved* style; save first to see changes.
+- Tests: `tests/Feature/Sales/InvoiceDesignerTest.php`.
+- Rendered and eyeballed here with dompdf for all six layouts (and the colour,
+  font, logo-position and long-title variants); the Pest suite could not be run
+  in the build sandbox, so CI is the first real run.
+- **On upstream sync:** the edited upstream files are `pdf/invoices/invoice.blade.php`,
+  `InvoicePdfRenderer`, `FormStyle`, `SaveFormStyle`, the form-styles settings page,
+  the lists index description and `routes/web.php`; everything else is new.
