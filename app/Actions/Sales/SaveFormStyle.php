@@ -2,6 +2,7 @@
 
 namespace App\Actions\Sales;
 
+use App\Enums\InvoiceSection;
 use App\Models\FormStyle;
 use Illuminate\Support\Facades\DB;
 
@@ -23,6 +24,7 @@ use Illuminate\Support\Facades\DB;
  *   title_text:      ?string
  *   show_ship_to:    ?bool
  *   zebra_rows:      ?bool
+ *   sections:        ?array  (ordered list of {key: App\Enums\InvoiceSection value, visible: bool})
  *   footer_message:  ?string
  *   is_default:     ?bool
  *   is_active:      ?bool
@@ -53,6 +55,10 @@ final class SaveFormStyle
 
             if (array_key_exists('logo_max_height', $data)) {
                 $attributes['logo_max_height'] = $data['logo_max_height'] ? (int) $data['logo_max_height'] : null;
+            }
+
+            if (array_key_exists('sections', $data)) {
+                $attributes['sections'] = InvoiceSection::normalize($data['sections']);
             }
 
             if (array_key_exists('title_text', $data)) {

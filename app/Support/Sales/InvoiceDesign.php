@@ -4,6 +4,7 @@ namespace App\Support\Sales;
 
 use App\Enums\InvoiceFont;
 use App\Enums\InvoiceLayout;
+use App\Enums\InvoiceSection;
 use App\Enums\LogoPosition;
 use App\Models\FormStyle;
 
@@ -28,6 +29,8 @@ final readonly class InvoiceDesign
         public ?int $logoMaxHeight,
         public bool $showShipTo,
         public bool $zebraRows,
+        /** @var list<InvoiceSection> Visible body sections, in print order. */
+        public array $sections,
     ) {}
 
     public static function for(?FormStyle $style): self
@@ -49,6 +52,7 @@ final readonly class InvoiceDesign
             logoMaxHeight: $style?->logo_max_height ? (int) $style->logo_max_height : null,
             showShipTo: self::flag($style, 'show_ship_to', true),
             zebraRows: self::flag($style, 'zebra_rows', false),
+            sections: InvoiceSection::visibleOrder($style?->getAttributeValue('sections')),
         );
     }
 

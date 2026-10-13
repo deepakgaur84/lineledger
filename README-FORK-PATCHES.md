@@ -1148,10 +1148,22 @@ invoice emails — all go through `InvoicePdfRenderer`).
   dompdf has no rgba().
 - Designed layouts also print the company's **payment instructions** (from
   Invoice settings) as a "Payment details" block; Classic does not.
+- **Page sections** (migration `2026_10_14_000002`, `form_styles.sections` JSON,
+  `app/Enums/InvoiceSection.php`): below the header, the designed layouts print an
+  ordered list of sections — Bill to / Ship to, Line items, Totals, Payment
+  schedule, Payment details, Notes and footer — each in
+  `resources/views/pdf/invoices/sections/_<name>.blade.php`, included in the order
+  `InvoiceDesign::$sections` gives (visible ones only). The designer lists them
+  with drag handles (Livewire `wire:sort`), up/down buttons and a visibility
+  switch. The header is fixed. Classic has its own structure and ignores sections.
+  A section = an enum case + a partial. `InvoiceSection::normalize()` repairs any
+  stored value (unknown/repeated keys dropped, missing sections appended).
 - **Preview**: the eye button on each style opens a PDF of the company's latest
   invoice (or a built-in sample, `SampleInvoice`) drawn with the saved style —
-  `PreviewFormStyleController`, route `lists.form-styles.preview`. Preview shows
-  the *saved* style; save first to see changes.
+  `PreviewFormStyleController`, route `lists.form-styles.preview`. Inside the
+  designer, **Show preview** embeds a live PDF of the *unsaved* form (layout,
+  colours, section order…) via `lists.form-styles.preview-draft`, refreshing as
+  settings change; the same endpoint backs "Open in new tab".
 - Tests: `tests/Feature/Sales/InvoiceDesignerTest.php`.
 - Rendered and eyeballed here with dompdf for all six layouts (and the colour,
   font, logo-position and long-title variants); the Pest suite could not be run
