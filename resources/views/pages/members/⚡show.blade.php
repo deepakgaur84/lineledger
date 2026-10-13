@@ -80,7 +80,7 @@ new #[Title('Member')] class extends Component {
 
         $this->member->refresh()->load('contact', 'level');
 
-        Flux::toast(variant: 'success', text: __('Membership renewed through :date.', ['date' => $next->format('M j, Y')]));
+        Flux::toast(variant: 'success', text: __('Membership renewed through :date.', ['date' => $next->displayDate()]));
     }
 }; ?>
 
@@ -107,15 +107,15 @@ new #[Title('Member')] class extends Component {
     <div class="grid grid-cols-2 gap-4 rounded-lg border border-border p-6 text-sm md:grid-cols-4">
         <div>
             <div class="text-muted-foreground">{{ __('Joined') }}</div>
-            <div>{{ $member->joined_on?->format('M j, Y') ?? '—' }}</div>
+            <div>{{ $member->joined_on?->displayDate() ?? '—' }}</div>
         </div>
         <div>
             <div class="text-muted-foreground">{{ __('Term start') }}</div>
-            <div>{{ $member->started_on?->format('M j, Y') ?? '—' }}</div>
+            <div>{{ $member->started_on?->displayDate() ?? '—' }}</div>
         </div>
         <div>
             <div class="text-muted-foreground">{{ __('Expires') }}</div>
-            <div>{{ $member->expires_on?->format('M j, Y') ?? '—' }}</div>
+            <div>{{ $member->expires_on?->displayDate() ?? '—' }}</div>
         </div>
         <div>
             <div class="text-muted-foreground">{{ __('Dues') }}</div>
@@ -126,7 +126,7 @@ new #[Title('Member')] class extends Component {
     @if ($member->auto_renew)
         <flux:text class="mt-3 text-muted-foreground" data-test="member-auto-renew-note">
             @if ($member->recurringDocument?->is_active && $member->recurringDocument->next_run_date)
-                {{ __('Auto-renew is on. The next dues invoice generates automatically on :date.', ['date' => $member->recurringDocument->next_run_date->format('M j, Y')]) }}
+                {{ __('Auto-renew is on. The next dues invoice generates automatically on :date.', ['date' => $member->recurringDocument->next_run_date->displayDate()]) }}
             @else
                 {{ __('Auto-renew is on; dues invoices generate automatically each billing period once a level with a revenue account and dues is set.') }}
             @endif
@@ -151,7 +151,7 @@ new #[Title('Member')] class extends Component {
                         <td class="px-4 py-2">
                             <a href="{{ route('invoices.show', ['company' => $company, 'invoice' => $invoice]) }}" wire:navigate class="text-primary hover:underline">{{ $invoice->invoice_no }}</a>
                         </td>
-                        <td class="px-4 py-2">{{ $invoice->invoice_date?->format('M j, Y') }}</td>
+                        <td class="px-4 py-2">{{ $invoice->invoice_date?->displayDate() }}</td>
                         <td class="px-4 py-2">{{ ucfirst($invoice->status->value) }}</td>
                         <td class="px-4 py-2 text-right font-mono">{{ Money::fromCents($invoice->total_cents, $company->currency_code) }}</td>
                         <td class="px-4 py-2 text-right font-mono">{{ Money::fromCents($invoice->balanceCents(), $company->currency_code) }}</td>

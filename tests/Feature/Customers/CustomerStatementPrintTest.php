@@ -286,7 +286,7 @@ it('prints a period with a balance forward row when an open-invoices start is gi
 
     expect($html)
         ->toContain('Period')
-        ->toContain('5/15/2026 – 6/1/2026')
+        ->toContain('15-May-26 – 01-Jun-26')
         ->toContain('Balance forward')
         ->toContain('<td colspan="5">Balance forward</td>')
         ->toContain('INV-STMT-2')
@@ -308,7 +308,7 @@ it('prints the activity statement with its chosen columns', function () {
     $html = view('pdf.statements.customer-statement', $data)->render();
 
     expect($html)
-        ->toContain('1/1/2026 – 6/1/2026')
+        ->toContain('01-Jan-26 – 01-Jun-26')
         ->toContain('<td colspan="5">Opening balance</td>')
         ->toContain('PO-HARBOUR-42')
         ->not->toContain('<th style="width: 13%;">Type</th>');

@@ -144,8 +144,8 @@ new #[Title('Membership Roster')] class extends Component {
                         </td>
                         <td class="px-4 py-2">{{ $member->level?->name ?? '—' }}</td>
                         <td class="px-4 py-2"><flux:badge size="sm" :color="$status->color()">{{ $status->label() }}</flux:badge></td>
-                        <td class="px-4 py-2">{{ $member->joined_on?->format('M j, Y') ?? '—' }}</td>
-                        <td class="px-4 py-2">{{ $member->expires_on?->format('M j, Y') ?? '—' }}</td>
+                        <td class="px-4 py-2">{{ $member->joined_on?->displayDate() ?? '—' }}</td>
+                        <td class="px-4 py-2">{{ $member->expires_on?->displayDate() ?? '—' }}</td>
                         <td class="px-4 py-2 text-right font-mono">{{ Money::fromCents($this->openDuesCents($member), $company->currency_code) }}</td>
                     </tr>
                 @empty

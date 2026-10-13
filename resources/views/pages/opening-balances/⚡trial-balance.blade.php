@@ -226,7 +226,7 @@ new #[Title('Opening trial balance')] class extends Component {
 
     <div class="mb-4 flex items-center justify-between gap-3">
         <flux:text>
-            {{ __('Your draft trial balance as of :date. Every save updates the books; AR, AP and Inventory rows are targets for their own tabs and are never posted from here.', ['date' => $obState->asOf()->format('F j, Y')]) }}
+            {{ __('Your draft trial balance as of :date. Every save updates the books; AR, AP and Inventory rows are targets for their own tabs and are never posted from here.', ['date' => $obState->asOf()->displayDate()]) }}
         </flux:text>
         <flux:button icon="arrow-up-tray" wire:click="openImport" :disabled="$obState->isFinalized()" data-test="ob-tb-import-button">{{ __('Import') }}</flux:button>
     </div>

@@ -99,7 +99,7 @@ new #[Title('Donation receipts')] class extends Component {
                             <a href="{{ route('donation-receipts.show', ['company' => $company, 'donationReceipt' => $receipt]) }}" wire:navigate class="font-medium text-primary hover:underline">{{ $receipt->receipt_no }}</a>
                         </td>
                         <td class="px-4 py-2">{{ $receipt->donor_name }}</td>
-                        <td class="px-4 py-2">{{ $receipt->gift_date?->format('M j, Y') }}</td>
+                        <td class="px-4 py-2">{{ $receipt->gift_date?->displayDate() }}</td>
                         <td class="px-4 py-2 text-right font-mono">{{ Money::fromCents($receipt->eligible_amount_cents, $receipt->currency_code ?? $company->currency_code) }}</td>
                         <td class="px-4 py-2">
                             <flux:badge size="sm" :color="$this->statusColor($receipt->status)">{{ $receipt->status->label() }}</flux:badge>

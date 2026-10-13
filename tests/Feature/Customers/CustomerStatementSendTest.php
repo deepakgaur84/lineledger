@@ -184,7 +184,7 @@ it('prints the chosen columns and range on the attached PDF', function () {
     expect(view('pdf.statements.customer-statement', $data)->render())
         ->toContain('P.O. #')
         ->toContain('PO-MAIL-7')
-        ->toContain('4/1/2026 – 6/1/2026');
+        ->toContain('01-Apr-26 – 01-Jun-26');
 });
 
 it('still delivers a statement queued before columns existed, with the saved default', function () {

@@ -66,7 +66,7 @@
                         <th>{{ __('Payment #') }}</th>
                     </tr>
                     <tr>
-                        <td>{{ $payment->payment_date?->format('n/j/Y') }}</td>
+                        <td>{{ $payment->payment_date?->displayDate() }}</td>
                         <td>{{ $payment->payment_no }}</td>
                     </tr>
                 </table>
@@ -108,7 +108,7 @@
                 @foreach ($payment->applications as $app)
                     <tr>
                         <td>{{ optional($app->bill)->bill_no }}</td>
-                        <td>{{ optional(optional($app->bill)->bill_date)->format('n/j/Y') ?? '—' }}</td>
+                        <td>{{ optional(optional($app->bill)->bill_date)->displayDate() ?? '—' }}</td>
                         <td class="num">{{ number_format($app->amount_cents / 100, 2) }}</td>
                     </tr>
                 @endforeach

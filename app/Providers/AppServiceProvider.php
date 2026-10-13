@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Observers\Audit\AuditableObserver;
 use App\Observers\CompanyObserver;
 use App\Services\Currency\ExchangeRateProvider;
+use App\Support\DateDisplay;
 use App\Services\Currency\Providers\FrankfurterProvider;
 use App\Services\Currency\Providers\NullExchangeRateProvider;
 use Carbon\CarbonImmutable;
@@ -64,6 +65,7 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->configureDefaults();
+        DateDisplay::register();
         $this->configureRateLimiting();
         $this->configureRouteBindings();
         $this->configurePassport();

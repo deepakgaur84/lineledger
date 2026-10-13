@@ -286,7 +286,7 @@ new #[Title('Customer statement')] class extends Component {
 
     public function formatDate(?CarbonImmutable $date): string
     {
-        return $date?->format('n/j/Y') ?? '—';
+        return $date?->displayDate() ?? '—';
     }
 
     /**

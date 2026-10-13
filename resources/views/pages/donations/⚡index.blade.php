@@ -91,7 +91,7 @@ new #[Title('Donations')] class extends Component {
                             <a href="{{ route('donations.show', ['company' => $company, 'donation' => $donation]) }}" wire:navigate class="font-medium text-primary hover:underline">{{ $donation->donation_no }}</a>
                         </td>
                         <td class="px-4 py-2">{{ $donation->contact?->display_name ?? __('Anonymous') }}</td>
-                        <td class="px-4 py-2">{{ $donation->donation_date?->format('M j, Y') }}</td>
+                        <td class="px-4 py-2">{{ $donation->donation_date?->displayDate() }}</td>
                         <td class="px-4 py-2 text-right font-mono">{{ Money::fromCents($donation->amount_cents, $donation->currency_code ?? $company->currency_code) }}</td>
                         <td class="px-4 py-2">
                             @if ($donation->is_restricted)

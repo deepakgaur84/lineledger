@@ -120,7 +120,7 @@ new #[Title('Donation receipt')] class extends Component {
             </div>
             <div>
                 <div class="text-muted-foreground">{{ __('Gift date') }}</div>
-                <div>{{ $receipt->gift_date?->format('M j, Y') }}</div>
+                <div>{{ $receipt->gift_date?->displayDate() }}</div>
             </div>
             <div>
                 <div class="text-muted-foreground">{{ __('Fair market value') }}</div>
@@ -137,7 +137,7 @@ new #[Title('Donation receipt')] class extends Component {
             @if ($receipt->issued_date)
                 <div>
                     <div class="text-muted-foreground">{{ __('Issued') }}</div>
-                    <div>{{ $receipt->issued_date->format('M j, Y') }}</div>
+                    <div>{{ $receipt->issued_date->displayDate() }}</div>
                 </div>
             @endif
         </div>
@@ -148,7 +148,7 @@ new #[Title('Donation receipt')] class extends Component {
                 <div class="text-muted-foreground">{{ __('Property description') }}</div>
                 <div>{{ $receipt->in_kind_description ?: '—' }}</div>
                 @if ($receipt->appraised_by)
-                    <div class="mt-2 text-muted-foreground">{{ __('Appraised by :who on :when', ['who' => $receipt->appraised_by, 'when' => $receipt->appraisal_date?->format('M j, Y')]) }}</div>
+                    <div class="mt-2 text-muted-foreground">{{ __('Appraised by :who on :when', ['who' => $receipt->appraised_by, 'when' => $receipt->appraisal_date?->displayDate()]) }}</div>
                 @endif
             </div>
         @endif

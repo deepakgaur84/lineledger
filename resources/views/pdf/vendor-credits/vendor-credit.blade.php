@@ -61,7 +61,7 @@
                         <th>{{ __('Credit #') }}</th>
                     </tr>
                     <tr>
-                        <td>{{ $vendorCredit->vendor_credit_date?->format('n/j/Y') }}</td>
+                        <td>{{ $vendorCredit->vendor_credit_date?->displayDate() }}</td>
                         <td>{{ $vendorCredit->vendor_credit_no }}</td>
                     </tr>
                 </table>

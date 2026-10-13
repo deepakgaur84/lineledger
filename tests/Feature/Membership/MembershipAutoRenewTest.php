@@ -140,5 +140,5 @@ test('the member show page renders the next auto-renewal date', function () {
 
     Livewire\Livewire::test('pages::members.show', ['company' => $this->company, 'member' => $member])
         ->assertOk()
-        ->assertSee('Dec 31, 2026');
+        ->assertSee('31-Dec-26');
 });

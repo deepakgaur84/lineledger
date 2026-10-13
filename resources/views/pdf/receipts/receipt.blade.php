@@ -61,7 +61,7 @@
                         <th>{{ __('Receipt #') }}</th>
                     </tr>
                     <tr>
-                        <td>{{ $receipt->receipt_date?->format('n/j/Y') }}</td>
+                        <td>{{ $receipt->receipt_date?->displayDate() }}</td>
                         <td>{{ $receipt->receipt_no }}</td>
                     </tr>
                 </table>
@@ -103,7 +103,7 @@
                 @foreach ($receipt->applications as $app)
                     <tr>
                         <td>{{ optional($app->invoice)->invoice_no }}</td>
-                        <td>{{ optional(optional($app->invoice)->invoice_date)->format('n/j/Y') ?? '—' }}</td>
+                        <td>{{ optional(optional($app->invoice)->invoice_date)->displayDate() ?? '—' }}</td>
                         <td class="num">{{ number_format($app->amount_cents / 100, 2) }}</td>
                     </tr>
                 @endforeach

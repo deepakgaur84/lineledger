@@ -63,7 +63,7 @@
                         <th>{{ __('Receipt #') }}</th>
                     </tr>
                     <tr>
-                        <td>{{ $receipt->receipt_date?->format('n/j/Y') }}</td>
+                        <td>{{ $receipt->receipt_date?->displayDate() }}</td>
                         <td>{{ $receipt->sales_receipt_no }}</td>
                     </tr>
                 </table>

@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\CalculatorMode;
+use App\Enums\DateFormat;
 use Flux\Flux;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
@@ -10,12 +11,16 @@ use Livewire\Component;
 new #[Title('Appearance settings')] class extends Component {
     public string $calculatorMode = '';
 
+    /** Per-user: how dates are displayed everywhere. */
+    public string $dateFormat = '';
+
     /** Per-user: pressing Escape returns to the previous page. */
     public bool $escapeGoesBack = true;
 
     public function mount(): void
     {
         $this->calculatorMode = (Auth::user()->calculator_mode ?? CalculatorMode::default())->value;
+        $this->dateFormat = (Auth::user()->date_format ?? DateFormat::default())->value;
         $this->escapeGoesBack = Auth::user()->escape_goes_back !== false;
     }
 
@@ -30,6 +35,19 @@ new #[Title('Appearance settings')] class extends Component {
         $user->save();
 
         Flux::toast(variant: 'success', text: __('Calculator mode updated.'));
+    }
+
+    public function updateDateFormat(): void
+    {
+        $validated = $this->validate([
+            'dateFormat' => ['required', Rule::enum(DateFormat::class)],
+        ]);
+
+        $user = Auth::user();
+        $user->date_format = $validated['dateFormat'];
+        $user->save();
+
+        Flux::toast(variant: 'success', text: __('Date format updated.'));
     }
 
     public function updatedEscapeGoesBack(bool $value): void
@@ -70,6 +88,18 @@ new #[Title('Appearance settings')] class extends Component {
             >
                 @foreach (App\Enums\CalculatorMode::cases() as $mode)
                     <flux:radio :value="$mode->value" :label="$mode->label()" :description="$mode->description()" />
+                @endforeach
+            </flux:radio.group>
+
+            <flux:radio.group
+                wire:model.live="dateFormat"
+                @change="$wire.updateDateFormat()"
+                :label="__('Date format')"
+                :description="__('Choose how dates appear throughout the app, on printed documents and PDFs. Date fields you type into are not affected.')"
+                data-test="date-format-group"
+            >
+                @foreach (App\Enums\DateFormat::cases() as $format)
+                    <flux:radio :value="$format->value" :label="$format->example()" :description="__($format->description())" />
                 @endforeach
             </flux:radio.group>
 

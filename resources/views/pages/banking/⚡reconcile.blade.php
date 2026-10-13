@@ -918,7 +918,7 @@ new #[Title('Reconcile')] class extends Component {
             <flux:heading size="xl" level="1">{{ __('Reconcile') }}</flux:heading>
             <flux:subheading>
                 @if ($this->lastCompleted)
-                    {{ __('Last reconciled on :date', ['date' => $this->lastCompleted->statement_date->toFormattedDateString()]) }}
+                    {{ __('Last reconciled on :date', ['date' => $this->lastCompleted->statement_date->displayDate()]) }}
                 @else
                     {{ __('No completed reconciliations on this account yet.') }}
                 @endif

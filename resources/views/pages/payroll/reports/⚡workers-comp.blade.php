@@ -201,9 +201,9 @@ new #[Title("Workers' compensation remittance")] class extends Component {
         <flux:badge :color="$recorded ? 'green' : 'amber'" size="lg">
             {{ $recorded ? __('Remitted') : __('Not remitted') }}
         </flux:badge>
-        <flux:text class="text-sm text-muted-foreground">{{ __('Due :date', ['date' => $period['due']->format('M j, Y')]) }}</flux:text>
+        <flux:text class="text-sm text-muted-foreground">{{ __('Due :date', ['date' => $period['due']->displayDate()]) }}</flux:text>
         @if ($recorded)
-            <flux:text class="text-sm text-muted-foreground">· {{ __('Paid :date', ['date' => $recorded->payment_date->format('M j, Y')]) }}</flux:text>
+            <flux:text class="text-sm text-muted-foreground">· {{ __('Paid :date', ['date' => $recorded->payment_date->displayDate()]) }}</flux:text>
         @endif
     </div>
 

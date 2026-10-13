@@ -73,10 +73,10 @@ new #[Title('Remittance history')] class extends Component {
                 @forelse ($this->remittances as $remittance)
                     <tr class="@if ($remittance->status === \App\Enums\RemittanceStatus::Void) opacity-50 @endif">
                         <td class="px-4 py-2 font-medium">{{ $remittance->agency->label() }}</td>
-                        <td class="px-4 py-2">{{ $remittance->period_start->format('M j') }} – {{ $remittance->period_end->format('M j, Y') }}</td>
-                        <td class="px-4 py-2 text-muted-foreground">{{ $remittance->due_date->format('M j, Y') }}</td>
+                        <td class="px-4 py-2">{{ $remittance->period_start->format('M j') }} – {{ $remittance->period_end->displayDate() }}</td>
+                        <td class="px-4 py-2 text-muted-foreground">{{ $remittance->due_date->displayDate() }}</td>
                         <td class="px-4 py-2 text-muted-foreground">
-                            {{ $remittance->payment_date->format('M j, Y') }}
+                            {{ $remittance->payment_date->displayDate() }}
                             @if ($remittance->reference)<div class="text-xs">{{ $remittance->reference }}</div>@endif
                         </td>
                         <td class="px-4 py-2 text-right font-mono">{{ $this->money($remittance->total_cents) }}</td>

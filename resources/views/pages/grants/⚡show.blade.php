@@ -156,7 +156,7 @@ new #[Title('Grant')] class extends Component {
         </div>
         <div>
             <div class="text-muted-foreground">{{ __('Period') }}</div>
-            <div>{{ $grant->period_start?->format('M j, Y') ?? '—' }} – {{ $grant->period_end?->format('M j, Y') ?? '—' }}</div>
+            <div>{{ $grant->period_start?->displayDate() ?? '—' }} – {{ $grant->period_end?->displayDate() ?? '—' }}</div>
         </div>
     </div>
 
@@ -179,7 +179,7 @@ new #[Title('Grant')] class extends Component {
             <tbody class="divide-y divide-border">
                 @forelse ($grant->recognitions->whereNull('voided_at') as $recognition)
                     <tr data-test="grant-recognition-row">
-                        <td class="px-4 py-2">{{ $recognition->recognition_date?->format('M j, Y') }}</td>
+                        <td class="px-4 py-2">{{ $recognition->recognition_date?->displayDate() }}</td>
                         <td class="px-4 py-2 text-muted-foreground">{{ $recognition->memo ?? '—' }}</td>
                         <td class="px-4 py-2 text-right font-mono">{{ Money::fromCents($recognition->amount_cents, $grant->currency_code ?? $company->currency_code) }}</td>
                     </tr>

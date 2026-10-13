@@ -4,13 +4,13 @@
 <div class="mb-6">
     <flux:heading size="xl" level="1">{{ __('Opening balances') }}</flux:heading>
     <flux:text class="mt-1">
-        {{ __('Bring your books over from your previous system as of :date. Everything here stays editable — the ledger follows every save.', ['date' => $obState->asOf()->format('F j, Y')]) }}
+        {{ __('Bring your books over from your previous system as of :date. Everything here stays editable — the ledger follows every save.', ['date' => $obState->asOf()->displayDate()]) }}
     </flux:text>
 
     @if ($obState->isFinalized())
         <flux:callout icon="lock-closed" class="mt-4" data-test="ob-finalized-banner">
             <flux:callout.text>
-                {{ __('Opening balances are finalized and the books are locked through :date. Un-finalize on the Overview tab to edit again.', ['date' => $obState->asOf()->format('F j, Y')]) }}
+                {{ __('Opening balances are finalized and the books are locked through :date. Un-finalize on the Overview tab to edit again.', ['date' => $obState->asOf()->displayDate()]) }}
             </flux:callout.text>
         </flux:callout>
     @elseif ($obState->apply_error)

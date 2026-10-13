@@ -106,7 +106,7 @@ it('carries older open invoices forward when a start date is set', function () {
         ->assertSee('Balance forward')
         ->assertSeeHtml('data-test="statement-forward-row"')
         ->assertSeeHtml('data-test="statement-period"')
-        ->assertSee('1/1/2026 – 6/1/2026')
+        ->assertSee('01-Jan-26 – 01-Jun-26')
         ->assertSee('INV-NEW')
         ->assertDontSee('INV-OLD')
         // The total still ties to the full balance owed.

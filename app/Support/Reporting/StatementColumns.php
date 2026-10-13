@@ -234,7 +234,7 @@ final class StatementColumns
 
     /**
      * One formatted cell of a statement row — the single formatter the preview
-     * and the PDF share. Dates print n/j/Y, money as a plain 2-decimal amount.
+     * and the PDF share. Dates print in the user's chosen display format (Settings → Appearance), money as a plain 2-decimal amount.
      *
      * @param  array<string, mixed>  $row
      */
@@ -249,7 +249,7 @@ final class StatementColumns
         $value = $row[$definition['field']] ?? null;
 
         return match ($definition['format']) {
-            'date' => is_string($value) && $value !== '' ? CarbonImmutable::parse($value)->format('n/j/Y') : '—',
+            'date' => is_string($value) && $value !== '' ? \App\Support\DateDisplay::format($value) : '—',
             'money' => self::money((int) $value),
             'money_or_blank' => (int) $value !== 0 ? self::money((int) $value) : '',
             'days' => (int) $value > 0 ? (string) (int) $value : '',

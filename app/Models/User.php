@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Concerns\HasCompanies;
 use App\Enums\CalculatorMode;
+use App\Enums\DateFormat;
 use Database\Factories\UserFactory;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -24,7 +25,7 @@ use Laravel\Passport\HasApiTokens;
 // set via forceFill in the few server-controlled spots (CreateNewUser,
 // switchCompany, the site admin portal) so a stray update($validated) can never
 // escalate a user, move them between tenants, or unlock a disabled account.
-#[Fillable(['name', 'email', 'password', 'calculator_mode', 'show_daily_insights', 'escape_goes_back'])]
+#[Fillable(['name', 'email', 'password', 'calculator_mode', 'show_daily_insights', 'escape_goes_back', 'date_format'])]
 #[Hidden(['password', 'two_factor_secret', 'two_factor_recovery_codes', 'remember_token'])]
 class User extends Authenticatable implements MustVerifyEmail, OAuthenticatable, PasskeyUser
 {
@@ -40,6 +41,7 @@ class User extends Authenticatable implements MustVerifyEmail, OAuthenticatable,
         'calculator_mode' => CalculatorMode::Standard->value,
         'show_daily_insights' => true,
         'escape_goes_back' => true,
+        'date_format' => 'dd_mmm_yy',
     ];
 
     /**
@@ -56,6 +58,7 @@ class User extends Authenticatable implements MustVerifyEmail, OAuthenticatable,
             'calculator_mode' => CalculatorMode::class,
             'show_daily_insights' => 'boolean',
             'escape_goes_back' => 'boolean',
+            'date_format' => DateFormat::class,
             'site_admin' => 'boolean',
             'disabled_at' => 'datetime',
         ];

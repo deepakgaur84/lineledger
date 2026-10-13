@@ -97,7 +97,7 @@ new #[Title('Donation')] class extends Component {
             </div>
             <div>
                 <div class="text-muted-foreground">{{ __('Date') }}</div>
-                <div>{{ $donation->donation_date?->format('M j, Y') }}</div>
+                <div>{{ $donation->donation_date?->displayDate() }}</div>
             </div>
             <div>
                 <div class="text-muted-foreground">{{ __('Amount') }}</div>

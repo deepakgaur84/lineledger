@@ -39,7 +39,7 @@
 </head>
 <body>
     @php
-        $fmtDate = fn (?string $date): string => $date ? \Carbon\CarbonImmutable::parse($date)->format('n/j/Y') : '—';
+        $fmtDate = fn (?string $date): string => $date ? \Carbon\CarbonImmutable::parse($date)->displayDate() : '—';
         $money = fn (int $cents): string => \App\Support\Reporting\StatementColumns::money($cents);
 
         $statementForLines = collect([

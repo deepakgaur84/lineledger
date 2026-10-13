@@ -222,7 +222,7 @@ new #[Title('Reconciliation detail')] class extends Component {
             <flux:heading size="xl" level="1" class="mt-1">{{ __('Reconciliation') }} #{{ $rec->id }}</flux:heading>
             <flux:subheading>
                 {{ $rec->account?->code }} — {{ $rec->account?->name }}
-                · {{ __('Statement') }} {{ $rec->statement_date->toFormattedDateString() }}
+                · {{ __('Statement') }} {{ $rec->statement_date->displayDate() }}
             </flux:subheading>
         </div>
         <div class="flex items-center gap-2">
