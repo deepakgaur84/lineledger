@@ -59,7 +59,7 @@ it('formats every cell the same way for the preview and the PDF', function () {
         'balance' => -500,
     ];
 
-    expect(StatementColumns::cell('invoice_date', $row))->toBe('3/1/2026')
+    expect(StatementColumns::cell('invoice_date', $row))->toBe('01-Mar-26')
         ->and(StatementColumns::cell('due_date', $row))->toBe('—')
         ->and(StatementColumns::cell('po', $row))->toBe('PO-9')
         ->and(StatementColumns::cell('original', $row))->toBe('1,234.56')
