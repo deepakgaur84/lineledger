@@ -32,7 +32,7 @@ final readonly class InvoiceDesign
 
     public static function for(?FormStyle $style): self
     {
-        $layout = $style?->layout ?? InvoiceLayout::default();
+        $layout = self::enumValue($style, 'layout', InvoiceLayout::class) ?? InvoiceLayout::default();
         $accent = self::validHex($style?->accent_color) ?? $layout->defaultAccent();
         $title = $style?->title_text;
 
@@ -43,13 +43,37 @@ final readonly class InvoiceDesign
             accentSoft: $accent ? self::mixWithWhite($accent, 0.04) : '#f9fafb',
             onAccent: $accent ? self::readableOn($accent) : '#1f2937',
             accentText: $accent ? self::legibleOnWhite($accent) : '#1f2937',
-            font: $style?->font_family ?? InvoiceFont::default(),
+            font: self::enumValue($style, 'font_family', InvoiceFont::class) ?? InvoiceFont::default(),
             titleText: filled($title) ? trim((string) $title) : null,
-            logoPosition: $style?->logo_position ?? LogoPosition::default(),
+            logoPosition: self::enumValue($style, 'logo_position', LogoPosition::class) ?? LogoPosition::default(),
             logoMaxHeight: $style?->logo_max_height ? (int) $style->logo_max_height : null,
-            showShipTo: $style?->show_ship_to ?? true,
-            zebraRows: $style?->zebra_rows ?? false,
+            showShipTo: self::flag($style, 'show_ship_to', true),
+            zebraRows: self::flag($style, 'zebra_rows', false),
         );
+    }
+
+    /**
+     * @template T of \BackedEnum
+     *
+     * @param  class-string<T>  $enum
+     * @return T|null
+     */
+    private static function enumValue(?FormStyle $style, string $attribute, string $enum): ?\BackedEnum
+    {
+        $value = $style?->getAttributeValue($attribute);
+
+        if ($value instanceof $enum) {
+            return $value;
+        }
+
+        return is_string($value) || is_int($value) ? $enum::tryFrom($value) : null;
+    }
+
+    private static function flag(?FormStyle $style, string $attribute, bool $default): bool
+    {
+        $value = $style?->getAttributeValue($attribute);
+
+        return $value === null ? $default : (bool) $value;
     }
 
     /** The document title: the style's own wording (e.g. "TAX INVOICE"), else "INVOICE". */
