@@ -1158,16 +1158,23 @@ invoice emails — all go through `InvoicePdfRenderer`).
   switch. The header is fixed. Classic has its own structure and ignores sections.
   A section = an enum case + a partial. `InvoiceSection::normalize()` repairs any
   stored value (unknown/repeated keys dropped, missing sections appended).
-- **Preview**: the eye button on each style opens a PDF of the company's latest
-  invoice (or a built-in sample, `SampleInvoice`) drawn with the saved style —
-  `PreviewFormStyleController`, route `lists.form-styles.preview`. Inside the
-  designer, **Show preview** embeds a live PDF of the *unsaved* form (layout,
-  colours, section order…) via `lists.form-styles.preview-draft`, refreshing as
-  settings change; the same endpoint backs "Open in new tab".
+- **Preview**: the Form styles page is two panes — the list of styles on the left,
+  and on the right a PDF of the selected style's *saved* version drawn on the
+  company's latest invoice (or a built-in sample, `SampleInvoice`) —
+  `PreviewFormStyleController`, route `lists.form-styles.preview`. The editor
+  modal is also two panes: the form on the left and a **live preview of the unsaved
+  settings** (layout, colours, section order…) on the right, via
+  `lists.form-styles.preview-draft`, refreshing as settings change.
+- **Framing**: the app sends `X-Frame-Options: DENY` everywhere (`SecurityHeaders`).
+  The two preview routes set the request attribute `allow_same_origin_framing`,
+  which makes the middleware send `SAMEORIGIN` / `frame-ancestors 'self'` /
+  `object-src 'self'` for those responses only (Chrome's PDF viewer needs the
+  last). `SecurityHeaders.php` is an upstream file with a small fork edit — keep it
+  in `.fork-patches` and re-check it on upstream sync.
 - Tests: `tests/Feature/Sales/InvoiceDesignerTest.php`.
 - Rendered and eyeballed here with dompdf for all six layouts (and the colour,
   font, logo-position and long-title variants); the Pest suite could not be run
   in the build sandbox, so CI is the first real run.
 - **On upstream sync:** the edited upstream files are `pdf/invoices/invoice.blade.php`,
-  `InvoicePdfRenderer`, `FormStyle`, `SaveFormStyle`, the form-styles settings page,
+  `InvoicePdfRenderer`, `FormStyle`, `SaveFormStyle`, `SecurityHeaders`, the form-styles settings page,
   the lists index description and `routes/web.php`; everything else is new.
