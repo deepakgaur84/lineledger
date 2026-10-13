@@ -50,9 +50,25 @@ new #[Title('Form styles')] class extends Component {
 
     public bool $f_is_active = true;
 
+    /** The style whose saved version is shown in the preview pane on the right. */
+    public ?int $selectedId = null;
+
+    /** Set once the editor modal has been opened, so its live preview only loads from then on. */
+    public bool $designing = false;
+
     public function mount(Company $company): void
     {
         $this->company = $company;
+
+        $styles = $this->styles;
+        $this->selectedId = ($styles->firstWhere('is_default', true) ?? $styles->first())?->id;
+    }
+
+    public function select(int $id): void
+    {
+        if (FormStyle::query()->whereKey($id)->exists()) {
+            $this->selectedId = $id;
+        }
     }
 
     public function openCreate(): void
@@ -69,6 +85,7 @@ new #[Title('Form styles')] class extends Component {
         $this->f_show_ship_to = true;
         $this->f_sections = InvoiceSection::normalize(null);
         $this->f_is_active = true;
+        $this->designing = true;
         Flux::modal('form-styles-form')->show();
     }
 
@@ -95,6 +112,8 @@ new #[Title('Form styles')] class extends Component {
         $this->f_footer_message = $s->footer_message ?? '';
         $this->f_is_default = $s->is_default;
         $this->f_is_active = $s->is_active;
+        $this->selectedId = $s->id;
+        $this->designing = true;
         Flux::modal('form-styles-form')->show();
     }
 
@@ -172,7 +191,7 @@ new #[Title('Form styles')] class extends Component {
         $editing = $this->editingId ? FormStyle::findOrFail($this->editingId) : null;
         abort_if($editing !== null && $editing->company_id !== $this->company->id, 403);
 
-        app(SaveFormStyle::class)->handle([
+        $saved = app(SaveFormStyle::class)->handle([
             'name' => $validated['f_name'],
             'layout' => $validated['f_layout'],
             'show_logo' => $validated['f_show_logo'],
@@ -189,9 +208,17 @@ new #[Title('Form styles')] class extends Component {
             'is_active' => $validated['f_is_active'],
         ], $editing);
 
+        $this->selectedId = $saved->id;
+        $this->designing = false;
         $this->completeEditLockSave();
         Flux::modal('form-styles-form')->close();
         Flux::toast(variant: 'success', text: __('Form style saved.'));
+    }
+
+    #[Computed]
+    public function selectedStyle(): ?FormStyle
+    {
+        return $this->selectedId ? $this->styles->firstWhere('id', $this->selectedId) : null;
     }
 
     #[Computed]
@@ -204,184 +231,194 @@ new #[Title('Form styles')] class extends Component {
 <section class="w-full">
     @include('partials.settings-heading')
 
-    <x-pages::settings.layout :heading="__('Form styles')" :subheading="__('Design your invoices: pick a layout, colour, font and logo placement, then choose a style on each invoice or set one as the default.')">
-        <div class="mb-4 flex justify-end">
-            <flux:button variant="primary" icon="plus" wire:click="openCreate" data-test="new-style-button">{{ __('New style') }}</flux:button>
-        </div>
+    <x-pages::settings.layout contentClass="max-w-none" :heading="__('Form styles')" :subheading="__('Design your invoices: pick a layout, colour, font, logo placement and section order, then choose a style on each invoice or set one as the default.')">
+        <div class="grid gap-6 lg:grid-cols-[20rem_minmax(0,1fr)]">
+            <div>
+                <div class="mb-3 flex justify-end">
+                    <flux:button variant="primary" icon="plus" wire:click="openCreate" data-test="new-style-button">{{ __('New style') }}</flux:button>
+                </div>
 
-        <div class="overflow-x-auto rounded-lg border border-border">
-            <table class="w-full text-sm">
-                <thead class="bg-muted">
-                    <tr>
-                        <th class="px-4 py-2 text-left">{{ __('Name') }}</th>
-                        <th class="px-4 py-2 text-left">{{ __('Layout') }}</th>
-                        <th class="px-4 py-2 text-center">{{ __('Default') }}</th>
-                        <th class="px-4 py-2 text-center">{{ __('Accent') }}</th>
-                        <th class="px-4 py-2"></th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-border">
+                <ul class="divide-y divide-border overflow-hidden rounded-lg border border-border" data-test="style-list">
                     @forelse ($this->styles as $s)
-                        <tr data-test="style-row" class="@if(! $s->is_active) opacity-50 @endif">
-                            <td class="px-4 py-2">{{ $s->name }}</td>
-                            <td class="px-4 py-2 text-muted-foreground">{{ ($s->layout ?? \App\Enums\InvoiceLayout::default())->label() }}</td>
-                            <td class="px-4 py-2 text-center">
-                                @if ($s->is_default)
-                                    <flux:badge color="emerald" size="sm" data-test="style-default-badge">{{ __('Default') }}</flux:badge>
-                                @endif
-                            </td>
-                            <td class="px-4 py-2 text-center">
+                        <li wire:key="style-{{ $s->id }}" data-test="style-row" class="flex items-center gap-1 pe-2 @if ($selectedId === $s->id) bg-muted @endif @if (! $s->is_active) opacity-60 @endif">
+                            <button type="button" wire:click="select({{ $s->id }})" class="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-start" data-test="style-select-{{ $s->id }}" @if ($selectedId === $s->id) aria-current="true" @endif>
                                 @if ($s->accent_color)
-                                    <span class="inline-block size-4 rounded-full border border-border align-middle" style="background: {{ $s->accent_color }};" title="{{ $s->accent_color }}"></span>
+                                    <span class="inline-block size-4 shrink-0 rounded-full border border-border" style="background: {{ $s->accent_color }};" title="{{ $s->accent_color }}"></span>
                                 @else
-                                    <span class="text-muted-foreground">—</span>
+                                    <span class="inline-block size-4 shrink-0 rounded-full border border-dashed border-border" title="{{ __('Layout colour') }}"></span>
                                 @endif
-                            </td>
-                            <td class="px-4 py-2 text-right">
-                                <flux:button variant="ghost" size="sm" icon="eye" :href="route('lists.form-styles.preview', ['company' => $company, 'style' => $s->id])" target="_blank" :tooltip="__('Preview as PDF')" data-test="style-preview-link" />
-                                <flux:button variant="ghost" size="sm" icon="pencil" wire:click="openEdit({{ $s->id }})" />
-                            </td>
-                        </tr>
+                                <span class="min-w-0">
+                                    <span class="block truncate text-sm font-medium">{{ $s->name }}</span>
+                                    <span class="block text-xs text-muted-foreground">{{ __(($s->layout ?? \App\Enums\InvoiceLayout::default())->label()) }}@if (! $s->is_active) · {{ __('Inactive') }}@endif</span>
+                                </span>
+                                @if ($s->is_default)
+                                    <flux:badge color="emerald" size="sm" class="ms-auto" data-test="style-default-badge">{{ __('Default') }}</flux:badge>
+                                @endif
+                            </button>
+                            <flux:button variant="ghost" size="sm" icon="pencil" wire:click="openEdit({{ $s->id }})" :tooltip="__('Edit')" data-test="style-edit-{{ $s->id }}" />
+                        </li>
                     @empty
-                        <tr><td colspan="5" class="px-4 py-8 text-center text-muted-foreground">{{ __('No form styles yet. Invoices use your invoice settings until you add one.') }}</td></tr>
+                        <li class="px-4 py-8 text-center text-sm text-muted-foreground">{{ __('No form styles yet. Invoices use your invoice settings until you add one.') }}</li>
                     @endforelse
-                </tbody>
-            </table>
+                </ul>
+            </div>
+
+            <div class="lg:sticky lg:top-4 lg:self-start" data-test="style-preview-pane">
+                @if ($this->selectedStyle)
+                    <div class="mb-2 flex items-center justify-between gap-2">
+                        <div class="min-w-0 truncate text-sm font-medium">{{ $this->selectedStyle->name }}</div>
+                        <flux:button variant="ghost" size="sm" icon="arrow-top-right-on-square" :href="route('lists.form-styles.preview', ['company' => $company, 'style' => $this->selectedStyle->id])" target="_blank" data-test="style-preview-link">{{ __('Open in new tab') }}</flux:button>
+                    </div>
+                    <iframe
+                        wire:key="preview-{{ $this->selectedStyle->id }}-{{ $this->selectedStyle->updated_at?->timestamp }}"
+                        src="{{ route('lists.form-styles.preview', ['company' => $company, 'style' => $this->selectedStyle->id, 'v' => $this->selectedStyle->updated_at?->timestamp]) }}"
+                        class="h-[80vh] w-full rounded-lg border border-border bg-white"
+                        title="{{ __('Invoice preview') }}"
+                        data-test="style-preview-frame"
+                    ></iframe>
+                    <flux:text class="mt-2 text-xs text-muted-foreground">{{ __('Drawn on your latest invoice, or a sample if you have none.') }}</flux:text>
+                @else
+                    <div class="flex h-64 items-center justify-center rounded-lg border border-dashed border-border text-sm text-muted-foreground">{{ __('Create a style to see a preview.') }}</div>
+                @endif
+            </div>
         </div>
     </x-pages::settings.layout>
 
-    <flux:modal name="form-styles-form" class="w-full max-w-3xl" wire:close="releaseEditLock">
+    <flux:modal name="form-styles-form" class="w-full max-w-7xl" wire:close="releaseEditLock">
         <form wire:submit="save" class="space-y-6">
             @if ($editLockToken)
                 <x-edit-lock.keeper :config="$this->editLockKeeper" :token="$editLockToken" />
             @endif
             <flux:heading size="lg">{{ $editingId ? __('Edit form style') : __('New form style') }}</flux:heading>
-            <flux:input wire:model="f_name" :label="__('Name')" required data-test="style-name" />
+            <div class="grid gap-8 lg:grid-cols-2">
+                <div class="space-y-6">
+                <flux:input wire:model="f_name" :label="__('Name')" required data-test="style-name" />
 
-            <div>
-                <flux:label>{{ __('Layout') }}</flux:label>
-                <div class="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3" data-test="layout-gallery">
-                    @foreach (\App\Enums\InvoiceLayout::cases() as $layout)
-                        <label wire:key="layout-{{ $layout->value }}" class="cursor-pointer rounded-lg border border-border p-2 transition hover:bg-muted @if ($f_layout === $layout->value) ring-2 ring-blue-600 @endif">
-                            <input type="radio" class="sr-only" wire:model.live="f_layout" value="{{ $layout->value }}" data-test="layout-{{ $layout->value }}" />
-                            @include('partials.invoice-layout-thumb', ['layout' => $layout->value, 'accent' => $f_accent_color])
-                            <div class="mt-2 text-sm font-medium">{{ __($layout->label()) }}</div>
-                            <div class="text-xs text-muted-foreground">{{ __($layout->description()) }}</div>
-                        </label>
-                    @endforeach
-                </div>
-                <flux:error name="f_layout" />
-            </div>
-
-            @if ($f_layout !== 'classic')
-                <div data-test="section-order">
-                    <flux:label>{{ __('Page sections') }}</flux:label>
-                    <flux:description class="mt-1">{{ __('Drag to reorder what appears below the header, or switch a section off. The header always stays on top.') }}</flux:description>
-                    <ul wire:sort="sortSection" class="mt-2 divide-y divide-border rounded-lg border border-border">
-                        @foreach ($f_sections as $i => $entry)
-                            @php($section = \App\Enums\InvoiceSection::from($entry['key']))
-                            <li wire:key="section-{{ $entry['key'] }}" wire:sort:item="{{ $entry['key'] }}" class="flex items-center gap-3 bg-card px-3 py-2 @if (! $entry['visible']) opacity-60 @endif" data-test="section-row-{{ $entry['key'] }}">
-                                <span wire:sort:handle class="cursor-grab text-muted-foreground" title="{{ __('Drag to reorder') }}" data-test="section-handle-{{ $entry['key'] }}">
-                                    <flux:icon name="bars-3" class="size-5" />
-                                </span>
-                                <div class="min-w-0 flex-1">
-                                    <div class="text-sm font-medium">{{ __($section->label()) }}</div>
-                                    <div class="text-xs text-muted-foreground">{{ __($section->description()) }}</div>
-                                </div>
-                                <flux:button type="button" size="xs" variant="ghost" icon="chevron-up" wire:click="moveSection('{{ $entry['key'] }}', -1)" :disabled="$loop->first" :tooltip="__('Move up')" data-test="section-up-{{ $entry['key'] }}" />
-                                <flux:button type="button" size="xs" variant="ghost" icon="chevron-down" wire:click="moveSection('{{ $entry['key'] }}', 1)" :disabled="$loop->last" :tooltip="__('Move down')" data-test="section-down-{{ $entry['key'] }}" />
-                                <flux:switch wire:model.live="f_sections.{{ $i }}.visible" :aria-label="__('Show :section', ['section' => __($section->label())])" data-test="section-visible-{{ $entry['key'] }}" />
-                            </li>
-                        @endforeach
-                    </ul>
-                </div>
-            @else
-                <flux:text class="text-sm text-muted-foreground" data-test="section-order-classic-note">{{ __('The Classic layout has a fixed structure. Pick another layout to reorder its sections.') }}</flux:text>
-            @endif
-
-            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                    <flux:label>{{ __('Accent colour') }}</flux:label>
-                    <div class="mt-2 flex items-center gap-2">
-                        <input type="color" wire:model.live="f_accent_color" value="{{ preg_match('/^#[0-9a-fA-F]{6}$/', $f_accent_color) ? $f_accent_color : '#2563eb' }}" class="h-10 w-14 cursor-pointer rounded-md border border-border bg-card" data-test="style-accent-color-picker" />
-                        <flux:input wire:model.live.debounce.500ms="f_accent_color" placeholder="#2563eb" data-test="style-accent-color" class="flex-1" />
+                    <flux:label>{{ __('Layout') }}</flux:label>
+                    <div class="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3" data-test="layout-gallery">
+                        @foreach (\App\Enums\InvoiceLayout::cases() as $layout)
+                            <label wire:key="layout-{{ $layout->value }}" class="cursor-pointer rounded-lg border border-border p-2 transition hover:bg-muted @if ($f_layout === $layout->value) ring-2 ring-blue-600 @endif">
+                                <input type="radio" class="sr-only" wire:model.live="f_layout" value="{{ $layout->value }}" data-test="layout-{{ $layout->value }}" />
+                                @include('partials.invoice-layout-thumb', ['layout' => $layout->value, 'accent' => $f_accent_color])
+                                <div class="mt-2 text-sm font-medium">{{ __($layout->label()) }}</div>
+                                <div class="text-xs text-muted-foreground">{{ __($layout->description()) }}</div>
+                            </label>
+                        @endforeach
                     </div>
-                    <flux:description class="mt-1">{{ __('Tints the title, headings and totals. Leave blank for the layout\'s own colour.') }}</flux:description>
-                    <flux:error name="f_accent_color" />
+                    <flux:error name="f_layout" />
                 </div>
-                <flux:select wire:model="f_font_family" :label="__('Font')" data-test="style-font">
-                    @foreach (\App\Enums\InvoiceFont::cases() as $font)
-                        <flux:select.option value="{{ $font->value }}">{{ __($font->label()) }}</flux:select.option>
-                    @endforeach
-                </flux:select>
-            </div>
 
-            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <flux:input wire:model="f_title_text" :label="__('Document title')" placeholder="{{ __('INVOICE') }}" :description="__('For example TAX INVOICE. Leave blank for INVOICE.')" data-test="style-title-text" />
-                <flux:input wire:model="f_footer_message" :label="__('Footer message')" :description="__('Overrides the footer message from invoice settings.')" data-test="style-footer-message" />
-            </div>
-
-            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <flux:select wire:model="f_logo_position" :label="__('Logo position')" :description="__('The Elegant layout always centres the logo; Classic keeps it on the left.')" data-test="style-logo-position">
-                    @foreach (\App\Enums\LogoPosition::cases() as $position)
-                        <flux:select.option value="{{ $position->value }}">{{ __($position->label()) }}</flux:select.option>
-                    @endforeach
-                </flux:select>
-                <flux:input wire:model="f_logo_max_height" type="number" min="16" max="200" :label="__('Logo height (px)')" :description="__('Leave blank to use the height from your company settings.')" data-test="style-logo-height" />
-            </div>
-
-            <div class="space-y-3">
-                <flux:switch wire:model="f_show_logo" :label="__('Show logo')" data-test="style-show-logo" />
-                <flux:switch wire:model="f_show_ship_to" :label="__('Show ship-to address')" data-test="style-show-ship-to" />
-                <flux:switch wire:model="f_zebra_rows" :label="__('Striped line rows')" :description="__('The Ledger layout is always striped.')" data-test="style-zebra-rows" />
-                <flux:switch wire:model="f_is_default" :label="__('Default style')" :description="__('Used for invoices that don\'t pick a style.')" data-test="style-is-default" />
-                <flux:switch wire:model="f_is_active" :label="__('Active')" />
-            </div>
-
-            <div
-                x-data="{
-                    on: false,
-                    src: '',
-                    timer: null,
-                    base: @js(route('lists.form-styles.preview-draft', ['company' => $company])),
-                    url() {
-                        const w = $wire;
-                        return this.base + '?' + new URLSearchParams({
-                            layout: w.f_layout,
-                            font_family: w.f_font_family,
-                            logo_position: w.f_logo_position,
-                            logo_max_height: w.f_logo_max_height ?? '',
-                            accent_color: w.f_accent_color ?? '',
-                            title_text: w.f_title_text ?? '',
-                            footer_message: w.f_footer_message ?? '',
-                            show_logo: w.f_show_logo ? 1 : 0,
-                            show_ship_to: w.f_show_ship_to ? 1 : 0,
-                            zebra_rows: w.f_zebra_rows ? 1 : 0,
-                            sections: (w.f_sections ?? []).map(s => s.key + ':' + (s.visible ? 1 : 0)).join(','),
-                        }).toString();
-                    },
-                    refresh() { this.src = this.url(); },
-                }"
-                x-effect="if (on) { const next = url(); clearTimeout(timer); timer = setTimeout(() => src = next, 700); }"
-                data-test="style-live-preview"
-            >
-                <div class="flex items-center justify-between gap-2">
-                    <flux:label>{{ __('Live preview') }}</flux:label>
-                    <div class="flex gap-2">
-                        <flux:button type="button" size="sm" variant="ghost" icon="eye" x-show="! on" x-on:click="on = true" data-test="style-preview-show">{{ __('Show preview') }}</flux:button>
-                        <flux:button type="button" size="sm" variant="ghost" icon="arrow-path" x-show="on" x-cloak x-on:click="refresh()" data-test="style-preview-refresh">{{ __('Refresh') }}</flux:button>
-                        <flux:button type="button" size="sm" variant="ghost" icon="arrow-top-right-on-square" x-show="on" x-cloak x-on:click="window.open(url(), '_blank')" data-test="style-preview-draft">{{ __('Open in new tab') }}</flux:button>
+                @if ($f_layout !== 'classic')
+                    <div data-test="section-order">
+                        <flux:label>{{ __('Page sections') }}</flux:label>
+                        <flux:description class="mt-1">{{ __('Drag to reorder what appears below the header, or switch a section off. The header always stays on top.') }}</flux:description>
+                        <ul wire:sort="sortSection" class="mt-2 divide-y divide-border rounded-lg border border-border">
+                            @foreach ($f_sections as $i => $entry)
+                                @php($section = \App\Enums\InvoiceSection::from($entry['key']))
+                                <li wire:key="section-{{ $entry['key'] }}" wire:sort:item="{{ $entry['key'] }}" class="flex items-center gap-3 bg-card px-3 py-2 @if (! $entry['visible']) opacity-60 @endif" data-test="section-row-{{ $entry['key'] }}">
+                                    <span wire:sort:handle class="cursor-grab text-muted-foreground" title="{{ __('Drag to reorder') }}" data-test="section-handle-{{ $entry['key'] }}">
+                                        <flux:icon name="bars-3" class="size-5" />
+                                    </span>
+                                    <div class="min-w-0 flex-1">
+                                        <div class="text-sm font-medium">{{ __($section->label()) }}</div>
+                                        <div class="text-xs text-muted-foreground">{{ __($section->description()) }}</div>
+                                    </div>
+                                    <flux:button type="button" size="xs" variant="ghost" icon="chevron-up" wire:click="moveSection('{{ $entry['key'] }}', -1)" :disabled="$loop->first" :tooltip="__('Move up')" data-test="section-up-{{ $entry['key'] }}" />
+                                    <flux:button type="button" size="xs" variant="ghost" icon="chevron-down" wire:click="moveSection('{{ $entry['key'] }}', 1)" :disabled="$loop->last" :tooltip="__('Move down')" data-test="section-down-{{ $entry['key'] }}" />
+                                    <flux:switch wire:model.live="f_sections.{{ $i }}.visible" :aria-label="__('Show :section', ['section' => __($section->label())])" data-test="section-visible-{{ $entry['key'] }}" />
+                                </li>
+                            @endforeach
+                        </ul>
                     </div>
-                </div>
-                <flux:description class="mt-1">{{ __('Drawn on your latest invoice (or a sample) using the settings above, before you save.') }}</flux:description>
-                <template x-if="on">
-                    <iframe :src="src" class="mt-2 h-[560px] w-full rounded-lg border border-border bg-white" title="{{ __('Invoice preview') }}"></iframe>
-                </template>
-            </div>
+                @else
+                    <flux:text class="text-sm text-muted-foreground" data-test="section-order-classic-note">{{ __('The Classic layout has a fixed structure. Pick another layout to reorder its sections.') }}</flux:text>
+                @endif
 
-            <div class="flex justify-end gap-2">
-                <flux:modal.close><flux:button variant="filled">{{ __('Cancel') }}</flux:button></flux:modal.close>
-                <flux:button variant="primary" type="submit" data-test="style-save-button">{{ __('Save') }}</flux:button>
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                        <flux:label>{{ __('Accent colour') }}</flux:label>
+                        <div class="mt-2 flex items-center gap-2">
+                            <input type="color" wire:model.live="f_accent_color" value="{{ preg_match('/^#[0-9a-fA-F]{6}$/', $f_accent_color) ? $f_accent_color : '#2563eb' }}" class="h-10 w-14 cursor-pointer rounded-md border border-border bg-card" data-test="style-accent-color-picker" />
+                            <flux:input wire:model.live.debounce.500ms="f_accent_color" placeholder="#2563eb" data-test="style-accent-color" class="flex-1" />
+                        </div>
+                        <flux:description class="mt-1">{{ __('Tints the title, headings and totals. Leave blank for the layout\'s own colour.') }}</flux:description>
+                        <flux:error name="f_accent_color" />
+                    </div>
+                    <flux:select wire:model="f_font_family" :label="__('Font')" data-test="style-font">
+                        @foreach (\App\Enums\InvoiceFont::cases() as $font)
+                            <flux:select.option value="{{ $font->value }}">{{ __($font->label()) }}</flux:select.option>
+                        @endforeach
+                    </flux:select>
+                </div>
+
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <flux:input wire:model="f_title_text" :label="__('Document title')" placeholder="{{ __('INVOICE') }}" :description="__('For example TAX INVOICE. Leave blank for INVOICE.')" data-test="style-title-text" />
+                    <flux:input wire:model="f_footer_message" :label="__('Footer message')" :description="__('Overrides the footer message from invoice settings.')" data-test="style-footer-message" />
+                </div>
+
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <flux:select wire:model="f_logo_position" :label="__('Logo position')" :description="__('The Elegant layout always centres the logo; Classic keeps it on the left.')" data-test="style-logo-position">
+                        @foreach (\App\Enums\LogoPosition::cases() as $position)
+                            <flux:select.option value="{{ $position->value }}">{{ __($position->label()) }}</flux:select.option>
+                        @endforeach
+                    </flux:select>
+                    <flux:input wire:model="f_logo_max_height" type="number" min="16" max="200" :label="__('Logo height (px)')" :description="__('Leave blank to use the height from your company settings.')" data-test="style-logo-height" />
+                </div>
+
+                <div class="space-y-3">
+                    <flux:switch wire:model="f_show_logo" :label="__('Show logo')" data-test="style-show-logo" />
+                    <flux:switch wire:model="f_show_ship_to" :label="__('Show ship-to address')" data-test="style-show-ship-to" />
+                    <flux:switch wire:model="f_zebra_rows" :label="__('Striped line rows')" :description="__('The Ledger layout is always striped.')" data-test="style-zebra-rows" />
+                    <flux:switch wire:model="f_is_default" :label="__('Default style')" :description="__('Used for invoices that don\'t pick a style.')" data-test="style-is-default" />
+                    <flux:switch wire:model="f_is_active" :label="__('Active')" />
+                </div>
+
+
+                <div class="sticky bottom-0 z-10 -mx-1 flex justify-end gap-2 border-t border-border bg-white px-1 py-3 dark:bg-zinc-900">
+                    <flux:modal.close><flux:button variant="filled">{{ __('Cancel') }}</flux:button></flux:modal.close>
+                    <flux:button variant="primary" type="submit" data-test="style-save-button">{{ __('Save') }}</flux:button>
+                </div>
+                </div>
+
+                @if ($designing)
+                    <div
+                        class="lg:sticky lg:top-0 lg:self-start"
+                        x-data="{
+                            src: '',
+                            timer: null,
+                            base: @js(route('lists.form-styles.preview-draft', ['company' => $company])),
+                            url() {
+                                const w = $wire;
+                                return this.base + '?' + new URLSearchParams({
+                                    layout: w.f_layout,
+                                    font_family: w.f_font_family,
+                                    logo_position: w.f_logo_position,
+                                    logo_max_height: w.f_logo_max_height ?? '',
+                                    accent_color: w.f_accent_color ?? '',
+                                    title_text: w.f_title_text ?? '',
+                                    footer_message: w.f_footer_message ?? '',
+                                    show_logo: w.f_show_logo ? 1 : 0,
+                                    show_ship_to: w.f_show_ship_to ? 1 : 0,
+                                    zebra_rows: w.f_zebra_rows ? 1 : 0,
+                                    sections: (w.f_sections ?? []).map(s => s.key + ':' + (s.visible ? 1 : 0)).join(','),
+                                }).toString();
+                            },
+                        }"
+                        x-init="src = url()"
+                        x-effect="const next = url(); clearTimeout(timer); timer = setTimeout(() => { if (next !== src) src = next; }, 700)"
+                        data-test="style-live-preview"
+                    >
+                        <div class="mb-2 flex items-center justify-between gap-2">
+                            <div>
+                                <flux:label>{{ __('Live preview') }}</flux:label>
+                                <flux:description>{{ __('Updates as you change the settings, before you save.') }}</flux:description>
+                            </div>
+                            <flux:button type="button" size="sm" variant="ghost" icon="arrow-top-right-on-square" x-on:click="window.open(url(), '_blank')" data-test="style-preview-draft">{{ __('Open in new tab') }}</flux:button>
+                        </div>
+                        <iframe :src="src" class="h-[78vh] w-full rounded-lg border border-border bg-white" title="{{ __('Invoice preview') }}"></iframe>
+                    </div>
+                @endif
             </div>
         </form>
     </flux:modal>

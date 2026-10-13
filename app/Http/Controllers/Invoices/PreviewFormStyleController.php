@@ -23,8 +23,9 @@ use Illuminate\Validation\Rule;
  */
 class PreviewFormStyleController extends Controller
 {
-    public function __invoke(Company $company, int $style, InvoicePdfRenderer $renderer): Response
+    public function __invoke(Request $request, Company $company, int $style, InvoicePdfRenderer $renderer): Response
     {
+        $this->allowFraming($request);
         $formStyle = FormStyle::query()->where('company_id', $company->id)->findOrFail($style);
 
         return $renderer->previewInline($company, $this->invoiceFor($company), $formStyle);
@@ -33,6 +34,8 @@ class PreviewFormStyleController extends Controller
     /** Preview the settings in the designer form without saving them. */
     public function draft(Company $company, Request $request, InvoicePdfRenderer $renderer): Response
     {
+        $this->allowFraming($request);
+
         $data = $request->validate([
             'layout' => ['required', Rule::enum(InvoiceLayout::class)],
             'font_family' => ['nullable', Rule::enum(InvoiceFont::class)],
@@ -61,6 +64,12 @@ class PreviewFormStyleController extends Controller
         ]);
 
         return $renderer->previewInline($company, $this->invoiceFor($company), $formStyle);
+    }
+
+    /** The designer shows these PDFs in an <iframe> on its own page. */
+    private function allowFraming(Request $request): void
+    {
+        $request->attributes->set('allow_same_origin_framing', true);
     }
 
     private function invoiceFor(Company $company): Invoice

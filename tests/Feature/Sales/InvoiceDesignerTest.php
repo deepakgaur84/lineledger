@@ -506,3 +506,55 @@ it('explains that Classic has a fixed structure', function () {
         ->assertDontSeeHtml('data-test="section-order"')
         ->assertSeeHtml('data-test="section-order-classic-note"');
 });
+
+it('selects the default style for the preview pane and lets you switch', function () {
+    $first = app(SaveFormStyle::class)->handle(['name' => 'Alpha', 'layout' => 'modern']);
+    $second = app(SaveFormStyle::class)->handle(['name' => 'Beta', 'layout' => 'banner', 'is_default' => true]);
+
+    Livewire::test('pages::settings.lists.form-styles', ['company' => $this->company])
+        ->assertSet('selectedId', $second->id)
+        ->assertSeeHtml('data-test="style-preview-frame"')
+        ->call('select', $first->id)
+        ->assertSet('selectedId', $first->id)
+        ->call('select', 999999)
+        ->assertSet('selectedId', $first->id);
+});
+
+it('shows a placeholder instead of a preview when there are no styles', function () {
+    FormStyle::query()->delete();
+
+    Livewire::test('pages::settings.lists.form-styles', ['company' => $this->company])
+        ->assertSet('selectedId', null)
+        ->assertDontSeeHtml('data-test="style-preview-frame"')
+        ->assertSee('Create a style to see a preview.');
+});
+
+it('selects the style being edited and keeps the live preview off until the editor opens', function () {
+    $style = app(SaveFormStyle::class)->handle(['name' => 'Editable', 'layout' => 'modern']);
+    app(SaveFormStyle::class)->handle(['name' => 'Other', 'layout' => 'banner', 'is_default' => true]);
+
+    Livewire::test('pages::settings.lists.form-styles', ['company' => $this->company])
+        ->assertSet('designing', false)
+        ->assertDontSeeHtml('data-test="style-live-preview"')
+        ->call('openEdit', $style->id)
+        ->assertSet('selectedId', $style->id)
+        ->assertSet('designing', true)
+        ->assertSeeHtml('data-test="style-live-preview"');
+});
+
+it('lets the preview PDFs be framed by our own pages but nothing else', function () {
+    $style = app(SaveFormStyle::class)->handle(['name' => 'Framed', 'layout' => 'modern']);
+
+    $saved = $this->get(route('lists.form-styles.preview', ['company' => $this->company, 'style' => $style->id]));
+    $draft = $this->get(route('lists.form-styles.preview-draft', ['company' => $this->company, 'layout' => 'modern']));
+
+    foreach ([$saved, $draft] as $response) {
+        $response->assertOk()->assertHeader('X-Frame-Options', 'SAMEORIGIN');
+
+        $csp = (string) ($response->headers->get('Content-Security-Policy') ?? $response->headers->get('Content-Security-Policy-Report-Only'));
+
+        expect($csp)->toContain("frame-ancestors 'self'")->and($csp)->not->toContain("frame-ancestors 'none'");
+    }
+
+    $this->get(route('lists.form-styles', ['company' => $this->company]))->assertHeader('X-Frame-Options', 'DENY');
+});

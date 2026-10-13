@@ -42,7 +42,12 @@ class SecurityHeaders
 
         // Clickjacking protection. The app never frames its own pages (no
         // <iframe>/<embed>/<object> in any view), so a full deny is safe.
-        $headers->set('X-Frame-Options', 'DENY');
+        // A response can opt in to being framed by our own pages (never by other
+        // sites) with the `allow_same_origin_framing` request attribute — used by
+        // the invoice designer's PDF preview, which sits in an <iframe>.
+        $framable = $request->attributes->get('allow_same_origin_framing') === true;
+
+        $headers->set('X-Frame-Options', $framable ? 'SAMEORIGIN' : 'DENY');
 
         // Send the origin (not the full path/query) on cross-origin navigations.
         $headers->set('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -69,7 +74,7 @@ class SecurityHeaders
                 ? 'Content-Security-Policy'
                 : 'Content-Security-Policy-Report-Only';
 
-            $headers->set($header, $this->contentSecurityPolicy($nonce));
+            $headers->set($header, $this->contentSecurityPolicy($nonce, $framable));
         }
 
         return $response;
@@ -104,7 +109,7 @@ class SecurityHeaders
      * stays as a pre-CSP2 fallback only — a CSP2+ browser ignores it once a nonce
      * is present, so the nonce is what actually constrains inline script.
      */
-    protected function contentSecurityPolicy(?string $nonce = null): string
+    protected function contentSecurityPolicy(?string $nonce = null, bool $framable = false): string
     {
         // Cloudflare Turnstile loads api.js from challenges.cloudflare.com and
         // renders the challenge inside an iframe served from the same host, so
@@ -128,8 +133,9 @@ class SecurityHeaders
             "default-src 'self'",
             "base-uri 'self'",
             "form-action 'self'",
-            "frame-ancestors 'none'",
-            "object-src 'none'",
+            $framable ? "frame-ancestors 'self'" : "frame-ancestors 'none'",
+            // Chrome's built-in PDF viewer counts as an object, so a framed PDF needs 'self'.
+            $framable ? "object-src 'self'" : "object-src 'none'",
             "img-src 'self' data: blob: https:",
             "font-src 'self' data:",
             "style-src 'self' 'unsafe-inline'".$dev,
