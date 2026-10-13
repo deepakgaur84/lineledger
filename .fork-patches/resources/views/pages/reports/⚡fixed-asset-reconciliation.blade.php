@@ -281,7 +281,7 @@ new #[Title('Fixed Asset Reconciliation')] class extends Component {
     <x-reports.control-bar
         title="{{ $this->effectiveTitle('Fixed Asset Reconciliation') }}"
         :exports="['csv', 'xlsx', 'pdf']"
-        subtitle="{{ __('For the period :start to :end', ['start' => \Illuminate\Support\Carbon::parse($startDate)->format('j M Y'), 'end' => \Illuminate\Support\Carbon::parse($endDate)->format('j M Y')]) }}"
+        subtitle="{{ __('For the period :start to :end', ['start' => \Illuminate\Support\Carbon::parse($startDate)->displayDate(), 'end' => \Illuminate\Support\Carbon::parse($endDate)->displayDate()]) }}"
         :titleEditable="true"
         :memorizable="true"
         :emailable="true"
