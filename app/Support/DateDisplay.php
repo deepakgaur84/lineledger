@@ -44,9 +44,10 @@ final class DateDisplay
 
     public static function register(): void
     {
+        // Carbon binds macro closures to the date instance at call time, so
+        // $this is valid at runtime even though this is a static method.
         $macro = function (): string {
-            /** @var CarbonInterface $this */
-            return DateDisplay::current()->format($this);
+            return DateDisplay::current()->format($this); // @phpstan-ignore variable.undefined
         };
 
         Carbon::macro('displayDate', $macro);
