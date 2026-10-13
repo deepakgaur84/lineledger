@@ -157,7 +157,7 @@ new #[Title('All lists')] class extends Component {
         $rows[] = [
             'key' => 'form-styles',
             'label' => __('Form styles'),
-            'description' => __('Named invoice templates with logo, accent colour and footer overrides.'),
+            'description' => __('Invoice designer: layouts, colours, fonts, logo placement and footer.'),
             'href' => route('lists.form-styles', ['company' => $company]),
             'count' => FormStyle::query()->count(),
         ];

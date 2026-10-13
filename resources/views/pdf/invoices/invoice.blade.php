@@ -37,6 +37,11 @@
         // this blade without a 'style' key, so guard the variable itself.
         $style = $style ?? null;
 
+        // Designer options (typeface, title wording, Ship To, striped rows,
+        // logo size). Callers that render this blade directly may not pass the
+        // resolved design, so derive it from the style.
+        $design = $design ?? \App\Support\Sales\InvoiceDesign::for($style);
+
         $accent = $style?->accent_color;
         // A 90%-white tint of the accent for table-header backgrounds, so the
         // header text stays readable (dompdf-safe: plain 6-digit hex).
@@ -47,6 +52,16 @@
             (int) round(hexdec(substr($accent, 5, 2)) * 0.1 + 255 * 0.9),
         ) : null;
     @endphp
+    @if ($design->font !== \App\Enums\InvoiceFont::Sans)
+        <style>
+            body { font-family: {{ $design->font->stack() }}; }
+        </style>
+    @endif
+    @if ($design->zebraRows)
+        <style>
+            table.lines tbody tr.zebra td { background: {{ $design->accentSoft }}; }
+        </style>
+    @endif
     @if ($accent)
         <style>
             h1.title { color: {{ $accent }}; }
@@ -86,11 +101,11 @@
                     'company' => $company,
                     'settings' => $settings,
                     'documentLogo' => (($style?->show_logo ?? $settings->show_logo) ? $company->documentLogoDataUri() : null),
-                    'logoMaxHeight' => $company->documentLogoMaxHeight(),
+                    'logoMaxHeight' => $design->logoMaxHeight ?? $company->documentLogoMaxHeight(),
                 ])
             </td>
             <td style="width: 45%;">
-                <h1 class="title">{{ __('INVOICE') }}</h1>
+                <h1 class="title" @if ($design->longTitle()) style="font-size: 24px;" @endif>{{ $design->title() }}</h1>
                 <table class="meta">
                     <tr>
                         <th>{{ __('Date') }}</th>
@@ -115,15 +130,17 @@
                     @endforeach
                 </div>
             </td>
-            <td style="width: 4%;"></td>
-            <td style="width: 48%;">
-                <div class="box">
-                    <div class="box-label">{{ __('Ship To') }}</div>
-                    @foreach ($shipLines as $line)
-                        <div>{{ $line }}</div>
-                    @endforeach
-                </div>
-            </td>
+            @if ($design->showShipTo)
+                <td style="width: 4%;"></td>
+                <td style="width: 48%;">
+                    <div class="box">
+                        <div class="box-label">{{ __('Ship To') }}</div>
+                        @foreach ($shipLines as $line)
+                            <div>{{ $line }}</div>
+                        @endforeach
+                    </div>
+                </td>
+            @endif
         </tr>
     </table>
 
@@ -171,13 +188,15 @@
             </tr>
         </thead>
         <tbody>
+            @php($rowIndex = 0)
             @foreach ($invoice->lines as $line)
                 {{-- The amount guard keeps any line that carries a value visible, so the
                      printed rows still visibly sum to the stored invoice totals. --}}
                 @if ($settings->hide_zero_qty_lines && (float) $line->quantity == 0.0 && (int) $line->line_subtotal_cents === 0)
                     @continue
                 @endif
-                <tr>
+                @php($rowIndex++)
+                <tr class="{{ $design->zebraRows && $rowIndex % 2 === 0 ? 'zebra' : '' }}">
                     @if ($settings->show_item_column)
                         <td>{{ optional($line->item)->name }}</td>
                     @endif

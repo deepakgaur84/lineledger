@@ -13,6 +13,7 @@ use App\Http\Controllers\Estimates\PrintEstimateController;
 use App\Http\Controllers\Health\ExchangeRateHealthController;
 use App\Http\Controllers\HomeController;
 use App\Http\Controllers\Inbound\InboundEmailController;
+use App\Http\Controllers\Invoices\PreviewFormStyleController;
 use App\Http\Controllers\Invoices\PrintCreditMemoController;
 use App\Http\Controllers\Invoices\PrintInvoiceController;
 use App\Http\Controllers\Invoices\PrintReceiptController;
@@ -526,6 +527,9 @@ Route::prefix('{company}')
         Route::livewire('settings/lists/funds', 'pages::settings.lists.funds')->name('lists.funds');
         Route::livewire('settings/lists/membership-levels', 'pages::settings.lists.membership-levels')->name('lists.membership-levels');
         Route::livewire('settings/lists/form-styles', 'pages::settings.lists.form-styles')->name('lists.form-styles');
+        Route::get('settings/lists/form-styles/{style}/preview', PreviewFormStyleController::class)
+            ->whereNumber('style')
+            ->name('lists.form-styles.preview');
 
         // Stripe Connect onboarding (owner only)
         Route::get('settings/stripe/connect', [ConnectController::class, 'redirect'])

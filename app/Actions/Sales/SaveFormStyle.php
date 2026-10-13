@@ -13,10 +13,17 @@ use Illuminate\Support\Facades\DB;
  * exactly one default.
  *
  * Expected $data shape:
- *   name:           string
- *   show_logo:      ?bool
- *   accent_color:   ?string  (#rrggbb)
- *   footer_message: ?string
+ *   name:            string
+ *   layout:          ?string (App\Enums\InvoiceLayout value)
+ *   show_logo:       ?bool
+ *   logo_position:   ?string (App\Enums\LogoPosition value)
+ *   logo_max_height: ?int    (px)
+ *   accent_color:    ?string (#rrggbb)
+ *   font_family:     ?string (App\Enums\InvoiceFont value)
+ *   title_text:      ?string
+ *   show_ship_to:    ?bool
+ *   zebra_rows:      ?bool
+ *   footer_message:  ?string
  *   is_default:     ?bool
  *   is_active:      ?bool
  */
@@ -32,8 +39,24 @@ final class SaveFormStyle
                 'name' => $data['name'],
             ];
 
-            if (array_key_exists('show_logo', $data)) {
-                $attributes['show_logo'] = (bool) $data['show_logo'];
+            foreach (['layout', 'logo_position', 'font_family'] as $enumColumn) {
+                if (array_key_exists($enumColumn, $data) && filled($data[$enumColumn])) {
+                    $attributes[$enumColumn] = $data[$enumColumn];
+                }
+            }
+
+            foreach (['show_logo', 'show_ship_to', 'zebra_rows'] as $flag) {
+                if (array_key_exists($flag, $data)) {
+                    $attributes[$flag] = (bool) $data[$flag];
+                }
+            }
+
+            if (array_key_exists('logo_max_height', $data)) {
+                $attributes['logo_max_height'] = $data['logo_max_height'] ? (int) $data['logo_max_height'] : null;
+            }
+
+            if (array_key_exists('title_text', $data)) {
+                $attributes['title_text'] = filled($data['title_text']) ? trim((string) $data['title_text']) : null;
             }
 
             if (array_key_exists('accent_color', $data)) {
