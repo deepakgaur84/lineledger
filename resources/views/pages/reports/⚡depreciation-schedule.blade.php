@@ -388,7 +388,7 @@ new #[Title('Depreciation Schedule')] class extends Component {
 <div>
     <x-reports.control-bar
         title="{{ $this->effectiveTitle('Depreciation Schedule') }}"
-        subtitle="{{ __('For the period :start to :end', ['start' => \Illuminate\Support\Carbon::parse($startDate)->displayDate(), 'end' => \Illuminate\Support\Carbon::parse($endDate)->displayDate()]) }}"
+        subtitle="{{ __('For the period :start to :end', ['start' => \Illuminate\Support\Carbon::parse($startDate)->format('j M Y'), 'end' => \Illuminate\Support\Carbon::parse($endDate)->format('j M Y')]) }}"
         :titleEditable="true"
         :memorizable="true"
         :emailable="true"

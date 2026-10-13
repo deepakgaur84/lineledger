@@ -1,6 +1,6 @@
 @extends('pdf.reports._layout', [
     'title' => $title ?? 'Fixed Asset Reconciliation',
-    'period' => 'for the period '.\Illuminate\Support\Carbon::parse($startDate)->displayDate().' to '.\Illuminate\Support\Carbon::parse($endDate)->displayDate(),
+    'period' => 'for the period '.\Illuminate\Support\Carbon::parse($startDate)->format('j M Y').' to '.\Illuminate\Support\Carbon::parse($endDate)->format('j M Y'),
 ])
 
 @section('content')
