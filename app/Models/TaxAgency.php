@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Concerns\BelongsToCompany;
 use App\Enums\TaxReturnStatus;
+use App\Support\Locales;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
@@ -21,6 +22,15 @@ class TaxAgency extends Model
     public function payableAccount(): BelongsTo
     {
         return $this->belongsTo(Account::class, 'payable_account_id');
+    }
+
+    /**
+     * Locale-aware name for document chrome. Stored names stay English so
+     * lookups by "Canada Revenue Agency" keep working.
+     */
+    public function label(): string
+    {
+        return Locales::name($this->name);
     }
 
     /**

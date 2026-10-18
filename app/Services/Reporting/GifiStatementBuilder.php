@@ -57,7 +57,7 @@ class GifiStatementBuilder
                 $amount = $this->calc->reportingBalanceAsOf($company, $account, $end);
 
                 if ($amount !== 0) {
-                    $unassigned[] = ['id' => $account->id, 'code' => $account->code, 'name' => $account->name, 'amount' => $amount];
+                    $unassigned[] = ['id' => $account->id, 'code' => $account->code, 'name' => $account->displayName(), 'amount' => $amount];
                     $unassignedTotal += $amount;
                 }
 
@@ -77,7 +77,7 @@ class GifiStatementBuilder
             $lines[$account->gifi_code]['accounts'][] = [
                 'id' => $account->id,
                 'code' => $account->code,
-                'name' => $account->name,
+                'name' => $account->displayName(),
                 'amount' => $amount,
             ];
         }

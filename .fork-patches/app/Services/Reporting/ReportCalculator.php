@@ -453,7 +453,7 @@ class ReportCalculator
             $buckets[$activity][] = [
                 'id' => $account->id,
                 'code' => $account->code,
-                'name' => $account->name,
+                'name' => $account->displayName(),
                 'current' => $current,
                 'prior' => $prior,
                 'section_id' => $account->report_section_id,
@@ -638,7 +638,7 @@ class ReportCalculator
 
                 return [
                     'account_code' => (string) ($line->account->code ?? ''),
-                    'account_name' => (string) ($line->account->name ?? ''),
+                    'account_name' => (string) ($line->account?->displayName() ?? ''),
                     'memo' => $line->memo,
                     'debit' => $debit,
                     'credit' => $credit,
@@ -796,7 +796,7 @@ class ReportCalculator
 
                 return [
                     'account_code' => (string) ($line->account->code ?? ''),
-                    'account_name' => (string) ($line->account->name ?? ''),
+                    'account_name' => (string) ($line->account?->displayName() ?? ''),
                     'memo' => $line->memo,
                     'debit' => $debit,
                     'credit' => $credit,
@@ -996,7 +996,7 @@ class ReportCalculator
 
                     return [
                         'account_code' => (string) ($line->account->code ?? ''),
-                        'account_name' => (string) ($line->account->name ?? ''),
+                        'account_name' => (string) ($line->account?->displayName() ?? ''),
                         'memo' => $line->memo,
                         'debit' => $debit,
                         'credit' => $credit,

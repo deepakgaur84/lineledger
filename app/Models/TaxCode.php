@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Concerns\BelongsToCompany;
 use App\Enums\TaxAppliesTo;
+use App\Support\Locales;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -46,6 +47,45 @@ class TaxCode extends Model
     public function ratePercent(): float
     {
         return (float) $this->rate_basis_points / 100;
+    }
+
+    /**
+     * Format a tax rate percentage for display. Whole and standard rates keep two
+     * decimal places (e.g. 5.00%), while rates carrying fractional hundredths
+     * (such as Quebec QST at 9.975%) preserve them without rounding.
+     */
+    public static function formatRate(float|int|string|null $rate): string
+    {
+        $rate = (float) $rate;
+
+        if (abs(round($rate, 2) - $rate) > 0.00001) {
+            return rtrim(rtrim(number_format($rate, 4, '.', ''), '0'), '.');
+        }
+
+        return number_format($rate, 2);
+    }
+
+    public function formattedRate(): string
+    {
+        return self::formatRate($this->ratePercent());
+    }
+
+    /**
+     * Locale-aware label for pickers. Stored codes stay stable (QST-QC);
+     * French UI shows TVQ, TPS, TVH, …
+     */
+    public function label(): string
+    {
+        return Locales::name($this->code);
+    }
+
+    /**
+     * The stored name for display. Seeded names are stored in English so
+     * lookups stay stable; the UI translates them (a renamed one passes through).
+     */
+    public function displayName(): string
+    {
+        return Locales::name($this->name);
     }
 
     /**

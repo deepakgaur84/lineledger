@@ -8,6 +8,7 @@ use App\Enums\AccountType;
 use App\Enums\CashFlowActivity;
 use App\Enums\NormalBalance;
 use App\Observers\AccountObserver;
+use App\Support\Locales;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Builder;
@@ -66,6 +67,15 @@ class Account extends Model
         return $company->organization_type?->isNonProfit()
             ? self::OPENING_BALANCE_NET_ASSETS_NAME
             : self::OPENING_BALANCE_EQUITY_NAME;
+    }
+
+    /**
+     * The stored name for display. Seeded names are stored in English so
+     * lookups stay stable; the UI translates them (a renamed one passes through).
+     */
+    public function displayName(): string
+    {
+        return Locales::name($this->name);
     }
 
     /**

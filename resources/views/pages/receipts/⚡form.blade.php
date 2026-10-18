@@ -630,14 +630,14 @@ new #[Title('Receive payment')] class extends Component {
             <flux:select wire:model="deposit_to_account_id" :label="__('Deposit to')" required data-test="receipt-deposit-select">
                 <flux:select.option value="">{{ __('— Select —') }}</flux:select.option>
                 @foreach ($this->depositToOptions as $opt)
-                    <flux:select.option :value="$opt->id">{{ $opt->code }} — {{ $opt->name }}</flux:select.option>
+                    <flux:select.option :value="$opt->id">{{ $opt->code }} — {{ $opt->displayName() }}</flux:select.option>
                 @endforeach
             </flux:select>
 
             <flux:select wire:model="payment_method_id" :label="__('Payment method')" data-test="receipt-method-select">
                 <flux:select.option value="">{{ __('— Select —') }}</flux:select.option>
                 @foreach ($this->paymentMethodOptions as $m)
-                    <flux:select.option :value="$m->id">{{ $m->name }}</flux:select.option>
+                    <flux:select.option :value="$m->id">{{ $m->displayName() }}</flux:select.option>
                 @endforeach
             </flux:select>
             <flux:input wire:model="reference" :label="__('Reference')" :placeholder="$company->jurisdiction->chequeLabel('ref')" />
@@ -729,7 +729,7 @@ new #[Title('Receive payment')] class extends Component {
 
                 @if ($this->unappliedCents() > 0)
                     <flux:text class="mt-2 text-sm text-amber-700 dark:text-amber-400" data-test="receipt-unapplied-note">
-                        {{ __(':amount of this payment isn\'t applied to an invoice and will sit as an on-account credit for the customer. Increase an Apply amount, or lower the receipt Amount, to clear it.', ['amount' => '$'.number_format($this->unappliedCents() / 100, 2)]) }}
+                        {{ __(':amount of this payment isn\'t applied to an invoice and will sit as an on-account credit for the customer. Increase an Apply amount, or lower the receipt Amount, to clear it.', ['amount' => $this->company->currencySymbol().number_format($this->unappliedCents() / 100, 2)]) }}
                     </flux:text>
                 @endif
 

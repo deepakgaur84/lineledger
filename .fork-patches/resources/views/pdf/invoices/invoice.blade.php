@@ -2,6 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
+    @php use App\Support\Tax\LineTaxBreakdown; @endphp
     <title>{{ __('Invoice') }} {{ $invoice->invoice_no }} — {{ $company->name }}</title>
     <style>
         @page { margin: 36px 40px; }
@@ -72,6 +73,10 @@
     @endif
 </head>
 <body>
+    @php
+        $currencySymbol = \App\Support\Currency::symbol($invoice->currency_code ?: $company->currency_code);
+        $dateFormat = $company->jurisdiction->shortDateFormat();
+    @endphp
     @php
         $billLines = collect([
             $invoice->contact?->display_name,
@@ -210,7 +215,7 @@
                         <td class="num">{{ rtrim(rtrim((string) $line->quantity, '0'), '.') }}</td>
                     @endif
                     @if ($settings->show_tax_column)
-                        <td>{{ optional($line->taxCode)->code }}</td>
+                        <td>{{ optional($line->taxCode)->label() }}</td>
                     @endif
                     @if ($settings->show_unit_column)
                         <td class="num">
@@ -233,13 +238,13 @@
         </tr>
         @foreach ($taxSummary as $tax)
             <tr>
-                <td>{{ $tax['label'] }} {{ number_format($tax['rate'], 2) }}%</td>
+                <td>{{ $tax['label'] }} {{ LineTaxBreakdown::formatRate($tax['rate']) }}%</td>
                 <td class="num">{{ number_format($tax['tax_cents'] / 100, 2) }}</td>
             </tr>
         @endforeach
         <tr class="grand">
             <td>{{ __('Total') }}</td>
-            <td class="num">${{ number_format($invoice->total_cents / 100, 2) }}</td>
+            <td class="num">{{ $currencySymbol }}{{ number_format($invoice->total_cents / 100, 2) }}</td>
         </tr>
         @if ($invoice->amount_paid_cents > 0)
             <tr>
@@ -248,12 +253,14 @@
             </tr>
             <tr>
                 <td>{{ __('Balance Due') }}</td>
-                <td class="num">${{ number_format($invoice->balanceCents() / 100, 2) }}</td>
+                <td class="num">{{ $currencySymbol }}{{ number_format($invoice->balanceCents() / 100, 2) }}</td>
             </tr>
         @endif
     </table>
 
-    @php($schedule = $invoice->paymentRequests->isNotEmpty() ? app(\App\Services\Sales\PaymentRequestScheduleStatus::class)->for($invoice) : collect())
+    @php
+        $schedule = $invoice->paymentRequests->isNotEmpty() ? app(\App\Services\Sales\PaymentRequestScheduleStatus::class)->for($invoice) : collect();
+    @endphp
     @if ($settings->show_payment_schedule && $schedule->isNotEmpty())
         <table class="data" style="margin-top: 16px;">
             <thead>
@@ -277,8 +284,13 @@
     @endif
 
     <div class="footer">
-        @if ($settings->show_tax_number && filled($company->tax_number))
-            <div class="taxno">{{ __('GST/HST No.') }} {{ $company->tax_number }}</div>
+        @include('pdf.partials.registration-numbers')
+        @php
+            $provincialTaxNumber = $company->provincialTaxNumber();
+            $provincialTaxLabel = $company->provincialTaxLabel();
+        @endphp
+        @if ($settings->show_tax_number && filled($provincialTaxNumber))
+            <div class="taxno">{{ __(':tax No.', ['tax' => $provincialTaxLabel]) }} {{ $provincialTaxNumber }}</div>
         @endif
         @if (filled($invoice->customer_message))
             <div class="message">{{ $invoice->customer_message }}</div>

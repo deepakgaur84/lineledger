@@ -118,7 +118,7 @@ new #[Title('Reconciliation detail')] class extends Component {
 
         $rows = collect();
 
-        $rows->push(['Account', $rec->account->code.' — '.$rec->account->name]);
+        $rows->push(['Account', $rec->account->code.' — '.$rec->account->displayName()]);
         $rows->push(['Statement date', $rec->statement_date->toDateString()]);
         $rows->push(['Status', $rec->status->label()]);
         $rows->push(['Completed at', $rec->completed_at?->toDateTimeString() ?? '']);

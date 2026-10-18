@@ -540,7 +540,7 @@ new #[Title('Transactions')] class extends Component {
         if ($this->groupBy === 'account') {
             $account = Account::find((int) $key);
 
-            return $account !== null ? trim(($account->code ?? '').' — '.$account->name, ' —') : $key;
+            return $account !== null ? trim(($account->code ?? '').' — '.$account->displayName(), ' —') : $key;
         }
 
         return match ($this->groupBy) {
@@ -583,7 +583,7 @@ new #[Title('Transactions')] class extends Component {
             $row = [
                 'date' => $line->entry_date?->toDateString(),
                 'entry_no' => $line->journalEntry?->entry_no,
-                'account' => trim(($line->account?->code ?? '').' — '.($line->account?->name ?? ''), ' —'),
+                'account' => trim(($line->account?->code ?? '').' — '.($line->account?->displayName() ?? ''), ' —'),
                 'name' => $line->contact?->display_name,
                 'memo' => $line->memo ?? $line->journalEntry?->memo,
                 'debit' => (int) $line->debit_cents,
@@ -728,7 +728,7 @@ new #[Title('Transactions')] class extends Component {
     private function exportContext(): ?string
     {
         $context = collect([
-            trim(($this->account?->code ?? '').' — '.($this->account?->name ?? ''), ' —'),
+            trim(($this->account?->code ?? '').' — '.($this->account?->displayName() ?? ''), ' —'),
             $this->contactFilter?->display_name,
         ])->filter(fn ($v) => trim((string) $v) !== '')->implode(' · ');
 
@@ -738,7 +738,7 @@ new #[Title('Transactions')] class extends Component {
 
 <section class="w-full">
     @php
-        $context = collect([$this->account?->code.' — '.$this->account?->name, $this->contactFilter?->display_name])
+        $context = collect([$this->account?->code.' — '.$this->account?->displayName(), $this->contactFilter?->display_name])
             ->filter(fn ($v) => trim((string) $v, ' —') !== '')
             ->implode(' · ');
     @endphp
@@ -849,7 +849,7 @@ new #[Title('Transactions')] class extends Component {
                         @if ($this->columnVisible('entry_no'))
                             <td class="px-4 py-2 font-mono">{{ $line->journalEntry?->entry_no }}</td>
                         @endif
-                        <td class="px-4 py-2">{{ $line->account?->code }} — {{ $line->account?->name }}</td>
+                        <td class="px-4 py-2">{{ $line->account?->code }} — {{ $line->account?->displayName() }}</td>
                         @if ($this->columnVisible('name'))
                             <td class="px-4 py-2">
                                 {{-- Drill to that name's own transactions, unless the report is already filtered to it. --}}

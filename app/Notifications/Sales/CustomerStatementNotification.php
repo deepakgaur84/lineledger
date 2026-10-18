@@ -7,6 +7,7 @@ use App\Models\Company;
 use App\Models\Contact;
 use App\Services\Reporting\CustomerStatementPdfRenderer;
 use App\Services\Reporting\OpenDocumentAgingBuilder;
+use App\Support\Locales;
 use Carbon\CarbonImmutable;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -59,6 +60,9 @@ class CustomerStatementNotification extends Notification implements ShouldQueue
         ?array $columns = null,
     ) {
         $this->columns = $columns;
+        // Route-notified (a bare address), so there's no notifiable preference:
+        // pin the document language here so Laravel renders the whole message in it.
+        $this->locale = Locales::forDocument($contact, $company);
     }
 
     /**
@@ -70,6 +74,11 @@ class CustomerStatementNotification extends Notification implements ShouldQueue
     }
 
     public function toMail(object $notifiable): MailMessage
+    {
+        return $this->buildMail();
+    }
+
+    private function buildMail(): MailMessage
     {
         $companyName = $this->company->brand_name ?: $this->company->name;
         $senderName = $this->senderName ?: $companyName;

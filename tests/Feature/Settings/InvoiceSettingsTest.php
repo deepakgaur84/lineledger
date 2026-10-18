@@ -5,6 +5,7 @@ use App\Enums\CompanyRole;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\InvoiceSetting;
+use App\Models\TaxAgency;
 use App\Models\User;
 use Livewire\Livewire;
 
@@ -147,4 +148,51 @@ it('forbids a member without update permission from saving', function () {
         ->assertForbidden();
 
     expect($this->company->fresh()->tax_number)->not->toBe('hijack');
+});
+
+it('shows and persists provincial tax number for a Quebec company', function () {
+    $qcCompany = Company::factory()->create([
+        'address_region' => 'QC',
+    ]);
+    $qcCompany->members()->attach($this->user, ['role' => CompanyRole::Owner->value]);
+    app()->instance('current_company', $qcCompany);
+
+    $agency = $qcCompany->provincialTaxAgency();
+    expect($agency)->not->toBeNull()
+        ->and($agency->name)->toBe('Revenu Québec');
+
+    Livewire::test('pages::settings.invoices', ['company' => $qcCompany])
+        ->assertSeeHtml('data-test="invoice-provincial-tax-number"')
+        ->set('provincialTaxNumber', '1234567890 TQ 0001')
+        ->call('save')
+        ->assertHasNoErrors();
+
+    expect($agency->fresh()->registration_number)->toBe('1234567890 TQ 0001')
+        ->and($qcCompany->fresh()->provincialTaxNumber())->toBe('1234567890 TQ 0001');
+});
+
+it('does not show provincial tax number for a company in a region without provincial sales tax', function () {
+    $onCompany = Company::factory()->create([
+        'address_region' => 'ON',
+    ]);
+    $onCompany->members()->attach($this->user, ['role' => CompanyRole::Owner->value]);
+    app()->instance('current_company', $onCompany);
+
+    Livewire::test('pages::settings.invoices', ['company' => $onCompany])
+        ->assertDontSeeHtml('data-test="invoice-provincial-tax-number"');
+});
+
+it('leaves the CRA agency registration number alone when saving invoice settings', function () {
+    $craAccount = Account::query()->where('code', '2200')->firstOrFail();
+    $agency = TaxAgency::query()->where('payable_account_id', $craAccount->id)->firstOrFail();
+    $agency->update(['registration_number' => '123456789RT0001']);
+    $this->company->forceFill(['tax_number' => null])->saveQuietly();
+
+    // Saving the page with a blank tax-number field (e.g. just toggling the logo).
+    Livewire::test('pages::settings.invoices', ['company' => $this->company])
+        ->set('showLogo', false)
+        ->call('save')
+        ->assertHasNoErrors();
+
+    expect($agency->fresh()->registration_number)->toBe('123456789RT0001');
 });

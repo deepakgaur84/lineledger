@@ -90,4 +90,11 @@ class InvoicePdfRenderer
     {
         return LineTaxBreakdown::forLines($invoice->lines);
     }
+
+    private function locale(Company $company, Invoice $invoice): string
+    {
+        $invoice->loadMissing('contact');
+
+        return Locales::forDocument($invoice->contact, $company);
+    }
 }

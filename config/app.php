@@ -59,11 +59,12 @@ return [
     | Country Region
     |--------------------------------------------------------------------------
     |
-    | Which country this deployment serves (CA / US). In production this is
-    | normally derived from the request host (books.lineledger.ca vs .com), but
-    | setting APP_REGION forces it — useful on host-agnostic environments like
-    | local dev (localhost). Drives the guest country-switcher banner, whose
-    | "Go to <country>" links point at the sibling app via "app_urls".
+    | Which country this deployment serves (CA / US / GB). In production this is
+    | normally derived from the request host (books.lineledger.ca vs .com vs
+    | .co.uk), but setting APP_REGION forces it — useful on host-agnostic
+    | environments like local dev (localhost). Legal links use this region; the
+    | guest country-switcher banner only appears on the sibling hosts listed in
+    | "app_urls".
     |
     */
 
@@ -72,6 +73,8 @@ return [
     'app_urls' => [
         'CA' => env('APP_URL_CA', 'https://books.lineledger.ca'),
         'US' => env('APP_URL_US', 'https://books.lineledger.com'),
+        // Empty until the UK twin is live: an empty URL keeps it out of the banner.
+        'GB' => env('APP_URL_GB', ''),
     ],
 
     /*
@@ -84,6 +87,8 @@ return [
     'marketing_urls' => [
         'CA' => env('MARKETING_URL_CA', 'https://lineledger.ca'),
         'US' => env('MARKETING_URL_US', 'https://lineledger.com'),
+        // Empty until the UK marketing site is live: legal links fall back to US.
+        'GB' => env('MARKETING_URL_GB', ''),
     ],
 
     /*
@@ -112,7 +117,18 @@ return [
 
     'locale' => env('APP_LOCALE', 'en'),
 
+    // The configured default, kept apart from 'locale' because App::setLocale()
+    // rewrites that one per request. Documents fall back to this.
+    'default_locale' => env('APP_LOCALE', 'en'),
+
     'fallback_locale' => env('APP_FALLBACK_LOCALE', 'en'),
+
+    /*
+    | UI and document language codes this deployment ships catalogs for.
+    | English is the source language (the __() key). Add a lang/{code}.json
+    | file when introducing a new code.
+    */
+    'supported_locales' => ['en', 'fr'],
 
     'faker_locale' => env('APP_FAKER_LOCALE', 'en_US'),
 

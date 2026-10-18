@@ -3,6 +3,8 @@
 <head>
     <meta charset="utf-8">
     @php
+        use App\Support\Tax\LineTaxBreakdown;
+
         $documentTitle = $isReimbursement ? __('Reimbursement') : __('Bill');
         $numberLabel = $isReimbursement ? __('Reimbursement #') : __('Bill #');
         $partyLabel = $isReimbursement ? __('Pay To') : __('Vendor');
@@ -39,6 +41,10 @@
     </style>
 </head>
 <body>
+    @php
+        $currencySymbol = \App\Support\Currency::symbol($bill->currency_code ?: $company->currency_code);
+        $dateFormat = $company->jurisdiction->shortDateFormat();
+    @endphp
     @php
         $partyLines = collect([
             $bill->contact?->display_name,
@@ -135,7 +141,7 @@
                     @endif
                     <td>{{ $line->description }}</td>
                     @if ($settings->show_tax_column)
-                        <td>{{ optional($line->taxCode)->code }}</td>
+                        <td>{{ optional($line->taxCode)->label() }}</td>
                     @endif
                     <td class="num">{{ number_format($line->unit_price_cents / 100, 2) }}</td>
                     <td class="num">{{ number_format($line->line_subtotal_cents / 100, 2) }}</td>
@@ -151,13 +157,13 @@
         </tr>
         @foreach ($taxSummary as $tax)
             <tr>
-                <td>{{ $tax['label'] }} {{ number_format($tax['rate'], 2) }}%</td>
+                <td>{{ $tax['label'] }} {{ LineTaxBreakdown::formatRate($tax['rate']) }}%</td>
                 <td class="num">{{ number_format($tax['tax_cents'] / 100, 2) }}</td>
             </tr>
         @endforeach
         <tr class="grand">
             <td>{{ __('Total') }}</td>
-            <td class="num">${{ number_format($bill->total_cents / 100, 2) }}</td>
+            <td class="num">{{ $currencySymbol }}{{ number_format($bill->total_cents / 100, 2) }}</td>
         </tr>
         @if ($bill->amount_paid_cents > 0)
             <tr>
@@ -166,15 +172,13 @@
             </tr>
             <tr>
                 <td>{{ __('Balance Due') }}</td>
-                <td class="num">${{ number_format($bill->balanceCents() / 100, 2) }}</td>
+                <td class="num">{{ $currencySymbol }}{{ number_format($bill->balanceCents() / 100, 2) }}</td>
             </tr>
         @endif
     </table>
 
     <div class="footer">
-        @if ($settings->show_tax_number && filled($company->tax_number))
-            <div class="taxno">{{ __('GST/HST No.') }} {{ $company->tax_number }}</div>
-        @endif
+        @include('pdf.partials.registration-numbers')
         @if (filled($settings->footer_message))
             <div class="message">{{ $settings->footer_message }}</div>
         @endif

@@ -300,8 +300,8 @@ new #[Title('Tax codes')] class extends Component {
                         <tbody class="divide-y divide-border">
                             @foreach ($this->taxCodes as $t)
                                 <tr data-test="tax-code-row" class="@if(! $t->is_active) opacity-50 @endif">
-                                    <td class="px-4 py-2 font-mono">{{ $t->code }}</td>
-                                    <td class="px-4 py-2">{{ $t->name }}</td>
+                                    <td class="px-4 py-2 font-mono">{{ $t->label() }}</td>
+                                    <td class="px-4 py-2">{{ $t->displayName() }}</td>
                                     <td class="px-4 py-2 text-right font-mono">{{ rtrim(rtrim(number_format($t->rate_basis_points / 100, 3), '0'), '.') }}%</td>
                                     <td class="px-4 py-2 text-muted-foreground">{{ optional($t->agency)->name }}</td>
                                     <td class="px-4 py-2 text-right">
@@ -383,13 +383,15 @@ new #[Title('Tax codes')] class extends Component {
                 <flux:callout.text>
                     @if ($company->jurisdiction === \App\Enums\Country::UnitedStates)
                         {{ __(':label is usually destination-based and not recoverable — leave "Recoverable (input tax credit)" off unless you know otherwise.', ['label' => $company->jurisdiction->taxLabel()]) }}
+                    @elseif ($company->jurisdiction === \App\Enums\Country::UnitedKingdom)
+                        {{ __('Enter the VAT rate (20% standard, 5% reduced, 0% zero-rated). Mark it recoverable if you reclaim the input VAT on purchases — leave it off for exempt supplies.') }}
                     @else
                         {{ __('For :label, enter the combined rate and mark it recoverable if you claim input tax credits.', ['label' => $company->jurisdiction->taxLabel()]) }}
                     @endif
                 </flux:callout.text>
             </flux:callout>
 
-            <flux:switch wire:model="f_is_recoverable" :label="__('Recoverable (input tax credit)')" />
+            <flux:switch wire:model="f_is_recoverable" :label="$company->jurisdiction === \App\Enums\Country::UnitedKingdom ? __('Recoverable (input VAT)') : __('Recoverable (input tax credit)')" />
             <flux:switch wire:model="f_is_active" :label="__('Active')" />
 
             <div class="flex justify-end gap-2">
@@ -436,7 +438,7 @@ new #[Title('Tax codes')] class extends Component {
             <flux:select wire:model.live="a_payable_account_id" :label="__('Payable account')" data-test="agency-payable-account">
                 <flux:select.option value="">{{ $editingAgencyId ? __('— Keep current account —') : __('Create a new account automatically') }}</flux:select.option>
                 @foreach ($this->payableAccountOptions as $opt)
-                    <flux:select.option :value="$opt->id">{{ $opt->code }} — {{ $opt->name }}</flux:select.option>
+                    <flux:select.option :value="$opt->id">{{ $opt->code }} — {{ $opt->displayName() }}</flux:select.option>
                 @endforeach
             </flux:select>
 

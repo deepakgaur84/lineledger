@@ -5,6 +5,7 @@ namespace App\Notifications\Sales;
 use App\Models\Company;
 use App\Models\Invoice;
 use App\Services\Reporting\InvoicePdfRenderer;
+use App\Support\Locales;
 use Carbon\CarbonImmutable;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -34,7 +35,11 @@ class InvoiceReminderNotification extends Notification implements ShouldQueue
         public ?string $replyToAddress = null,
         public ?string $senderName = null,
         public array $cc = [],
-    ) {}
+    ) {
+        // Route-notified (a bare address), so there's no notifiable preference:
+        // pin the document language here so Laravel renders the whole message in it.
+        $this->locale = Locales::forDocument($invoice->contact, $company);
+    }
 
     /**
      * @return array<int, string>
@@ -45,6 +50,11 @@ class InvoiceReminderNotification extends Notification implements ShouldQueue
     }
 
     public function toMail(object $notifiable): MailMessage
+    {
+        return $this->buildMail();
+    }
+
+    private function buildMail(): MailMessage
     {
         $companyName = $this->company->brand_name ?: $this->company->name;
         $senderName = $this->senderName ?: $companyName;
@@ -72,7 +82,9 @@ class InvoiceReminderNotification extends Notification implements ShouldQueue
                 'detailLine' => __('Invoice :no — :amount outstanding, due :due.', [
                     'no' => $this->invoice->invoice_no,
                     'amount' => $amount,
-                    'due' => $this->invoice->due_date ? CarbonImmutable::parse($this->invoice->due_date)->toDateString() : __('on receipt'),
+                    'due' => $this->invoice->due_date
+                        ? CarbonImmutable::parse($this->invoice->due_date)->toDateString()
+                        : __('on receipt'),
                 ]),
                 'actionUrl' => $this->payUrl,
             ])

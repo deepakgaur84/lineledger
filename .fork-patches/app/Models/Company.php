@@ -19,8 +19,10 @@ use App\Enums\Section;
 use App\Services\Posting\PeriodLockOverride;
 use App\Support\Currency;
 use App\Support\Jurisdiction\JurisdictionProfile;
+use App\Support\Locales;
 use App\Support\SiteSettings;
 use App\Support\Storage\StorageDisks;
+use App\Support\Tax\ProvincialSalesTax;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Database\Factories\CompanyFactory;
@@ -32,6 +34,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Storage;
 
 /**
@@ -61,6 +64,7 @@ use Illuminate\Support\Facades\Storage;
     'unrealized_gain_loss_account_id',
     'fiscal_year_start_month',
     'timezone',
+    'locale',
     'auto_apply_customer_credits',
     'warn_duplicate_bill_no',
     'cheque_offset_x',
@@ -72,6 +76,7 @@ use Illuminate\Support\Facades\Storage;
     'lock_date',
     'lock_mode',
     'tax_number',
+    'company_registration_number',
     'phone',
     'website',
     'email',
@@ -161,10 +166,16 @@ class Company extends Model
             $country = Country::tryFrom($company->address_country) ?? Country::Canada;
             $company->currency_code ??= $country->defaultCurrencyCode();
             self::assertSupportedHomeCurrency($company->currency_code);
-            $company->fiscal_year_start_month ??= 1;
+            $company->fiscal_year_start_month ??= $country->defaultFiscalYearStartMonth();
 
             if (empty($company->timezone)) {
                 $company->timezone = $country->defaultTimezone($company->address_region);
+            }
+
+            if (empty($company->locale)) {
+                $company->locale = $company->address_region === 'QC'
+                    ? 'fr'
+                    : (Locales::isSupported(App::getLocale()) ? App::getLocale() : 'en');
             }
         });
 
@@ -282,6 +293,15 @@ class Company extends Model
         return $code === null || $code === '' || mb_strtoupper($code) === mb_strtoupper((string) $this->currency_code);
     }
 
+    /**
+     * The home currency's symbol ("$" for CAD/USD, "£" for GBP), or the
+     * symbol of another currency the company transacts in.
+     */
+    public function currencySymbol(?string $code = null): string
+    {
+        return Currency::symbol((string) ($code ?: $this->currency_code ?: 'USD'));
+    }
+
     public function isMulticurrencyEnabled(): bool
     {
         return (bool) $this->multicurrency_enabled;
@@ -293,6 +313,14 @@ class Company extends Model
     public function apiKeys(): HasMany
     {
         return $this->hasMany(CompanyApiKey::class);
+    }
+
+    /**
+     * @return HasMany<TaxAgency, $this>
+     */
+    public function taxAgencies(): HasMany
+    {
+        return $this->hasMany(TaxAgency::class);
     }
 
     /**
@@ -737,6 +765,114 @@ class Company extends Model
     public function usesSecondaryTax(): bool
     {
         return true;
+    }
+
+    /**
+     * The provincial sales tax levied by the company's province, or null if
+     * in an HST province, a GST-only province/territory, or outside Canada.
+     */
+    public function provincialSalesTax(): ?ProvincialSalesTax
+    {
+        if ($this->jurisdiction !== Country::Canada) {
+            return null;
+        }
+
+        return ProvincialSalesTax::forRegion($this->address_region);
+    }
+
+    /**
+     * The tax agency administering the company's provincial sales tax (e.g.
+     * Revenu Québec for QC, BC Ministry of Finance for BC), or any active
+     * provincial/secondary tax agency carrying a registration number.
+     */
+    public function provincialTaxAgency(): ?TaxAgency
+    {
+        $pst = $this->provincialSalesTax();
+
+        // HST provinces, GST-only territories, and non-Canadian companies have no
+        // separate provincial registration to print.
+        if ($pst === null) {
+            return null;
+        }
+
+        $agency = TaxAgency::withoutGlobalScopes()
+            ->where('company_id', $this->id)
+            ->where('name', $pst->agencyName())
+            ->first();
+
+        if ($agency) {
+            return $agency;
+        }
+
+        $account = Account::withoutGlobalScopes()
+            ->where('company_id', $this->id)
+            ->where('code', '2210')
+            ->first();
+
+        if ($account) {
+            $agency = TaxAgency::withoutGlobalScopes()
+                ->where('company_id', $this->id)
+                ->where('payable_account_id', $account->id)
+                ->first();
+
+            if ($agency) {
+                return $agency;
+            }
+        }
+
+        // Fallback: any active agency with a registration number other than the
+        // federal one. The federal agency is identified by its payable account
+        // (2200) so a renamed CRA agency is still excluded; the name check covers
+        // a chart whose 2200 account was renumbered.
+        $craAccount = Account::withoutGlobalScopes()
+            ->where('company_id', $this->id)
+            ->where('code', '2200')
+            ->first();
+
+        return TaxAgency::withoutGlobalScopes()
+            ->where('company_id', $this->id)
+            ->where('is_active', true)
+            ->whereNotNull('registration_number')
+            ->where('registration_number', '!=', '')
+            ->when($craAccount, fn ($q) => $q->where('payable_account_id', '!=', $craAccount->id))
+            ->where('name', '!=', 'Canada Revenue Agency')
+            ->first();
+    }
+
+    /**
+     * The provincial tax registration number (e.g. Revenu Québec TVQ/QST number).
+     */
+    public function provincialTaxNumber(): ?string
+    {
+        return $this->provincialTaxAgency()?->registration_number;
+    }
+
+    /**
+     * Display label for the provincial sales tax (e.g. QST/TVQ for Quebec, PST for BC).
+     */
+    public function provincialTaxLabel(): string
+    {
+        $pst = $this->provincialSalesTax();
+        if ($pst !== null) {
+            return $pst->taxLabel();
+        }
+
+        $agency = $this->provincialTaxAgency();
+        if ($agency) {
+            if (str_contains($agency->name, 'Québec') || str_contains($agency->name, 'Quebec')) {
+                return __('QST');
+            }
+            if (str_contains($agency->name, 'Manitoba')) {
+                return __('RST');
+            }
+            if (str_contains($agency->name, 'Columbia') || str_contains($agency->name, 'Saskatchewan')) {
+                return __('PST');
+            }
+
+            return $agency->label();
+        }
+
+        return __('PST');
     }
 
     /**

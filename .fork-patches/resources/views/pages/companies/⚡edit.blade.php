@@ -47,6 +47,8 @@ new class extends Component
 
     public string $legalName = '';
 
+    public string $companyRegistrationNumber = '';
+
     public string $lockDate = '';
 
     public string $lockMode = 'block';
@@ -58,6 +60,8 @@ new class extends Component
     public int $fiscalYearStartMonth = 1;
 
     public string $timezone = 'UTC';
+
+    public string $locale = 'en';
 
     public bool $autoApplyCustomerCredits = false;
 
@@ -171,11 +175,13 @@ new class extends Component
         $this->companyModel = $company;
         $this->companyName = $company->name;
         $this->legalName = (string) ($company->legal_name ?? '');
+        $this->companyRegistrationNumber = (string) ($company->company_registration_number ?? '');
         $this->lockDate = $company->lock_date?->toDateString() ?? '';
         $this->lockMode = $company->lockMode()->value;
         $this->currencyCode = $company->currency_code;
         $this->fiscalYearStartMonth = $company->fiscal_year_start_month;
         $this->timezone = $company->timezone ?: 'UTC';
+        $this->locale = $company->locale ?: 'en';
         $this->autoApplyCustomerCredits = (bool) $company->auto_apply_customer_credits;
         $this->insightsAiNarration = $company->insightsAiNarrationEnabled();
         $this->agenticWrites = $company->agenticWritesEnabled();
@@ -230,9 +236,11 @@ new class extends Component
         $rules = [
             'companyName' => ['required', 'string', 'max:255', new CompanyName],
             'legalName' => ['nullable', 'string', 'max:255'],
+            'companyRegistrationNumber' => ['nullable', 'string', 'max:32', 'regex:/^[A-Za-z0-9 ]+$/'],
             'currencyCode' => ['required', 'string', Rule::in(array_keys($this->currencyOptions()))],
             'fiscalYearStartMonth' => ['required', 'integer', 'between:1,12'],
             'timezone' => ['required', 'string', Rule::in(timezone_identifiers_list())],
+            'locale' => ['required', 'string', Rule::in(\App\Support\Locales::codes())],
             'autoApplyCustomerCredits' => ['boolean'],
             'requireTwoFactor' => ['boolean'],
             'featuresEmployees' => ['boolean'],
@@ -298,9 +306,13 @@ new class extends Component
             $attributes = [
                 'name' => $validated['companyName'],
                 'legal_name' => filled($validated['legalName'] ?? null) ? trim($validated['legalName']) : null,
+                'company_registration_number' => $this->companyModel->jurisdiction->companyRegistrationNumberLabel() !== null
+                    ? $this->companyModel->jurisdiction->normalizeCompanyRegistrationNumber($validated['companyRegistrationNumber'] ?? null)
+                    : $company->company_registration_number,
                 'currency_code' => strtoupper($validated['currencyCode']),
                 'fiscal_year_start_month' => $validated['fiscalYearStartMonth'],
                 'timezone' => $validated['timezone'],
+                'locale' => $validated['locale'],
                 'auto_apply_customer_credits' => (bool) ($validated['autoApplyCustomerCredits'] ?? false),
                 'warn_duplicate_bill_no' => (bool) ($validated['warnDuplicateBillNo'] ?? false),
                 'cheque_offset_x' => ($validated['chequeOffsetX'] ?? '') !== '' ? (float) $validated['chequeOffsetX'] : null,
@@ -738,6 +750,15 @@ new class extends Component
 
                             <flux:input wire:model="legalName" :label="__('Legal name')" :description="__('Registered legal name. Printed on documents when “Show legal name” is enabled in invoice settings, and used on donation tax receipts.')" data-test="company-legal-name-input" />
 
+                            @if ($jurisdiction->companyRegistrationNumberLabel() !== null)
+                                <flux:input
+                                    wire:model="companyRegistrationNumber"
+                                    :label="$jurisdiction->companyRegistrationNumberLabel()"
+                                    :description="__('Your Companies House number (or Isle of Man Companies Registry number). Printed on invoices when set.')"
+                                    data-test="company-registration-number-input"
+                                />
+                            @endif
+
                             <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
                                 <flux:input wire:model="addressLine1" :label="__('Address')" data-test="company-address-input" />
                                 <flux:input wire:model="addressCity" :label="__('City')" data-test="company-city-input" />
@@ -792,6 +813,18 @@ new class extends Component
                             @php
                                 $timezoneOptions = \App\Models\Company::timezoneOptions();
                             @endphp
+                            <flux:select
+                                wire:model="locale"
+                                :label="__('Document language')"
+                                :description="__('Default language for invoices, invoice emails, and the customer payment portal. A customer can override this on their profile.')"
+                                required
+                                data-test="company-locale-select"
+                            >
+                                @foreach (\App\Support\Locales::options() as $code => $label)
+                                    <flux:select.option :value="$code">{{ $label }}</flux:select.option>
+                                @endforeach
+                            </flux:select>
+
                             <flux:select
                                 wire:model="timezone"
                                 :label="__('Timezone')"
@@ -1059,7 +1092,7 @@ new class extends Component
                                     </flux:select>
                                 @else
                                     <div data-test="company-organization-type-display">
-                                        <flux:text class="font-medium">{{ $companyModel->organization_type->label() }}</flux:text>
+                                        <flux:text class="font-medium">{{ $companyModel->organization_type->label($companyModel->jurisdiction) }}</flux:text>
                                         <flux:text class="mt-1 text-sm text-muted-foreground">{{ __('The organization type is set once and cannot be changed.') }}</flux:text>
                                     </div>
                                 @endif

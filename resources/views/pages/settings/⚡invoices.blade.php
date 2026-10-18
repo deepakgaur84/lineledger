@@ -1,9 +1,11 @@
 <?php
 
+use App\Actions\MasterData\SaveTaxAgency;
 use App\Enums\AccountType;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\InvoiceSetting;
+use App\Models\TaxAgency;
 use Flux\Flux;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -45,6 +47,8 @@ new #[Title('Invoice settings')] class extends Component {
 
     public string $taxNumber = '';
 
+    public string $provincialTaxNumber = '';
+
     public string $footerMessage = '';
 
     public string $emailFromAddress = '';
@@ -76,6 +80,7 @@ new #[Title('Invoice settings')] class extends Component {
         $this->showServiceDateColumn = (bool) $settings->show_service_date_column;
         $this->hideZeroQtyLines = (bool) $settings->hide_zero_qty_lines;
         $this->taxNumber = (string) ($company->tax_number ?? '');
+        $this->provincialTaxNumber = (string) ($company->provincialTaxNumber() ?? '');
         $this->footerMessage = (string) ($settings->footer_message ?? '');
         $this->emailFromAddress = (string) ($settings->email_from_address ?? '');
         $this->emailFromName = (string) ($settings->email_from_name ?? '');
@@ -102,7 +107,14 @@ new #[Title('Invoice settings')] class extends Component {
             'showTaxColumn' => ['boolean'],
             'showServiceDateColumn' => ['boolean'],
             'hideZeroQtyLines' => ['boolean'],
-            'taxNumber' => ['nullable', 'string', 'max:50'],
+            'taxNumber' => ['nullable', 'string', 'max:50', function (string $attribute, mixed $value, \Closure $fail): void {
+                $country = $this->company->jurisdiction;
+
+                if (! $country->isValidTaxNumber((string) $value)) {
+                    $fail(__('Enter a valid :label, e.g. GB123456789.', ['label' => $country->taxNumberLabel()]));
+                }
+            }],
+            'provincialTaxNumber' => ['nullable', 'string', 'max:50'],
             'footerMessage' => ['nullable', 'string', 'max:1000'],
             'emailFromAddress' => ['nullable', 'email', 'max:255'],
             'emailFromName' => ['nullable', 'string', 'max:255'],
@@ -111,9 +123,44 @@ new #[Title('Invoice settings')] class extends Component {
         ]);
 
         DB::transaction(function () use ($validated) {
+            $federalNumber = $this->company->jurisdiction->normalizeTaxNumber($validated['taxNumber'] ?? null);
+
+            // The CRA agency's registration number is edited under Lists → Tax codes;
+            // this screen only owns the number printed on the invoice footer.
             $this->company->update([
-                'tax_number' => filled($validated['taxNumber']) ? trim($validated['taxNumber']) : null,
+                'tax_number' => $federalNumber,
             ]);
+
+            if ($pst = $this->company->provincialSalesTax()) {
+                $provNumber = filled($validated['provincialTaxNumber']) ? trim($validated['provincialTaxNumber']) : null;
+                $agency = $this->company->provincialTaxAgency();
+
+                if ($agency) {
+                    $agency->update(['registration_number' => $provNumber]);
+                } elseif ($provNumber !== null) {
+                    $pstPayable = Account::withoutGlobalScopes()
+                        ->where('company_id', $this->company->id)
+                        ->where('code', '2210')
+                        ->first();
+
+                    if ($pstPayable) {
+                        TaxAgency::withoutGlobalScopes()->create([
+                            'company_id' => $this->company->id,
+                            'name' => $pst->agencyName(),
+                            'payable_account_id' => $pstPayable->id,
+                            'registration_number' => $provNumber,
+                            'is_active' => true,
+                        ]);
+                    } else {
+                        app(SaveTaxAgency::class)->handle([
+                            'name' => $pst->agencyName(),
+                            'registration_number' => $provNumber,
+                            'payable_account_name' => $pst->payableAccountName(),
+                            'is_active' => true,
+                        ]);
+                    }
+                }
+            }
 
             InvoiceSetting::updateOrCreate(['company_id' => $this->company->id], [
                 'default_sales_account_id' => $validated['defaultSalesAccountId'] ?: null,
@@ -184,7 +231,7 @@ new #[Title('Invoice settings')] class extends Component {
                 <flux:select wire:model="defaultSalesAccountId" :label="__('Default sales account')" :description="__('Used when a line has no account — including when the Account column is hidden. Items with their own income account still override this.')" data-test="invoice-default-sales-account">
                     <flux:select.option value="">{{ __('— None —') }}</flux:select.option>
                     @foreach ($this->salesAccountOptions as $acct)
-                        <flux:select.option :value="$acct->id">{{ $acct->code }} — {{ $acct->name }}</flux:select.option>
+                        <flux:select.option :value="$acct->id">{{ $acct->code }} — {{ $acct->displayName() }}</flux:select.option>
                     @endforeach
                 </flux:select>
             </div>
@@ -208,7 +255,22 @@ new #[Title('Invoice settings')] class extends Component {
                     <flux:subheading>{{ __('Shown at the bottom of the invoice.') }}</flux:subheading>
                 </div>
 
-                <flux:input wire:model="taxNumber" :label="__('Tax / GST/HST registration number')" maxlength="50" :description="__('Printed as “GST/HST No.” on the invoice footer.')" data-test="invoice-tax-number" />
+                <flux:input
+                    wire:model="taxNumber"
+                    :label="__('Tax / :tax registration number', ['tax' => $company->jurisdiction->taxLabel()])"
+                    maxlength="50"
+                    :description="__('Printed as “:label” on the invoice footer.', ['label' => $company->jurisdiction->taxNumberDocumentLabel()])"
+                    data-test="invoice-tax-number"
+                />
+                @if ($pst = $this->company->provincialSalesTax())
+                    <flux:input
+                        wire:model="provincialTaxNumber"
+                        :label="__(':tax registration number', ['tax' => $pst->taxLabel()])"
+                        maxlength="50"
+                        :description="__('Printed as “:tax No.” on the invoice footer.', ['tax' => $pst->taxLabel()])"
+                        data-test="invoice-provincial-tax-number"
+                    />
+                @endif
                 <flux:switch wire:model="showTaxNumber" :label="__('Show tax number on invoices')" data-test="invoice-show-tax-number" />
 
                 <flux:textarea wire:model="footerMessage" :label="__('Footer message')" rows="3" :description="__('e.g. payment instructions or a thank-you note.')" data-test="invoice-footer-message" />

@@ -4,6 +4,7 @@ namespace App\Enums;
 
 use App\Models\Company;
 use App\Support\Defaults\AmericanDefaults;
+use App\Support\Defaults\BritishDefaults;
 use App\Support\Defaults\CanadianDefaults;
 use App\Support\Defaults\CompanyDefaults;
 use App\Support\Defaults\GenericDefaults;
@@ -54,8 +55,8 @@ enum Country: string
 
     /**
      * Resolve the deployment's country from its request host: a `.ca` apex maps
-     * to Canada, anything else (`.com`, `localhost`, …) to the United States.
-     * Used to tailor the guest country-switcher banner to the site being viewed.
+     * to Canada, a `.uk` apex (including `.co.uk`) to the United Kingdom, and
+     * anything else (`.com`, `localhost`, …) to the United States.
      *
      * Global is never inferred from host — it's only reachable by explicitly
      * picking it in the company wizard's country dropdown, or by an operator
@@ -65,7 +66,15 @@ enum Country: string
     {
         $host = mb_strtolower(trim((string) $host));
 
-        return str_ends_with($host, '.ca') ? self::Canada : self::UnitedStates;
+        if (str_ends_with($host, '.ca')) {
+            return self::Canada;
+        }
+
+        if (str_ends_with($host, '.uk')) {
+            return self::UnitedKingdom;
+        }
+
+        return self::UnitedStates;
     }
 
     /**
@@ -265,7 +274,7 @@ enum Country: string
     public function cheque(string $form = 'singular'): string
     {
         $singular = match ($this) {
-            self::Canada => 'Cheque',
+            self::Canada, self::UnitedKingdom => 'Cheque',
             self::UnitedStates => 'Check',
             self::Global => 'Cheque',
         };
@@ -290,7 +299,6 @@ enum Country: string
         $singular = $this->cheque('singular');
         $plural = $this->cheque('plural');
         $lower = mb_strtolower($singular);
-        $lowerPlural = mb_strtolower($plural);
 
         return match ($key) {
             'number' => $singular.' #',
@@ -301,7 +309,7 @@ enum Country: string
             'ref' => $singular.' # or txn ref',
             'section' => $plural.' and Payments',
             'checkbook' => match ($this) {
-                self::Canada => 'Chequebook view',
+                self::Canada, self::UnitedKingdom => 'Chequebook view',
                 self::UnitedStates => 'Checkbook view',
                 self::Global => 'Chequebook view',
             },

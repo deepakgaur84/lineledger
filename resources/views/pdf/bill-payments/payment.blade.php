@@ -40,6 +40,10 @@
 </head>
 <body>
     @php
+        $currencySymbol = \App\Support\Currency::symbol($payment->currency_code ?: $company->currency_code);
+        $dateFormat = $company->jurisdiction->shortDateFormat();
+    @endphp
+    @php
         $paidToLines = collect([
             $payment->contact?->display_name,
             $payment->contact?->billing_line1,
@@ -88,7 +92,7 @@
             <td style="width: 48%;">
                 <div class="box">
                     <div class="box-label">{{ __('Payment Details') }}</div>
-                    <div>{{ __('Method') }}: {{ $payment->paymentMethod?->name ?? '—' }}</div>
+                    <div>{{ __('Method') }}: {{ $payment->paymentMethod?->displayName() ?? '—' }}</div>
                     <div>{{ __('Reference') }}: {{ $payment->reference ?? '—' }}</div>
                 </div>
             </td>
@@ -119,14 +123,12 @@
     <table class="totals">
         <tr class="grand">
             <td>{{ __('Amount Paid') }}</td>
-            <td class="num">${{ number_format($payment->amount_cents / 100, 2) }}</td>
+            <td class="num">{{ $currencySymbol }}{{ number_format($payment->amount_cents / 100, 2) }}</td>
         </tr>
     </table>
 
     <div class="footer">
-        @if ($settings->show_tax_number && filled($company->tax_number))
-            <div class="taxno">{{ __('GST/HST No.') }} {{ $company->tax_number }}</div>
-        @endif
+        @include('pdf.partials.registration-numbers')
         @if (filled($settings->footer_message))
             <div class="message">{{ $settings->footer_message }}</div>
         @endif

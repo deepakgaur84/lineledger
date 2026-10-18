@@ -12,6 +12,7 @@ use App\Models\Company;
 use App\Services\AttachmentService;
 use App\Services\Posting\BillPoster;
 use App\Services\Posting\BillReconciler;
+use App\Support\Tax\LineTaxBreakdown;
 use Flux\Flux;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Auth;
@@ -87,7 +88,7 @@ new #[Title('Bill')] class extends Component {
         $this->bill->refresh();
         unset($this->reconcilableCents);
 
-        Flux::toast(variant: 'success', text: __('Closed :amount already settled in the ledger.', ['amount' => '$'.number_format($closed / 100, 2)]));
+        Flux::toast(variant: 'success', text: __('Closed :amount already settled in the ledger.', ['amount' => $this->company->currencySymbol($this->bill->currency_code).number_format($closed / 100, 2)]));
     }
 
     public function uploadAttachments(AttachmentService $service): void
@@ -179,7 +180,7 @@ new #[Title('Bill')] class extends Component {
                         <flux:menu.item
                             icon="check-circle"
                             wire:click="reconcile"
-                            wire:confirm="{{ __('Close the remaining :amount? It was already settled by a journal entry, so no new ledger entry is posted.', ['amount' => '$'.number_format($this->reconcilableCents / 100, 2)]) }}"
+                            wire:confirm="{{ __('Close the remaining :amount? It was already settled by a journal entry, so no new ledger entry is posted.', ['amount' => $this->company->currencySymbol($this->bill->currency_code).number_format($this->reconcilableCents / 100, 2)]) }}"
                             data-test="reconcile-bill-button"
                         >{{ __('Close settled balance') }}</flux:menu.item>
                     @endif
@@ -217,9 +218,9 @@ new #[Title('Bill')] class extends Component {
                         <td class="px-4 py-2 text-right">{{ rtrim(rtrim((string) $line->quantity, '0'), '.') }}</td>
                         <td class="px-4 py-2 text-right font-mono">{{ number_format($line->unit_price_cents / 100, 2) }}</td>
                         <td class="px-4 py-2 text-muted-foreground">
-                            {{ optional($line->taxCode)->code }}
+                            {{ optional($line->taxCode)->label() }}
                             @if ($line->secondaryTaxCode)
-                                <span class="block">{{ $line->secondaryTaxCode->code }}</span>
+                                <span class="block">{{ $line->secondaryTaxCode->label() }}</span>
                             @endif
                         </td>
                         <td class="px-4 py-2 text-right font-mono">{{ number_format($line->line_subtotal_cents / 100, 2) }}</td>
@@ -253,11 +254,11 @@ new #[Title('Bill')] class extends Component {
                     <td class="px-4 py-2 text-right font-mono">{{ number_format($bill->subtotal_cents / 100, 2) }}</td>
                 </tr>
                 @php
-                    $taxRows = \App\Support\Tax\LineTaxBreakdown::forLines($bill->lines);
+                    $taxRows = LineTaxBreakdown::forLines($bill->lines);
                 @endphp
                 @forelse ($taxRows as $taxRow)
                     <tr data-test="bill-tax-row">
-                        <td colspan="7" class="px-4 py-2 text-right font-medium">{{ $taxRow['label'] }} {{ number_format($taxRow['rate'], 2) }}%</td>
+                        <td colspan="7" class="px-4 py-2 text-right font-medium">{{ $taxRow['label'] }} {{ LineTaxBreakdown::formatRate($taxRow['rate']) }}%</td>
                         <td class="px-4 py-2 text-right font-mono">{{ number_format($taxRow['tax_cents'] / 100, 2) }}</td>
                     </tr>
                 @empty

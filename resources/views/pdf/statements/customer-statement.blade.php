@@ -134,7 +134,7 @@
                         @if ($row['kind'] === 'invoice')
                             <tr>
                                 @foreach ($columns as $key)
-                                    <td{!! $cellAttributes[$key] !!}>{{ \App\Support\Reporting\StatementColumns::cell($key, $row) }}</td>
+                                    <td{!! $cellAttributes[$key] !!}>{{ \App\Support\Reporting\StatementColumns::cell($key, $row, $dateFormat) }}</td>
                                 @endforeach
                             </tr>
                         @else
@@ -146,7 +146,7 @@
                     @endforeach
                     <tr class="total">
                         <td colspan="{{ $labelSpan }}">{{ $totalDue < 0 ? __('Credit balance') : __('Total Due') }}</td>
-                        <td class="num">${{ $money($totalDue) }}</td>
+                        <td class="num">{{ $currencySymbol }}{{ $money($totalDue) }}</td>
                     </tr>
                 </tbody>
             </table>
@@ -168,13 +168,13 @@
                 @foreach ($data['statement']['lines'] as $line)
                     <tr>
                         @foreach ($columns as $key)
-                            <td{!! $cellAttributes[$key] !!}>{{ \App\Support\Reporting\StatementColumns::cell($key, $line) }}</td>
+                            <td{!! $cellAttributes[$key] !!}>{{ \App\Support\Reporting\StatementColumns::cell($key, $line, $dateFormat) }}</td>
                         @endforeach
                     </tr>
                 @endforeach
                 <tr class="total">
                     <td colspan="{{ $labelSpan }}">{{ $totalDue < 0 ? __('Credit balance') : __('Balance Due') }}</td>
-                    <td class="num">${{ $money($data['statement']['closing']) }}</td>
+                    <td class="num">{{ $currencySymbol }}{{ $money($data['statement']['closing']) }}</td>
                 </tr>
             </tbody>
         </table>
@@ -204,8 +204,13 @@
     </table>
 
     <div class="footer">
-        @if ($settings->show_tax_number && filled($company->tax_number))
-            <div class="taxno">{{ __('GST/HST No.') }} {{ $company->tax_number }}</div>
+        @include('pdf.partials.registration-numbers')
+        @php
+            $provincialTaxNumber = $company->provincialTaxNumber();
+            $provincialTaxLabel = $company->provincialTaxLabel();
+        @endphp
+        @if ($settings->show_tax_number && filled($provincialTaxNumber))
+            <div class="taxno">{{ __(':tax No.', ['tax' => $provincialTaxLabel]) }} {{ $provincialTaxNumber }}</div>
         @endif
         @if (filled($settings->footer_message))
             <div class="message">{{ $settings->footer_message }}</div>

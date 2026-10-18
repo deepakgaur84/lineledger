@@ -2,6 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
+    @php use App\Support\Tax\LineTaxBreakdown; @endphp
     <title>{{ __('Credit Memo') }} {{ $creditMemo->credit_memo_no }} — {{ $company->name }}</title>
     <style>
         @page { margin: 36px 40px; }
@@ -34,6 +35,10 @@
     </style>
 </head>
 <body>
+    @php
+        $currencySymbol = \App\Support\Currency::symbol($creditMemo->currency_code ?: $company->currency_code);
+        $dateFormat = $company->jurisdiction->shortDateFormat();
+    @endphp
     @php
         $billLines = collect([
             $creditMemo->contact?->display_name,
@@ -141,7 +146,7 @@
                         @endif
                     </td>
                     @if ($settings->show_tax_column)
-                        <td>{{ optional($line->taxCode)->code }}</td>
+                        <td>{{ optional($line->taxCode)->label() }}</td>
                     @endif
                     <td class="num">
                         {{ number_format($line->unit_price_cents / 100, 2) }}
@@ -162,19 +167,24 @@
         </tr>
         @foreach ($taxSummary as $tax)
             <tr>
-                <td>{{ $tax['label'] }} {{ number_format($tax['rate'], 2) }}%</td>
+                <td>{{ $tax['label'] }} {{ LineTaxBreakdown::formatRate($tax['rate']) }}%</td>
                 <td class="num">{{ number_format($tax['tax_cents'] / 100, 2) }}</td>
             </tr>
         @endforeach
         <tr class="grand">
             <td>{{ __('Total Credit') }}</td>
-            <td class="num">${{ number_format($creditMemo->total_cents / 100, 2) }}</td>
+            <td class="num">{{ $currencySymbol }}{{ number_format($creditMemo->total_cents / 100, 2) }}</td>
         </tr>
     </table>
 
     <div class="footer">
-        @if ($settings->show_tax_number && filled($company->tax_number))
-            <div class="taxno">{{ __('GST/HST No.') }} {{ $company->tax_number }}</div>
+        @include('pdf.partials.registration-numbers')
+        @php
+            $provincialTaxNumber = $company->provincialTaxNumber();
+            $provincialTaxLabel = $company->provincialTaxLabel();
+        @endphp
+        @if ($settings->show_tax_number && filled($provincialTaxNumber))
+            <div class="taxno">{{ __(':tax No.', ['tax' => $provincialTaxLabel]) }} {{ $provincialTaxNumber }}</div>
         @endif
         @if (filled($creditMemo->customer_message))
             <div class="message">{{ $creditMemo->customer_message }}</div>

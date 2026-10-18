@@ -35,6 +35,10 @@
 </head>
 <body>
     @php
+        $currencySymbol = \App\Support\Currency::symbol($receipt->currency_code ?: $company->currency_code);
+        $dateFormat = $company->jurisdiction->shortDateFormat();
+    @endphp
+    @php
         $receivedFromLines = collect([
             $receipt->contact?->display_name,
             $receipt->contact?->billing_line1,
@@ -83,7 +87,7 @@
             <td style="width: 48%;">
                 <div class="box">
                     <div class="box-label">{{ __('Payment Details') }}</div>
-                    <div>{{ __('Method') }}: {{ $receipt->paymentMethod?->name ?? '—' }}</div>
+                    <div>{{ __('Method') }}: {{ $receipt->paymentMethod?->displayName() ?? '—' }}</div>
                     <div>{{ __('Reference') }}: {{ $receipt->reference ?? '—' }}</div>
                 </div>
             </td>
@@ -114,13 +118,18 @@
     <table class="totals">
         <tr class="grand">
             <td>{{ __('Amount Received') }}</td>
-            <td class="num">${{ number_format($receipt->amount_cents / 100, 2) }}</td>
+            <td class="num">{{ $currencySymbol }}{{ number_format($receipt->amount_cents / 100, 2) }}</td>
         </tr>
     </table>
 
     <div class="footer">
-        @if ($settings->show_tax_number && filled($company->tax_number))
-            <div class="taxno">{{ __('GST/HST No.') }} {{ $company->tax_number }}</div>
+        @include('pdf.partials.registration-numbers')
+        @php
+            $provincialTaxNumber = $company->provincialTaxNumber();
+            $provincialTaxLabel = $company->provincialTaxLabel();
+        @endphp
+        @if ($settings->show_tax_number && filled($provincialTaxNumber))
+            <div class="taxno">{{ __(':tax No.', ['tax' => $provincialTaxLabel]) }} {{ $provincialTaxNumber }}</div>
         @endif
         @if (filled($settings->footer_message))
             <div class="message">{{ $settings->footer_message }}</div>

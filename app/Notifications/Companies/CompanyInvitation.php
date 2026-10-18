@@ -3,6 +3,8 @@
 namespace App\Notifications\Companies;
 
 use App\Models\CompanyInvitation as CompanyInvitationModel;
+use App\Models\User;
+use App\Support\Locales;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -14,7 +16,14 @@ class CompanyInvitation extends Notification implements ShouldQueue
 
     public function __construct(public CompanyInvitationModel $invitation)
     {
-        //
+        // Sent to a bare email address. If it already belongs to a user who picked
+        // an interface language, write in that; otherwise use the organization's
+        // document language. Laravel renders the whole message in this locale.
+        $existing = User::query()->where('email', $invitation->email)->value('locale');
+
+        $this->locale = Locales::isSupported($existing)
+            ? $existing
+            : Locales::forDocument(null, $invitation->company);
     }
 
     /**

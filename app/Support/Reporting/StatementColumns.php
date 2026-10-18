@@ -238,7 +238,7 @@ final class StatementColumns
      *
      * @param  array<string, mixed>  $row
      */
-    public static function cell(string $key, array $row): string
+    public static function cell(string $key, array $row, string $dateFormat = 'n/j/Y'): string
     {
         $definition = self::definition($key);
 
