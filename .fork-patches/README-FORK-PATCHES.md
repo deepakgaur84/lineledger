@@ -1221,3 +1221,22 @@ includes the invoice PDF and 2 attached files."). The box resets after every sen
 - Tests: `tests/Feature/Budgeting/BudgetReportsPeriodAndExportTest.php`.
 - **On upstream sync:** edited upstream files are the three budget report pages, the
   budget form and list, `Budget`, `RenderableReports` and `ReportSettings`.
+
+## 24. Re-basing stale patch copies on upstream 1.2.1 (UK + locale support)
+
+Upstream added United Kingdom support (`Country::UnitedKingdom`, `Locales`, VAT) after
+several patch copies were taken. Those copies silently overwrote the newer upstream
+files on every reapply, leaving a half-merged `Country.php` (Pint + 22 PHPStan errors).
+Each file below was rebuilt from **upstream 1.2.1 plus only the fork's own change**:
+
+- `app/Enums/Country.php` — upstream + `Global` case (`'ZZ'`) with an arm in every
+  `match`. Only existing translation strings are used, so `fr.json` stays complete.
+- `app/Support/Tax/TaxAuthorityCatalog.php` — upstream + `Global => []`.
+- `app/Support/Defaults/ChartTemplateBuilder.php` — upstream + `Global` arm for the
+  corporation share-class name (new patch copy).
+- `app/Models/User.php` — upstream (restores `locale` fillable + `Locales` import) +
+  the `date_format` fillable/default/cast from §20.
+- `app/Services/Reporting/InvoicePdfRenderer.php` — upstream (keeps `Locales::using`,
+  `html()`) + the designer's `design` data and `previewInline()` from §21.
+- **On upstream sync:** when upstream edits any of these, rebuild from the new upstream
+  file and re-add only the lines described here.
