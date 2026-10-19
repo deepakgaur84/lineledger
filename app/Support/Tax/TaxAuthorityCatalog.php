@@ -36,6 +36,7 @@ final class TaxAuthorityCatalog
         return match ($company->jurisdiction) {
             Country::Canada => self::canada(),
             Country::UnitedStates => self::unitedStates(),
+            Country::UnitedKingdom => self::unitedKingdom(),
             // No curated catalog for Global — the user always has the option
             // to enter a custom authority, which is all this list is a
             // shortcut for anyway.

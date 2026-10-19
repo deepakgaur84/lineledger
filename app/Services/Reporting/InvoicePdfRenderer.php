@@ -5,6 +5,7 @@ namespace App\Services\Reporting;
 use App\Models\Company;
 use App\Models\FormStyle;
 use App\Models\Invoice;
+use App\Support\Locales;
 use App\Support\Sales\InvoiceDesign;
 use App\Support\Tax\LineTaxBreakdown;
 use Illuminate\Http\Response;
@@ -28,9 +29,14 @@ class InvoicePdfRenderer
      */
     public function inline(Company $company, Invoice $invoice): Response
     {
-        $data = $this->data($company, $invoice);
+        return Locales::using(
+            $this->locale($company, $invoice),
+            function () use ($company, $invoice): Response {
+                $data = $this->data($company, $invoice);
 
-        return $this->pdf->inline($data['design']->layout->view(), $data, $this->filename($invoice));
+                return $this->pdf->inline($data['design']->layout->view(), $data, $this->filename($invoice));
+            },
+        );
     }
 
     /**
@@ -38,9 +44,29 @@ class InvoicePdfRenderer
      */
     public function raw(Company $company, Invoice $invoice): string
     {
-        $data = $this->data($company, $invoice);
+        return Locales::using(
+            $this->locale($company, $invoice),
+            function () use ($company, $invoice): string {
+                $data = $this->data($company, $invoice);
 
-        return $this->pdf->raw($data['design']->layout->view(), $data);
+                return $this->pdf->raw($data['design']->layout->view(), $data);
+            },
+        );
+    }
+
+    /**
+     * HTML of the invoice blade (tests / previews). Honours document locale.
+     */
+    public function html(Company $company, Invoice $invoice): string
+    {
+        return Locales::using(
+            $this->locale($company, $invoice),
+            function () use ($company, $invoice): string {
+                $data = $this->data($company, $invoice);
+
+                return view($data['design']->layout->view(), $data)->render();
+            },
+        );
     }
 
     /**
@@ -49,9 +75,14 @@ class InvoicePdfRenderer
      */
     public function previewInline(Company $company, Invoice $invoice, FormStyle $style): Response
     {
-        $data = $this->data($company, $invoice, $style);
+        return Locales::using(
+            $this->locale($company, $invoice),
+            function () use ($company, $invoice, $style): Response {
+                $data = $this->data($company, $invoice, $style);
 
-        return $this->pdf->inline($data['design']->layout->view(), $data, 'invoice-preview.pdf');
+                return $this->pdf->inline($data['design']->layout->view(), $data, 'invoice-preview.pdf');
+            },
+        );
     }
 
     /**
