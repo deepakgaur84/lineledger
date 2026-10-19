@@ -1,13 +1,17 @@
 <?php
 
+use App\Concerns\EmailsReport;
 use App\Models\Budget;
 use App\Models\Company;
+use App\Services\Reporting\PdfExporter;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
 use Livewire\Component;
 
 new #[Title('Budget Overview')] class extends Component {
+    use EmailsReport;
+
     public Company $company;
 
     #[Url]
@@ -17,6 +21,11 @@ new #[Title('Budget Overview')] class extends Component {
     {
         $this->company = $company;
         $this->budgetId ??= $this->budgets()->keys()->first();
+    }
+
+    protected function reportKey(): string
+    {
+        return 'reports.budget-overview';
     }
 
     /**
@@ -30,7 +39,7 @@ new #[Title('Budget Overview')] class extends Component {
             ->orderByDesc('fiscal_year')
             ->orderBy('name')
             ->get()
-            ->mapWithKeys(fn (Budget $b): array => [$b->id => $b->name.' ('.$b->fiscal_year.')']);
+            ->mapWithKeys(fn (Budget $b): array => [$b->id => $b->pickerLabel()]);
     }
 
     #[Computed]
@@ -103,6 +112,39 @@ new #[Title('Budget Overview')] class extends Component {
 
         return ['rows' => $rows, 'column_totals' => $columnTotals, 'grand_total' => $grandTotal];
     }
+    public function exportPdf()
+    {
+        $budget = $this->budget();
+        $table = $this->table;
+
+        $rows = array_map(fn (array $row): array => [
+            'account' => $row['code'].' '.$row['name'],
+            'cells' => array_map(fn (int $cents): array => $this->pdfCell($cents), array_values($row['months'])),
+            'total' => $this->pdfCell($row['total']),
+        ], $table['rows']);
+
+        return app(PdfExporter::class)->download('pdf.reports.budget-grid', [
+            'company' => $this->company,
+            'title' => __('Budget Overview'),
+            'period' => $budget !== null ? $budget->name.' ('.$budget->periodLabel().')' : null,
+            'hasBudget' => $budget !== null,
+            'monthLabels' => $this->monthLabels,
+            'groups' => $rows === [] ? [] : [['label' => null, 'rows' => $rows]],
+            'totals' => $rows === [] ? null : [
+                'cells' => array_map(fn (int $cents): string => number_format($cents / 100, 2), array_values($table['column_totals'])),
+                'total' => number_format($table['grand_total'] / 100, 2),
+            ],
+            'emptyMessage' => $budget === null ? __('No budget selected. Create a budget to see it here.') : __('This budget has no lines.'),
+        ], 'budget-overview-'.($budget?->fiscal_year ?? 'none').'.pdf');
+    }
+
+    /**
+     * @return array{text: string, neg: bool}
+     */
+    protected function pdfCell(int $cents): array
+    {
+        return ['text' => number_format($cents / 100, 2), 'neg' => $cents < 0];
+    }
 }; ?>
 
 <div class="space-y-6">
@@ -110,7 +152,9 @@ new #[Title('Budget Overview')] class extends Component {
         :title="__('Budget Overview')"
         :subtitle="$company->name"
         mode="none"
-        :exports="false"
+        :exports="['pdf']"
+        :emailable="$this->canEmailReport()"
+        :print-url="$this->printReportUrl()"
     >
         <flux:select wire:model.live="budgetId" :label="__('Budget')" class="w-56">
             @foreach ($this->budgets as $id => $label)

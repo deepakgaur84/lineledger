@@ -17,6 +17,7 @@ use App\Models\Company;
 use App\Models\CustomerReceipt;
 use App\Models\Invoice;
 use App\Models\InvoiceSetting;
+use App\Notifications\Sales\InvoiceSharedNotification;
 use App\Models\ReceiptApplication;
 use App\Services\Sales\PaymentRequestScheduleStatus;
 use App\Support\Money;
@@ -32,6 +33,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Number;
 use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
@@ -58,6 +60,12 @@ new #[Title('Invoice')] class extends Component {
     public bool $sendCcSelf = false;
 
     public string $sendMessage = '';
+
+    /** Off by default: files attached to an invoice only go out when ticked here. */
+    public bool $sendAttachments = false;
+
+    /** @var list<int|string> Ids of the invoice attachments ticked for this email. */
+    public array $sendAttachmentIds = [];
 
     /**
      * Editable milestone rows: [{label, type: percent|fixed, value, due_date}].
@@ -215,6 +223,25 @@ new #[Title('Invoice')] class extends Component {
             + (int) ($this->fieldVisibility['unit_column'] ?? true);
     }
 
+    /**
+     * Files on this invoice that could go in the email (newest first).
+     *
+     * @return Collection<int, Attachment>
+     */
+    #[Computed]
+    public function sendableAttachments(): Collection
+    {
+        return $this->invoice->attachments()->get();
+    }
+
+    /** Ticking "Send attachments" starts with every file ticked; untick the ones to leave out. */
+    public function updatedSendAttachments(bool $value): void
+    {
+        $this->sendAttachmentIds = $value
+            ? $this->sendableAttachments->pluck('id')->map(fn ($id) => (string) $id)->all()
+            : [];
+    }
+
     public function sendToClient(SendInvoiceToCustomer $action): void
     {
         $this->validate([
@@ -238,12 +265,34 @@ new #[Title('Invoice')] class extends Component {
             $cc[] = $me;
         }
 
+        $attachmentIds = [];
+
+        if ($this->sendAttachments) {
+            $chosen = $this->sendableAttachments->whereIn('id', array_map('intval', $this->sendAttachmentIds));
+
+            if ($chosen->sum('size_bytes') > InvoiceSharedNotification::MAX_ATTACHMENT_BYTES) {
+                throw ValidationException::withMessages([
+                    'sendAttachmentIds' => __('The ticked files total :size. Email attachments are limited to :max — untick some files.', [
+                        'size' => Number::fileSize((int) $chosen->sum('size_bytes')),
+                        'max' => Number::fileSize(InvoiceSharedNotification::MAX_ATTACHMENT_BYTES),
+                    ]),
+                ]);
+            }
+
+            $attachmentIds = $chosen->pluck('id')->map(fn ($id) => (int) $id)->all();
+        }
+
         // A human filled in this modal and clicked Send, so it goes out regardless of
         // the customer's automated-email preference, which is left untouched.
-        $action->handle($this->company, $this->invoice, $to, (string) $this->sendMessage, $cc, $bcc, bypassOptIn: true);
+        $action->handle($this->company, $this->invoice, $to, (string) $this->sendMessage, $cc, $bcc, bypassOptIn: true, attachmentIds: $attachmentIds);
+
+        // Never sticky: the next send starts with attachments off again.
+        $this->reset('sendAttachments', 'sendAttachmentIds');
 
         Flux::modal('send-invoice')->close();
-        Flux::toast(variant: 'success', text: __('Invoice sent to :email.', ['email' => implode(', ', $to)]));
+        Flux::toast(variant: 'success', text: $attachmentIds === []
+            ? __('Invoice sent to :email.', ['email' => implode(', ', $to)])
+            : trans_choice('Invoice sent to :email with :count attachment.|Invoice sent to :email with :count attachments.', count($attachmentIds), ['email' => implode(', ', $to)]));
     }
 
     /**
@@ -943,6 +992,41 @@ new #[Title('Invoice')] class extends Component {
             <flux:checkbox wire:model="sendCcSelf" :label="__('CC my business email')" data-test="send-invoice-cc-self" />
 
             <flux:textarea wire:model="sendMessage" :label="__('Message')" rows="5" data-test="send-invoice-message" />
+
+            @if ($this->sendableAttachments->isNotEmpty())
+                <div class="space-y-3 rounded-lg border border-border p-3" data-test="send-invoice-attachments">
+                    <flux:checkbox
+                        wire:model.live="sendAttachments"
+                        :label="__('Send attachments')"
+                        :description="trans_choice(':count file is attached to this invoice. It is not sent unless you tick this.|:count files are attached to this invoice. They are not sent unless you tick this.', $this->sendableAttachments->count())"
+                        data-test="send-invoice-attach"
+                    />
+
+                    @if ($sendAttachments)
+                        <ul class="space-y-2 ps-6" data-test="send-invoice-attachment-list">
+                            @foreach ($this->sendableAttachments as $file)
+                                <li wire:key="send-attachment-{{ $file->id }}">
+                                    <flux:checkbox
+                                        wire:model.live="sendAttachmentIds"
+                                        value="{{ $file->id }}"
+                                        :label="$file->original_filename.' ('.\Illuminate\Support\Number::fileSize((int) $file->size_bytes).')'"
+                                        data-test="send-invoice-attachment-{{ $file->id }}"
+                                    />
+                                </li>
+                            @endforeach
+                        </ul>
+                        <flux:error name="sendAttachmentIds" />
+                    @endif
+                </div>
+            @endif
+
+            <flux:text class="text-sm text-muted-foreground" data-test="send-invoice-summary">
+                @if ($sendAttachments && count($sendAttachmentIds) > 0)
+                    {{ trans_choice('The email includes the invoice PDF and :count attached file.|The email includes the invoice PDF and :count attached files.', count($sendAttachmentIds)) }}
+                @else
+                    {{ __('The email includes the invoice PDF.') }}
+                @endif
+            </flux:text>
 
             <div class="flex justify-end gap-2">
                 <flux:modal.close>

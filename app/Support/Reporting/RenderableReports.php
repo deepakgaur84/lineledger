@@ -88,6 +88,21 @@ final class RenderableReports
                 'label' => 'Vendor Contact List',
                 'formats' => ['pdf', 'xlsx'],
             ],
+            'reports.budget-vs-actual' => [
+                'component' => 'pages::reports.budget-vs-actual',
+                'label' => 'Budget vs. Actual',
+                'formats' => ['pdf'],
+            ],
+            'reports.budget-vs-actual-by-month' => [
+                'component' => 'pages::reports.budget-vs-actual-by-month',
+                'label' => 'Budget vs. Actual by Month',
+                'formats' => ['pdf'],
+            ],
+            'reports.budget-overview' => [
+                'component' => 'pages::reports.budget-overview',
+                'label' => 'Budget Overview',
+                'formats' => ['pdf'],
+            ],
             // Membership-only — the management package builder hides it unless the
             // company tracks membership (the component itself 403s otherwise).
             'reports.membership-roster' => [

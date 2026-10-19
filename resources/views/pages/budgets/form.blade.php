@@ -76,6 +76,17 @@ new #[Title('Budget')] class extends Component {
         }
     }
 
+    /** The twelve months the entered fiscal year covers, e.g. "Apr 2027 – Mar 2028". */
+    public function periodLabel(): string
+    {
+        $start = CarbonImmutable::create((int) $this->fiscal_year, (int) ($this->company->fiscal_year_start_month ?? 1), 1);
+        $end = $start->addMonths(11);
+
+        return $start->year === $end->year
+            ? $start->format('M').' – '.$end->format('M Y')
+            : $start->format('M Y').' – '.$end->format('M Y');
+    }
+
     protected function currentFiscalYear(): int
     {
         $now = CarbonImmutable::parse($this->company->currentDateTime());
@@ -142,7 +153,7 @@ new #[Title('Budget')] class extends Component {
             ->when($this->budget !== null, fn ($q) => $q->whereKeyNot($this->budget->id))
             ->orderByDesc('fiscal_year')
             ->get()
-            ->mapWithKeys(fn (Budget $b): array => [$b->id => $b->name.' ('.$b->fiscal_year.')'])
+            ->mapWithKeys(fn (Budget $b): array => [$b->id => $b->pickerLabel()])
             ->all();
     }
 
@@ -323,7 +334,7 @@ new #[Title('Budget')] class extends Component {
     <form wire:submit="save" class="space-y-6">
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <flux:input wire:model="name" :label="__('Name')" required />
-            <flux:input type="number" wire:model.live="fiscal_year" :label="__('Fiscal year')" required />
+            <flux:input type="number" wire:model.live="fiscal_year" :label="__('Fiscal year')" :description="__('Covers :period', ['period' => $this->periodLabel()])" required data-test="budget-fiscal-year" />
             <flux:select wire:model="class_id" :label="__('Class (optional)')">
                 <flux:select.option :value="null">{{ __('All classes') }}</flux:select.option>
                 @foreach ($this->classOptions as $id => $label)

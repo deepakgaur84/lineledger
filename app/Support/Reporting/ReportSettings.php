@@ -25,6 +25,7 @@ final class ReportSettings
         'reportTitle', 'comparisonBasis', 'sortField', 'sortDir', 'excludeUnappliedCredits',
         'view', 'includeInactive', 'hiddenColumns', 'groupBy', 'sourceType',
         'negativeStyle', 'numberUnits', 'reportNotes', 'reportBasis', 'search',
+        'budgetId', 'metric',
     ];
 
     /**

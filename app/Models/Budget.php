@@ -98,6 +98,47 @@ class Budget extends Model
     /**
      * @return array<string, string>
      */
+    /** First day of the budget's first fiscal month. */
+    public function periodStart(): CarbonImmutable
+    {
+        return $this->monthStart(1);
+    }
+
+    /** Last day of the budget's last (twelfth) fiscal month. */
+    public function periodEnd(): CarbonImmutable
+    {
+        return $this->monthStart(12)->endOfMonth();
+    }
+
+    /**
+     * The twelve months the budget covers, spelled out — e.g. "Apr 2027 – Mar 2028".
+     * The stored fiscal year is the calendar year the fiscal year *begins* in, so for a
+     * non-January fiscal year the bare number alone ("2027") can be misread.
+     */
+    public function periodLabel(): string
+    {
+        $start = $this->periodStart();
+        $end = $this->periodEnd();
+
+        return $start->year === $end->year
+            ? $start->format('M').' – '.$end->format('M Y')
+            : $start->format('M Y').' – '.$end->format('M Y');
+    }
+
+    /** Label for budget pickers: "Name (2026)", or "Name (Apr 2027 – Mar 2028)" when the year does not start in January. */
+    public function pickerLabel(): string
+    {
+        return (int) ($this->company->fiscal_year_start_month ?? 1) === 1
+            ? $this->name.' ('.$this->fiscal_year.')'
+            : $this->name.' ('.$this->periodLabel().')';
+    }
+
+    /** Whether any of the budget's months starts inside the given range. */
+    public function overlapsRange(CarbonImmutable $start, CarbonImmutable $end): bool
+    {
+        return $this->periodStart()->lte($end) && $this->periodEnd()->gte($start);
+    }
+
     protected function casts(): array
     {
         return [

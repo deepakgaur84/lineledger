@@ -27,10 +27,13 @@ final class SendInvoiceToCustomer
      * @param  list<string>  $cc
      * @param  list<string>  $bcc
      * @param  bool  $bypassOptIn  Set only on human-initiated sends.
+     * @param  list<int>  $attachmentIds  Files attached to the invoice to send along with the PDF.
+     *                                    None by default — attachments are only sent when the sender
+     *                                    ticks them on the send confirmation.
      * @return bool Whether the invoice was sent (false when the customer has not
      *              opted in to invoice emails).
      */
-    public function handle(Company $company, Invoice $invoice, array $to, string $message, array $cc = [], array $bcc = [], bool $bypassOptIn = false): bool
+    public function handle(Company $company, Invoice $invoice, array $to, string $message, array $cc = [], array $bcc = [], bool $bypassOptIn = false, array $attachmentIds = []): bool
     {
         $contact = $invoice->contact;
 
@@ -57,6 +60,7 @@ final class SendInvoiceToCustomer
             senderName: $settings->email_from_name,
             cc: $cc,
             bcc: $bcc,
+            attachmentIds: array_values(array_unique(array_map('intval', $attachmentIds))),
         ));
 
         return true;

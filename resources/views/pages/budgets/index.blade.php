@@ -19,7 +19,7 @@ new #[Title('Budgets')] class extends Component {
         return Budget::query()
             ->where('company_id', $this->company->id)
             ->withCount('lines')
-            ->with(['classification', 'location'])
+            ->with(['classification', 'location', 'company'])
             ->orderByDesc('fiscal_year')
             ->orderBy('name')
             ->get();
@@ -97,7 +97,10 @@ new #[Title('Budgets')] class extends Component {
                         <td class="px-4 py-3">
                             <flux:link :href="route('budgets.edit', [$company, $budget])" wire:navigate>{{ $budget->name }}</flux:link>
                         </td>
-                        <td class="px-4 py-3">{{ $budget->fiscal_year }}</td>
+                        <td class="px-4 py-3">
+                            {{ $budget->fiscal_year }}
+                            <span class="block text-xs text-muted-foreground" data-test="budget-period">{{ $budget->periodLabel() }}</span>
+                        </td>
                         <td class="px-4 py-3">
                             @if ($budget->classification || $budget->location)
                                 <flux:badge size="sm" color="zinc">{{ $budget->classification?->name ?? $budget->location?->name }}</flux:badge>

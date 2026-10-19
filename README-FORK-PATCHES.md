@@ -1178,3 +1178,46 @@ invoice emails — all go through `InvoicePdfRenderer`).
 - **On upstream sync:** the edited upstream files are `pdf/invoices/invoice.blade.php`,
   `InvoicePdfRenderer`, `FormStyle`, `SaveFormStyle`, `SecurityHeaders`, the form-styles settings page,
   the lists index description and `routes/web.php`; everything else is new.
+
+## 22. Send attachments with an invoice email
+
+Files attached to an invoice are **not** emailed by default. The invoice page's
+"Send to client" dialog (the confirmation screen) shows a **Send attachments**
+checkbox whenever the invoice has files; ticking it ticks every file, and each can
+be unticked. A line under the options says exactly what will go out ("The email
+includes the invoice PDF and 2 attached files."). The box resets after every send.
+
+- `SendInvoiceToCustomer::handle(..., attachmentIds: [...])` → `InvoiceSharedNotification`
+  (`$attachmentIds`). The notification reads the files from storage at delivery
+  time and only attaches ids that belong to that invoice and company and still
+  exist. Automated sends (recurring "post and email", reminders) never attach.
+- Combined size is capped at `InvoiceSharedNotification::MAX_ATTACHMENT_BYTES`
+  (15 MB); the dialog shows an error on the file list when it is exceeded.
+- Tests: `tests/Feature/Sales/InvoiceSendAttachmentsTest.php`.
+- New strings are not yet in `lang/fr.json` (the French catalog test reports them
+  as incomplete, not failed); add them upstream-side when convenient.
+- **On upstream sync:** edited upstream files are the invoice show page,
+  `SendInvoiceToCustomer` and `InvoiceSharedNotification`.
+
+## 23. Budget reports: period, PDF / print / email
+
+- **Fiscal year naming:** a budget's `fiscal_year` is the calendar year its fiscal
+  year *begins* in (unchanged). `Budget::periodLabel()` spells it out ("Apr 2027 –
+  Mar 2028") and is shown in the budget form, the Budgets list and every budget
+  picker (`pickerLabel()`), because the bare number is easy to misread for a
+  non-January fiscal year.
+- **Budget vs. Actual** moves its dates to the budget's own period when the
+  default dates (fiscal year to date) don't overlap any of the budget's months, on
+  load and when another budget is picked. Dates given in the URL or by a memorized
+  view are never moved; a warning callout (with a "Show the budget's period" link)
+  explains an all-zero Budget column instead.
+- **Budget vs. Actual by Month** warns when the budget's period hasn't started (no
+  actuals exist yet) instead of silently showing zeros.
+- **PDF / Print / Email** for Budget vs. Actual, Budget vs. Actual by Month and
+  Budget Overview: registered in `RenderableReports` (pdf only), `budgetId` and
+  `metric` added to `ReportSettings::KEYS` so print/email reproduce the on-screen
+  budget and metric. PDF views: `pdf/reports/budget-vs-actual.blade.php` and
+  `pdf/reports/budget-grid.blade.php` (landscape, shared by the two 12-month grids).
+- Tests: `tests/Feature/Budgeting/BudgetReportsPeriodAndExportTest.php`.
+- **On upstream sync:** edited upstream files are the three budget report pages, the
+  budget form and list, `Budget`, `RenderableReports` and `ReportSettings`.
