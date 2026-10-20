@@ -37,8 +37,7 @@ afterEach(function () {
 
 function designerInvoice(object $test, ?int $formStyleId = null): Invoice
 {
-    static $sequence = 0;
-    $sequence++;
+    $sequence = Invoice::query()->count() + 1;
 
     $customer = Contact::create([
         'display_name' => 'Designer Customer',
