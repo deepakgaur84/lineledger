@@ -39,6 +39,8 @@
 </head>
 <body>
     @php
+        $currencySymbol = \App\Support\Currency::symbol($company->currency_code);
+        $dateFormat = \App\Support\DateDisplay::current()->pattern();
         $fmtDate = fn (?string $date): string => $date ? \Carbon\CarbonImmutable::parse($date)->displayDate() : '—';
         $money = fn (int $cents): string => \App\Support\Reporting\StatementColumns::money($cents);
 

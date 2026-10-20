@@ -193,14 +193,14 @@
             </tr>
         </thead>
         <tbody>
-            @php($rowIndex = 0)
+            @php $rowIndex = 0; @endphp
             @foreach ($invoice->lines as $line)
                 {{-- The amount guard keeps any line that carries a value visible, so the
                      printed rows still visibly sum to the stored invoice totals. --}}
                 @if ($settings->hide_zero_qty_lines && (float) $line->quantity == 0.0 && (int) $line->line_subtotal_cents === 0)
                     @continue
                 @endif
-                @php($rowIndex++)
+                @php $rowIndex++; @endphp
                 <tr class="{{ $design->zebraRows && $rowIndex % 2 === 0 ? 'zebra' : '' }}">
                     @if ($settings->show_item_column)
                         <td>{{ optional($line->item)->name }}</td>

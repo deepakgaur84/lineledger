@@ -70,10 +70,11 @@ test('regions include BC for Canada, WA for the United States, and ENG for the U
 test('options exposes each case as a label/value pair', function () {
     $options = Country::options();
 
-    expect($options)->toHaveCount(3);
+    expect($options)->toHaveCount(4);
     expect($options[0])->toBe(['value' => 'CA', 'label' => 'Canada']);
     expect($options[1])->toBe(['value' => 'US', 'label' => 'United States']);
-    expect($options[2])->toBe(['value' => 'ZZ', 'label' => 'Other / Global']);
+    expect($options[2])->toBe(['value' => 'GB', 'label' => 'United Kingdom']);
+    expect($options[3])->toBe(['value' => 'ZZ', 'label' => 'Other / Global']);
 });
 
 test('each case exposes its flag emoji', function () {
