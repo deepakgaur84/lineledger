@@ -37,6 +37,9 @@ afterEach(function () {
 
 function designerInvoice(object $test, ?int $formStyleId = null): Invoice
 {
+    static $sequence = 0;
+    $sequence++;
+
     $customer = Contact::create([
         'display_name' => 'Designer Customer',
         'is_customer' => true,
@@ -46,7 +49,7 @@ function designerInvoice(object $test, ?int $formStyleId = null): Invoice
 
     $invoice = Invoice::create([
         'contact_id' => $customer->id,
-        'invoice_no' => 'INV-DESIGN-1',
+        'invoice_no' => 'INV-DESIGN-'.$sequence,
         'invoice_date' => CarbonImmutable::create(2026, 4, 1),
         'due_date' => CarbonImmutable::create(2026, 4, 30),
         'form_style_id' => $formStyleId,

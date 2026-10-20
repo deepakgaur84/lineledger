@@ -2,11 +2,13 @@
 
 namespace App\Support;
 
+use App\Enums\Country;
 use App\Enums\DateFormat;
 use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon as IlluminateCarbon;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Auth;
 
 /**
@@ -39,7 +41,21 @@ final class DateDisplay
             $date = CarbonImmutable::parse($date);
         }
 
-        return self::current()->format($date);
+        return self::render($date);
+    }
+
+    /**
+     * English screens and documents follow the user's chosen format. Any other
+     * document language keeps upstream's locale rules instead (ISO, or the
+     * jurisdiction's day-first short date) so a French invoice stays readable.
+     */
+    public static function render(CarbonInterface $date): string
+    {
+        if (App::getLocale() === 'en') {
+            return self::current()->format($date);
+        }
+
+        return Locales::formatDate($date, Country::current()->shortDateFormat());
     }
 
     public static function register(): void
@@ -47,7 +63,7 @@ final class DateDisplay
         // Carbon binds macro closures to the date instance at call time, so
         // $this is valid at runtime even though this is a static method.
         $macro = function (): string {
-            return DateDisplay::current()->format($this); // @phpstan-ignore variable.undefined
+            return DateDisplay::render($this); // @phpstan-ignore variable.undefined
         };
 
         Carbon::macro('displayDate', $macro);

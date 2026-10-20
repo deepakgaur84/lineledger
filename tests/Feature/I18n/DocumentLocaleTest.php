@@ -113,7 +113,7 @@ it('keeps English invoice dates exactly as on main', function () {
 
     $html = app(InvoicePdfRenderer::class)->html($this->company, $invoice->fresh(['contact']));
 
-    expect($html)->toContain('3/4/2026')
+    expect($html)->toContain('04-Mar-26')
         ->and($html)->toContain('2026-04-04');
 });
 

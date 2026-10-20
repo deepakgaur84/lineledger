@@ -302,8 +302,8 @@ it('prints a UK invoice in pounds with day-first dates, the VAT number and compa
 
     expect($html)
         ->toContain('£1,200.00')
-        ->toContain('04/03/2026')
-        ->toContain('03/04/2026')
+        ->toContain('04-Mar-26')
+        ->toContain('03-Apr-26')
         ->toContain('VAT No.')
         ->toContain('GB123456789')
         ->toContain('Company number')
@@ -345,7 +345,7 @@ it('keeps Canadian invoices in dollars with month-first dates', function () {
         'logoData' => null,
     ])->render();
 
-    expect($html)->toContain('$50.00')->toContain('3/4/2026');
+    expect($html)->toContain('$50.00')->toContain('04-Mar-26');
 
     app()->forgetInstance('current_company');
 });
@@ -353,8 +353,9 @@ it('keeps Canadian invoices in dollars with month-first dates', function () {
 it('formats statement dates for the jurisdiction', function () {
     $row = ['date' => '2026-03-04'];
 
-    expect(StatementColumns::cell('date', $row, Country::UnitedKingdom->shortDateFormat()))->toBe('04/03/2026')
-        ->and(StatementColumns::cell('date', $row))->toBe('3/4/2026');
+    // The fork prints English dates in the user's chosen format (default 04-Mar-26).
+    expect(StatementColumns::cell('date', $row, Country::UnitedKingdom->shortDateFormat()))->toBe('04-Mar-26')
+        ->and(StatementColumns::cell('date', $row))->toBe('04-Mar-26');
 });
 
 it('shows dashboard totals in pounds for a UK company', function () {
