@@ -303,6 +303,7 @@ Route::prefix('{company}')
         Route::livewire('banking/import', 'pages::banking.import')->name('banking.import');
         Route::livewire('banking/review', 'pages::banking.review')->name('banking.review');
         Route::livewire('banking/rules', 'pages::banking.rules')->name('banking.rules');
+        Route::livewire('banking/feeds', 'pages::banking.feeds')->name('banking.feeds');
         Route::livewire('banking/reconciliations/{reconciliation}', 'pages::banking.reconciliation-show')->name('banking.reconciliations.show');
 
         // Document inbox — drag-drop / email-forwarded receipts & bills staged
