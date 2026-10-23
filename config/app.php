@@ -128,7 +128,12 @@ return [
     | English is the source language (the __() key). Add a lang/{code}.json
     | file when introducing a new code.
     */
-    'supported_locales' => ['en', 'fr'],
+    // Fork: comma-separated, e.g. APP_SUPPORTED_LOCALES=en to switch French off.
+    // 'en' is always kept; anything unsupported falls back to English.
+    'supported_locales' => array_values(array_unique(array_merge(
+        ['en'],
+        array_filter(array_map('trim', explode(',', (string) env('APP_SUPPORTED_LOCALES', 'en,fr')))),
+    ))),
 
     'faker_locale' => env('APP_FAKER_LOCALE', 'en_US'),
 

@@ -1,6 +1,7 @@
 <?php
 
 use App\Providers\AppServiceProvider;
+use App\Providers\BankFeedServiceProvider;
 use App\Providers\BankingServiceProvider;
 use App\Providers\BlankTrackingIdsServiceProvider;
 use App\Providers\ClassificationServiceProvider;
@@ -12,6 +13,7 @@ use App\Providers\InventoryServiceProvider;
 return [
     BlankTrackingIdsServiceProvider::class,
     AppServiceProvider::class,
+    BankFeedServiceProvider::class,
     BankingServiceProvider::class,
     ClassificationServiceProvider::class,
     FortifyServiceProvider::class,

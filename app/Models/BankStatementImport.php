@@ -21,6 +21,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'account_id',
     'bank_reconciliation_id',
     'bank_import_profile_id',
+    'bank_feed_account_id',
     'attachment_id',
     'source_format',
     'original_filename',
@@ -64,6 +65,14 @@ class BankStatementImport extends Model
     public function profile(): BelongsTo
     {
         return $this->belongsTo(BankImportProfile::class, 'bank_import_profile_id');
+    }
+
+    /**
+     * @return BelongsTo<BankFeedAccount, $this>
+     */
+    public function feedAccount(): BelongsTo
+    {
+        return $this->belongsTo(BankFeedAccount::class, 'bank_feed_account_id');
     }
 
     /**

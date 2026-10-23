@@ -14,6 +14,8 @@ enum BankStatementFormat: string
     case Qfx = 'qfx';
     case Qbo = 'qbo';
     case Pdf = 'pdf';
+    /** Fork: transactions pulled from a bank feed (Akahu) rather than an uploaded file. */
+    case Feed = 'feed';
 
     public function label(): string
     {
@@ -24,6 +26,7 @@ enum BankStatementFormat: string
             self::Qfx => 'QFX (Quicken)',
             self::Qbo => 'QBO (QuickBooks)',
             self::Pdf => 'PDF',
+            self::Feed => 'Bank feed',
         };
     }
 
@@ -42,7 +45,7 @@ enum BankStatementFormat: string
      */
     public function hasStableTransactionIds(): bool
     {
-        return $this->isOfxFamily();
+        return $this->isOfxFamily() || $this === self::Feed;
     }
 
     public function isOfxFamily(): bool
@@ -63,7 +66,7 @@ enum BankStatementFormat: string
         return match ($this) {
             self::Ofx, self::Qfx, self::Qbo => ['txt', 'xml'],
             self::Csv => ['txt'],
-            self::Xlsx, self::Pdf => [],
+            self::Xlsx, self::Pdf, self::Feed => [],
         };
     }
 
