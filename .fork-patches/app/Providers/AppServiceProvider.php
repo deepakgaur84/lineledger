@@ -15,6 +15,7 @@ use App\Services\Currency\ExchangeRateProvider;
 use App\Services\Currency\Providers\FrankfurterProvider;
 use App\Services\Currency\Providers\NullExchangeRateProvider;
 use App\Support\DateDisplay;
+use App\Support\MailSettings;
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Events\Login;
 use Illuminate\Cache\RateLimiting\Limit;
