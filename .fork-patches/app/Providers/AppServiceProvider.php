@@ -91,6 +91,10 @@ class AppServiceProvider extends ServiceProvider
         // Used for menu visibility and Blade @can; route access is additionally
         // enforced (with a 2FA nudge) by the EnsureSiteAdmin middleware.
         Gate::define('access-site-admin', fn (User $user): bool => $user->site_admin);
+
+        // Mail settings saved in /admin/mail win over MAIL_*; with neither, mail
+        // goes to the log instead of failing. Applied when something first sends.
+        $this->callAfterResolving('mail.manager', fn () => MailSettings::apply());
     }
 
     /**
