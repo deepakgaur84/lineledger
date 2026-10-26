@@ -108,12 +108,17 @@ it('does not import the same transaction twice', function () {
 });
 
 it('applies a bank-side change to an unreviewed line but not to a reviewed one', function () {
-    fakeAkahu([akahuTxn('tx_a', '2026-10-22T11:00:00.000Z', -10.00), akahuTxn('tx_b', '2026-10-22T11:00:00.000Z', -20.00)]);
+    // Http::fake() stubs accumulate and the first match wins, so script both
+    // responses in order: the original amounts, then the bank-side changes.
+    Http::fake([
+        'api.akahu.io/v1/accounts/acc_1/transactions*' => Http::sequence()
+            ->push(['success' => true, 'items' => [akahuTxn('tx_a', '2026-10-22T11:00:00.000Z', -10.00), akahuTxn('tx_b', '2026-10-22T11:00:00.000Z', -20.00)], 'cursor' => ['next' => null]])
+            ->push(['success' => true, 'items' => [akahuTxn('tx_a', '2026-10-22T11:00:00.000Z', -11.50), akahuTxn('tx_b', '2026-10-22T11:00:00.000Z', -25.00)], 'cursor' => ['next' => null]]),
+    ]);
     app(BankFeedSyncer::class)->sync($this->feed, CarbonImmutable::parse('2026-10-23T02:00:00Z'));
 
     BankStatementLine::query()->where('external_id', 'tx_b')->update(['match_status' => StatementLineMatchStatus::Created->value]);
 
-    fakeAkahu([akahuTxn('tx_a', '2026-10-22T11:00:00.000Z', -11.50), akahuTxn('tx_b', '2026-10-22T11:00:00.000Z', -25.00)]);
     $result = app(BankFeedSyncer::class)->sync($this->feed->fresh(), CarbonImmutable::parse('2026-10-24T02:00:00Z'));
 
     $a = BankStatementLine::query()->where('external_id', 'tx_a')->firstOrFail();
