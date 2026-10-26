@@ -137,6 +137,9 @@ new #[Title('Bank register')] class extends Component {
                     <flux:menu.item icon="funnel" :href="route('banking.rules', ['company' => $company->slug])" wire:navigate data-test="bank-rules-menu-item">
                         {{ __('Bank rules') }}
                     </flux:menu.item>
+                    <flux:menu.item icon="link" :href="route('banking.feeds', ['company' => $company->slug])" wire:navigate data-test="bank-feeds-menu-item">
+                        {{ __('Bank feeds') }}
+                    </flux:menu.item>
                 </flux:menu>
             </flux:dropdown>
         </div>
