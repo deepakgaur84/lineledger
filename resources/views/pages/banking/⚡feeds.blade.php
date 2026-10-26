@@ -13,7 +13,6 @@ use Illuminate\Support\Collection;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
-use Throwable;
 
 new #[Title('Bank feeds')] class extends Component {
     public Company $company;
@@ -180,7 +179,7 @@ new #[Title('Bank feeds')] class extends Component {
 
         try {
             $result = $syncer->sync($feedAccount);
-        } catch (Throwable $e) {
+        } catch (\Throwable $e) {
             $this->reloadState();
             Flux::toast(variant: 'danger', text: $e->getMessage());
 

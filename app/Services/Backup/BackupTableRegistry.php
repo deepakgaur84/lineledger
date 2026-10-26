@@ -392,6 +392,12 @@ final class BackupTableRegistry
             ['table' => 'bank_statement_imports', 'reason' => 'transient statement-import staging; accounting truth lives in the GL + reconciliation'],
             ['table' => 'bank_statement_lines', 'reason' => 'child of bank_statement_imports; excluded with parent'],
 
+            // Bank-feed (Akahu) connections hold encrypted provider tokens, which
+            // must never travel in a backup bundle; the account links are trivial
+            // to re-create from the Bank feeds page after a restore.
+            ['table' => 'bank_feed_connections', 'reason' => 'holds provider API tokens; credentials never travel in a backup'],
+            ['table' => 'bank_feed_accounts', 'reason' => 'child of bank_feed_connections; re-linked from the Bank feeds page after a restore'],
+
             // Saved CSV/Excel column mappings — durable convenience config, not
             // accounting truth. Promote to tables() (with FK remap) if backup parity
             // is ever wanted; a restored company simply re-saves a mapping on first use.

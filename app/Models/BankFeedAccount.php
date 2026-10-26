@@ -30,6 +30,15 @@ class BankFeedAccount extends Model
     use BelongsToCompany;
 
     /**
+     * Mirrors the column default so a freshly created (not re-fetched) model is active.
+     *
+     * @var array<string, mixed>
+     */
+    protected $attributes = [
+        'is_active' => true,
+    ];
+
+    /**
      * @return BelongsTo<BankFeedConnection, $this>
      */
     public function connection(): BelongsTo

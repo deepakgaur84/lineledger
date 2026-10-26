@@ -166,12 +166,17 @@ it('refuses a currency mismatch', function () {
 });
 
 it('syncs every linked account from the command and fails when one errors', function () {
-    fakeAkahu([akahuTxn('tx_cmd', '2026-10-22T11:00:00.000Z', -3.00)]);
+    // Http::fake() stubs accumulate and the first match wins, so script both
+    // responses in order: a good page first, then a server error.
+    Http::fake([
+        'api.akahu.io/v1/accounts/acc_1/transactions*' => Http::sequence()
+            ->push(['success' => true, 'items' => [akahuTxn('tx_cmd', '2026-10-22T11:00:00.000Z', -3.00)], 'cursor' => ['next' => null]])
+            ->push([], 500),
+    ]);
 
     $this->artisan('bank-feeds:sync')->assertSuccessful();
     expect(BankStatementLine::query()->where('external_id', 'tx_cmd')->exists())->toBeTrue();
 
-    Http::fake(['api.akahu.io/*' => Http::response([], 500)]);
     $this->artisan('bank-feeds:sync')->assertFailed();
 });
 

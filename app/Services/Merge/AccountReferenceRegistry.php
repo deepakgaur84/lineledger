@@ -113,6 +113,7 @@ final class AccountReferenceRegistry
             ['table' => 'bank_statement_imports', 'column' => 'account_id'],
             ['table' => 'bank_statement_lines', 'column' => 'account_id'],
             ['table' => 'bank_statement_lines', 'column' => 'suggested_account_id'],
+            ['table' => 'bank_feed_accounts', 'column' => 'account_id'],
             // Categorization rules keep coding to the surviving account.
             ['table' => 'bank_rules', 'column' => 'action_account_id'],
 
@@ -173,6 +174,11 @@ final class AccountReferenceRegistry
                 'table' => 'companies',
                 'column' => 'stripe_account_id',
                 'reason' => 'Stripe Connect account identifier string, not a reference to accounts.id',
+            ],
+            [
+                'table' => 'bank_statement_imports',
+                'column' => 'bank_feed_account_id',
+                'reason' => 'references bank_feed_accounts.id (the feed link), not accounts.id; the ledger account is repointed via bank_feed_accounts.account_id',
             ],
             [
                 'table' => 'accounting_audit_logs',
