@@ -206,7 +206,7 @@ class BankFeedSyncer
      */
     private function updateUnreviewed(BankStatementLine $line, ParsedTransaction $txn, int $ledgerAccountId): bool
     {
-        $changed = $line->txn_date?->toDateString() !== $txn->date->toDateString()
+        $changed = CarbonImmutable::parse($line->txn_date)->toDateString() !== $txn->date->toDateString()
             || (int) $line->amount_cents !== $txn->amountCents
             || (string) $line->description !== $txn->description;
 

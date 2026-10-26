@@ -6,10 +6,16 @@ use App\Concerns\BelongsToCompany;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
 /**
  * One account at the provider, optionally linked to a ledger bank / credit-card
  * account. Only linked, active accounts are synced.
+ *
+ * @property int|null $account_id
+ * @property bool $is_active
+ * @property Carbon|null $sync_from
+ * @property Carbon|null $last_synced_at
  */
 #[Fillable([
     'company_id',
