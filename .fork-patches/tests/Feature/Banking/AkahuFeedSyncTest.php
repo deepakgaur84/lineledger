@@ -1,5 +1,6 @@
 <?php
 
+use App\Actions\Contacts\SaveContact;
 use App\Enums\AccountSubtype;
 use App\Enums\BankStatementFormat;
 use App\Enums\BankStatementImportStatus;
@@ -254,4 +255,24 @@ it('finishes matching left unfinished by an interrupted sync', function () {
     app(BankFeedSyncer::class)->sync($this->feed->fresh(), CarbonImmutable::parse('2026-10-24T02:00:00Z'));
 
     expect($import->fresh()->status)->toBe(BankStatementImportStatus::Ready);
+});
+
+it('pre-fills the vendor from the feed merchant name when a vendor of that name exists', function () {
+    $vendor = app(SaveContact::class)->handle(['display_name' => 'Countdown'], 'is_vendor');
+
+    $known = akahuTxn('tx_known', '2026-10-22T11:00:00.000Z', -12.34);
+    $known['merchant'] = ['name' => 'COUNTDOWN'];
+    $unknown = akahuTxn('tx_unknown', '2026-10-22T11:00:00.000Z', -8.00, 'SOME CAFE');
+    $unknown['merchant'] = ['name' => 'Some Cafe'];
+    $income = akahuTxn('tx_income', '2026-10-22T11:00:00.000Z', 50.00, 'REFUND');
+    $income['merchant'] = ['name' => 'Countdown'];
+
+    fakeAkahu([$known, $unknown, $income]);
+    app(BankFeedSyncer::class)->sync($this->feed, CarbonImmutable::parse('2026-10-23T02:00:00Z'));
+
+    $line = fn (string $id) => BankStatementLine::query()->where('external_id', $id)->firstOrFail();
+
+    expect($line('tx_known')->suggested_contact_id)->toBe($vendor->id)
+        ->and($line('tx_unknown')->suggested_contact_id)->toBeNull()
+        ->and($line('tx_income')->suggested_contact_id)->toBeNull();
 });

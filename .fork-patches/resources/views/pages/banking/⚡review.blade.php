@@ -6,6 +6,7 @@ use App\Actions\Banking\CreateBankRuleFromLine;
 use App\Actions\Banking\PairStatementTransfer;
 use App\Actions\Banking\RecordStatementLine;
 use App\Actions\Banking\SplitStatementLine;
+use App\Actions\Contacts\SaveContact;
 use App\Enums\AccountSubtype;
 use App\Enums\BillType;
 use App\Enums\StatementLineMatchStatus;
@@ -97,6 +98,39 @@ new #[Title('For Review')] class extends Component {
     public function totalRows(): int
     {
         return $this->baseQuery()->count();
+    }
+
+    /**
+     * The merchant name the bank feed attached to a line, when it did.
+     */
+    public function merchantName(BankStatementLine $line): ?string
+    {
+        $raw = $line->raw;
+        $name = is_array($raw) && is_array($raw['merchant'] ?? null) ? ($raw['merchant']['name'] ?? null) : null;
+
+        return is_string($name) && trim($name) !== '' ? trim($name) : null;
+    }
+
+    /**
+     * One click: use the feed's merchant name as the payee — an existing vendor
+     * of that name, else a new one.
+     */
+    public function addMerchantVendor(int $lineId): void
+    {
+        $line = $this->lineForReview($lineId);
+        $name = $line !== null ? $this->merchantName($line) : null;
+
+        if ($line === null || $name === null) {
+            return;
+        }
+
+        $contact = Contact::query()
+            ->where('is_active', true)
+            ->whereRaw('LOWER(display_name) = ?', [mb_strtolower($name)])
+            ->first()
+            ?? app(SaveContact::class)->handle(['display_name' => $name], 'is_vendor');
+
+        $this->selectLineContact($lineId, (int) $contact->id);
     }
 
     public function showMore(): void
@@ -231,6 +265,40 @@ new #[Title('For Review')] class extends Component {
             ->all();
     }
 
+    /**
+     * Why "Pay bills" found nothing, so the person is told the cause rather than
+     * "no open bills" when the payee does have some: those can be in a different
+     * currency from the bank account, or of a kind this payee is not paid for.
+     */
+    private function noPayableBillsReason(BankStatementLine $line, Contact $contact): string
+    {
+        $open = Bill::query()
+            ->where('contact_id', $contact->id)
+            ->openWithBalance()
+            ->get();
+
+        if ($open->isEmpty()) {
+            return __('No open bills for :name. Only posted bills with a balance can be paid here — a draft bill has to be posted first.', ['name' => $contact->display_name]);
+        }
+
+        $account = $line->account()->first();
+        $home = mb_strtoupper((string) ($this->company->currency_code ?? ''));
+        $accountCode = mb_strtoupper((string) ($account?->currency_code ?: $home));
+        $otherCurrency = $open
+            ->map(fn (Bill $b): string => mb_strtoupper((string) ($b->getAttribute('currency_code') ?: $home)))
+            ->first(fn (string $code): bool => $code !== $accountCode);
+
+        if ($otherCurrency !== null) {
+            return __(':name has an open bill in :bill, but this transaction is in :account. A bill can only be paid from an account in its own currency.', [
+                'name' => $contact->display_name,
+                'bill' => $otherCurrency,
+                'account' => $accountCode,
+            ]);
+        }
+
+        return __(':name has open bills, but none of a kind this payee can be paid for here (check the contact is marked as a vendor).', ['name' => $contact->display_name]);
+    }
+
     public function openPayBills(int $lineId): void
     {
         $line = $this->lineForReview($lineId);
@@ -251,7 +319,7 @@ new #[Title('For Review')] class extends Component {
         $bills = app(OpenBillMatcher::class)->openBillsFor($line, $contact);
 
         if ($bills->isEmpty()) {
-            Flux::toast(variant: 'danger', text: __('No open bills for this payee.'));
+            Flux::toast(variant: 'danger', text: $this->noPayableBillsReason($line, $contact));
 
             return;
         }
@@ -871,7 +939,16 @@ new #[Title('For Review')] class extends Component {
                         <td class="px-3 py-2"><flux:checkbox wire:model.live="selected" value="{{ $line->id }}" data-test="review-select" /></td>
                         <td class="px-3 py-2 whitespace-nowrap">{{ $line->txn_date?->toDateString() }}</td>
                         <td class="px-3 py-2 text-muted-foreground">{{ $line->account?->code }}</td>
-                        <td class="px-3 py-2">{{ $line->description }}</td>
+                        <td class="px-3 py-2">
+                            {{ $line->description }}
+                            @if (! $contactId && $line->isOutflow() && ! $showExcluded && ($merchant = $this->merchantName($line)))
+                                <div class="mt-1">
+                                    <flux:button size="xs" variant="ghost" icon="plus" wire:click="addMerchantVendor({{ $line->id }})" data-test="review-add-merchant">
+                                        {{ __('Use “:name” as vendor', ['name' => $merchant]) }}
+                                    </flux:button>
+                                </div>
+                            @endif
+                        </td>
                         <td class="px-3 py-2 text-right font-mono {{ $line->amount_cents < 0 ? 'text-red-600 dark:text-red-500' : 'text-green-600 dark:text-green-500' }}">
                             {{ number_format($line->amount_cents / 100, 2) }}
                         </td>
