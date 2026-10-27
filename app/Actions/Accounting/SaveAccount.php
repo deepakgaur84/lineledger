@@ -26,6 +26,8 @@ use Illuminate\Support\Facades\DB;
  *   gifi_code:          ?string  (GIFI line code; cleared when unrecognised)
  *   default_tax_code_id: ?int    (default tax code for Income / Expense accounts;
  *                                 falsy values clear it)
+ *   default_class_id:    ?int    (fork: default class for lines posted to the account)
+ *   default_location_id: ?int    (fork: default location, same)
  *   parent_id:          ?int
  *   description:        ?string
  *   is_active:          ?bool
@@ -80,6 +82,14 @@ final class SaveAccount
             // transaction lines). Falsy values clear it.
             if (array_key_exists('default_tax_code_id', $data)) {
                 $attributes['default_tax_code_id'] = $data['default_tax_code_id'] ?: null;
+            }
+
+            // Fork: optional default class / location. An absent key leaves the
+            // stored value alone; an explicit null (or 0) clears it.
+            foreach (['default_class_id', 'default_location_id'] as $dimension) {
+                if (array_key_exists($dimension, $data)) {
+                    $attributes[$dimension] = $data[$dimension] ?: null;
+                }
             }
 
             if (! $typeLocked) {

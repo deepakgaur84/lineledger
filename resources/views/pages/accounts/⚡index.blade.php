@@ -10,8 +10,10 @@ use App\Enums\JurisdictionCapability;
 use App\Exceptions\Posting\PeriodLockedException;
 use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Account;
+use App\Models\Classification;
 use App\Models\Company;
 use App\Models\GridPreference;
+use App\Models\Location;
 use App\Models\TaxCode;
 use App\Rules\MoneyString;
 use App\Rules\ValidAccountParent;
@@ -60,6 +62,10 @@ new #[Title('Chart of Accounts')] class extends Component {
     public ?string $form_gifi_code = null;
 
     public ?int $form_default_tax_code_id = null;
+
+    public ?int $form_default_class_id = null;
+
+    public ?int $form_default_location_id = null;
 
     public ?string $form_currency_code = null;
 
@@ -157,6 +163,8 @@ new #[Title('Chart of Accounts')] class extends Component {
         $this->form_cash_flow_activity = $account->cash_flow_activity?->value;
         $this->form_gifi_code = $account->gifi_code;
         $this->form_default_tax_code_id = $account->default_tax_code_id;
+        $this->form_default_class_id = $account->default_class_id;
+        $this->form_default_location_id = $account->default_location_id;
         $this->form_currency_code = $account->currency_code;
         $this->form_is_active = $account->is_active;
         $this->form_use_in_transfers = (bool) $account->use_in_transfers;
@@ -223,6 +231,14 @@ new #[Title('Chart of Accounts')] class extends Component {
                 'nullable', 'integer',
                 Rule::exists('tax_codes', 'id')->where('company_id', $this->company->id),
             ],
+            'form_default_class_id' => [
+                'nullable', 'integer',
+                Rule::exists('classifications', 'id')->where('company_id', $this->company->id),
+            ],
+            'form_default_location_id' => [
+                'nullable', 'integer',
+                Rule::exists('locations', 'id')->where('company_id', $this->company->id),
+            ],
             'form_currency_code' => ['nullable', 'string', Rule::in($this->currencyOptions->all())],
             'form_is_active' => ['boolean'],
             'form_use_in_transfers' => ['boolean'],
@@ -259,6 +275,8 @@ new #[Title('Chart of Accounts')] class extends Component {
                     'default_tax_code_id' => $this->showDefaultTaxCodeField
                         ? ($validated['form_default_tax_code_id'] ?: null)
                         : null,
+                    'default_class_id' => $validated['form_default_class_id'] ?: null,
+                    'default_location_id' => $validated['form_default_location_id'] ?: null,
                     ...($this->company->supports(JurisdictionCapability::GifiCodeMapping) ? ['gifi_code' => $validated['form_gifi_code'] ?: null] : []),
                     ...($this->company->isMulticurrencyEnabled() ? ['currency_code' => $validated['form_currency_code'] ?: null] : []),
                     'is_active' => $validated['form_is_active'],
@@ -692,6 +710,28 @@ new #[Title('Chart of Accounts')] class extends Component {
     }
 
     /**
+     * Active classes for the account's default-class select.
+     *
+     * @return \Illuminate\Support\Collection<int, Classification>
+     */
+    #[Computed]
+    public function classOptions()
+    {
+        return Classification::query()->where('is_active', true)->orderBy('name')->get(['id', 'name']);
+    }
+
+    /**
+     * Active locations for the account's default-location select.
+     *
+     * @return \Illuminate\Support\Collection<int, Location>
+     */
+    #[Computed]
+    public function locationOptions()
+    {
+        return Location::query()->where('is_active', true)->orderBy('name')->get(['id', 'name']);
+    }
+
+    /**
      * The default tax code select only shows for Income / Expense accounts.
      */
     #[Computed]
@@ -874,7 +914,7 @@ new #[Title('Chart of Accounts')] class extends Component {
         $this->reset([
             'form_code', 'form_name', 'form_subtype',
             'form_parent_id', 'form_description', 'form_cash_flow_activity',
-            'form_gifi_code', 'form_default_tax_code_id', 'form_currency_code',
+            'form_gifi_code', 'form_default_tax_code_id', 'form_default_class_id', 'form_default_location_id', 'form_currency_code',
             'form_is_active', 'form_use_in_transfers', 'form_use_for_expenses', 'editingId',
             'form_opening_balance', 'form_opening_balance_as_of',
         ]);
@@ -1145,6 +1185,34 @@ new #[Title('Chart of Accounts')] class extends Component {
                     <flux:select.option value="">{{ __('— None —') }}</flux:select.option>
                     @foreach ($this->taxCodeOptions as $taxCode)
                         <flux:select.option :value="$taxCode->id">{{ $taxCode->label() }} — {{ $taxCode->displayName() }}</flux:select.option>
+                    @endforeach
+                </flux:select>
+            @endif
+
+            @if ($this->classOptions->isNotEmpty())
+                <flux:select
+                    wire:model="form_default_class_id"
+                    :label="__('Default class')"
+                    :description="__('Tags transactions posted to this account with this class unless one is chosen. On a bank or credit card account it also tags the income and expense side of every transaction through it.')"
+                    data-test="account-default-class-select"
+                >
+                    <flux:select.option value="">{{ __('— None —') }}</flux:select.option>
+                    @foreach ($this->classOptions as $class)
+                        <flux:select.option :value="$class->id">{{ $class->name }}</flux:select.option>
+                    @endforeach
+                </flux:select>
+            @endif
+
+            @if ($this->locationOptions->isNotEmpty())
+                <flux:select
+                    wire:model="form_default_location_id"
+                    :label="__('Default location')"
+                    :description="__('Same as the default class, for the location.')"
+                    data-test="account-default-location-select"
+                >
+                    <flux:select.option value="">{{ __('— None —') }}</flux:select.option>
+                    @foreach ($this->locationOptions as $location)
+                        <flux:select.option :value="$location->id">{{ $location->name }}</flux:select.option>
                     @endforeach
                 </flux:select>
             @endif

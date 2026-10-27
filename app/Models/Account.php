@@ -28,6 +28,8 @@ use Illuminate\Database\Eloquent\SoftDeletes;
     'subtype',
     'gifi_code',
     'default_tax_code_id',
+    'default_class_id',
+    'default_location_id',
     'normal_balance',
     'currency_code',
     'is_system',
@@ -116,6 +118,22 @@ class Account extends Model
     public function defaultTaxCode(): BelongsTo
     {
         return $this->belongsTo(TaxCode::class, 'default_tax_code_id');
+    }
+
+    /**
+     * @return BelongsTo<Classification, $this>
+     */
+    public function defaultClass(): BelongsTo
+    {
+        return $this->belongsTo(Classification::class, 'default_class_id')->withoutGlobalScopes();
+    }
+
+    /**
+     * @return BelongsTo<Location, $this>
+     */
+    public function defaultLocation(): BelongsTo
+    {
+        return $this->belongsTo(Location::class, 'default_location_id')->withoutGlobalScopes();
     }
 
     public function isLeaf(): bool

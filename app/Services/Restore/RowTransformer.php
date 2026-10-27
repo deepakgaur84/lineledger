@@ -363,6 +363,8 @@ final class RowTransformer
         'accounts' => [
             'parent_id' => 'accounts',
             'report_section_id' => 'report_sections',
+            'default_class_id' => 'classifications',
+            'default_location_id' => 'locations',
         ],
         'contacts' => [
             // Self-referential parent (sub-customers); lower ids insert first.
