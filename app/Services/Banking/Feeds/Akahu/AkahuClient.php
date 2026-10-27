@@ -47,11 +47,12 @@ class AkahuClient
 
     /**
      * Settled transactions for one account. `start` is exclusive and `end`
-     * inclusive; both are repeated on every page, as Akahu requires.
+     * inclusive; both are repeated on every page, as Akahu requires. `$onPage`
+     * is told the running total after each page, for progress display.
      *
      * @return list<array<string, mixed>>
      */
-    public function transactions(string $externalAccountId, CarbonInterface $start, CarbonInterface $end): array
+    public function transactions(string $externalAccountId, CarbonInterface $start, CarbonInterface $end, ?callable $onPage = null): array
     {
         $all = [];
         $cursor = null;
@@ -70,6 +71,10 @@ class AkahuClient
 
             foreach ($this->items($body) as $item) {
                 $all[] = $item;
+            }
+
+            if ($onPage !== null) {
+                $onPage(count($all));
             }
 
             $next = $body['cursor']['next'] ?? null;

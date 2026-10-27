@@ -128,6 +128,9 @@ new #[Title('Bank register')] class extends Component {
             <flux:dropdown align="end">
                 <flux:button variant="primary" icon:trailing="chevron-down" data-test="bank-register-actions-menu">{{ __('Actions') }}</flux:button>
                 <flux:menu>
+                    <flux:menu.item icon="clipboard-document-check" :href="route('banking.review', ['company' => $company->slug])" wire:navigate data-test="for-review-menu-item">
+                        {{ __('For Review') }}
+                    </flux:menu.item>
                     <flux:menu.item icon="check-circle" :href="route('banking.reconcile', ['company' => $company->slug, 'account' => $account_id])" wire:navigate data-test="reconcile-menu-item">
                         {{ __('Reconcile') }}
                     </flux:menu.item>

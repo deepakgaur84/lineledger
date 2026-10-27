@@ -155,7 +155,7 @@ it('hides a whole section when the group key is hidden', function () {
 });
 
 it('drops a group automatically when all its items are hidden', function () {
-    foreach (['banking.bank_register', 'banking.reconcile', 'banking.import_statement', 'banking.rules', 'banking.cheques', 'banking.deposits', 'banking.transfers'] as $key) {
+    foreach (['banking.for_review', 'banking.bank_feeds', 'banking.bank_register', 'banking.reconcile', 'banking.import_statement', 'banking.rules', 'banking.cheques', 'banking.deposits', 'banking.transfers'] as $key) {
         NavPreference::create([
             'company_id' => $this->company->id,
             'user_id' => $this->user->id,

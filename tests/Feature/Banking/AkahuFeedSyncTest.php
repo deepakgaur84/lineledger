@@ -2,8 +2,10 @@
 
 use App\Enums\AccountSubtype;
 use App\Enums\BankStatementFormat;
+use App\Enums\BankStatementImportStatus;
 use App\Enums\CompanyRole;
 use App\Enums\StatementLineMatchStatus;
+use App\Jobs\SyncBankFeedAccount;
 use App\Models\Account;
 use App\Models\BankFeedAccount;
 use App\Models\BankFeedConnection;
@@ -13,6 +15,7 @@ use App\Models\Company;
 use App\Models\User;
 use App\Services\Banking\Feeds\Akahu\AkahuException;
 use App\Services\Banking\Feeds\BankFeedSyncer;
+use App\Services\Banking\Feeds\BankFeedSyncStatus;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -214,4 +217,41 @@ it('connects from the settings page, loads accounts and links one', function () 
 
     expect($feed->fresh()->account_id)->toBe($this->bank->id)
         ->and($feed->fresh()->sync_from->toDateString())->toBe('2026-09-01');
+});
+
+it('runs a sync as a background job and reports progress, then the result', function () {
+    fakeAkahu([akahuTxn('tx_job', '2026-10-22T11:00:00.000Z', -7.00)]);
+
+    BankFeedSyncStatus::put($this->feed->id, 'running', 'Starting…');
+    expect(BankFeedSyncStatus::isRunning($this->feed->id))->toBeTrue();
+
+    (new SyncBankFeedAccount($this->feed->id, $this->company->id))->handle(app(BankFeedSyncer::class));
+
+    $status = BankFeedSyncStatus::get($this->feed->id);
+
+    expect($status['state'])->toBe('done')
+        ->and($status['message'])->toContain('1 new')
+        ->and(BankStatementLine::query()->where('external_id', 'tx_job')->exists())->toBeTrue();
+});
+
+it('reports a failed background sync instead of throwing', function () {
+    Http::fake(['api.akahu.io/*' => Http::response(['success' => false], 401)]);
+
+    (new SyncBankFeedAccount($this->feed->id, $this->company->id))->handle(app(BankFeedSyncer::class));
+
+    $status = BankFeedSyncStatus::get($this->feed->id);
+
+    expect($status['state'])->toBe('error')->and($status['message'])->not->toBe('');
+});
+
+it('finishes matching left unfinished by an interrupted sync', function () {
+    fakeAkahu([akahuTxn('tx_stuck', '2026-10-22T11:00:00.000Z', -9.00)]);
+    app(BankFeedSyncer::class)->sync($this->feed, CarbonImmutable::parse('2026-10-23T02:00:00Z'));
+
+    $import = BankStatementImport::query()->firstOrFail();
+    $import->forceFill(['status' => BankStatementImportStatus::Matching->value])->save();
+
+    app(BankFeedSyncer::class)->sync($this->feed->fresh(), CarbonImmutable::parse('2026-10-24T02:00:00Z'));
+
+    expect($import->fresh()->status)->toBe(BankStatementImportStatus::Ready);
 });
