@@ -2,6 +2,8 @@
 
 namespace App\Services\Posting;
 
+use App\Enums\AccountSubtype;
+use App\Enums\AccountType;
 use App\Enums\AuditAction;
 use App\Exceptions\Posting\AlreadyPostedException;
 use App\Exceptions\Posting\PeriodLockedException;
@@ -58,6 +60,8 @@ class JournalPoster
             // reconciliation has claimed, so a back-dated posting changes no
             // reconciliation — it shows up as uncleared on the account's next one.
 
+            $this->applyAccountDimensionDefaults($entry);
+
             AuditMute::silence(fn () => $entry->forceFill([
                 'is_posted' => true,
                 'posted_at' => now(),
@@ -93,6 +97,54 @@ class JournalPoster
 
             return $entry;
         });
+    }
+
+    /**
+     * Fork: tag lines that carry no class / location from the account defaults.
+     *
+     * A line takes its own account's default first. Income and expense lines
+     * then fall back to the default of a bank or credit card account on the same
+     * entry, so every transaction through that account is tagged. Balance-sheet
+     * lines (AR, AP, tax payable…) never inherit from the bank — they stay
+     * untagged unless their own account has a default. Anything a person or a
+     * document already chose is left alone.
+     */
+    private function applyAccountDimensionDefaults(JournalEntry $entry): void
+    {
+        $lines = $entry->lines->filter(fn ($line): bool => $line->class_id === null || $line->location_id === null);
+
+        if ($lines->isEmpty()) {
+            return;
+        }
+
+        $accounts = Account::withoutGlobalScopes()
+            ->whereIn('id', $entry->lines->pluck('account_id')->unique()->all())
+            ->get(['id', 'type', 'subtype', 'default_class_id', 'default_location_id'])
+            ->keyBy('id');
+
+        if ($accounts->every(fn (Account $a): bool => $a->default_class_id === null && $a->default_location_id === null)) {
+            return;
+        }
+
+        $bank = $accounts->first(fn (Account $a): bool => in_array($a->subtype, [AccountSubtype::Bank, AccountSubtype::CreditCard], true)
+            && ($a->default_class_id !== null || $a->default_location_id !== null));
+
+        foreach ($lines as $line) {
+            $account = $accounts->get($line->account_id);
+
+            if ($account === null) {
+                continue;
+            }
+
+            $inherits = in_array($account->type, [AccountType::Income, AccountType::Expense], true);
+
+            $classId = $line->class_id ?? $account->default_class_id ?? ($inherits ? $bank?->default_class_id : null);
+            $locationId = $line->location_id ?? $account->default_location_id ?? ($inherits ? $bank?->default_location_id : null);
+
+            if ($classId !== $line->class_id || $locationId !== $line->location_id) {
+                $line->forceFill(['class_id' => $classId, 'location_id' => $locationId])->saveQuietly();
+            }
+        }
     }
 
     /**
