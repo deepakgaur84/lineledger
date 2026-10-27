@@ -54,6 +54,7 @@
         },
     }"
     @click.outside="open = false"
+    @contacts-changed.window="window.__llContactPool = null; list = null; if (open) load()"
     @keydown.escape.window="open = false"
     class="relative min-w-[200px]"
     wire:ignore.self

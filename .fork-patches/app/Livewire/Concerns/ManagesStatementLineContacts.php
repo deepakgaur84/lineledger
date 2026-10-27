@@ -193,6 +193,10 @@ trait ManagesStatementLineContacts
             $line->isInflow() ? 'is_customer' : 'is_vendor',
         );
 
+        // Tell every picker on the page (they cache the list in the browser) that
+        // there is a new contact to offer.
+        $this->dispatch('contacts-changed');
+
         $this->selectLineContact($lineId, (int) $contact->id);
     }
 
