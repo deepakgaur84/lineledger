@@ -42,6 +42,14 @@ new #[Title('For Review')] class extends Component {
 
     public bool $showExcluded = false;
 
+    /**
+     * Fork: how many rows to render at once. Every row carries several pickers
+     * that re-render on each interaction, so a few hundred feed lines made the
+     * page crawl. The oldest rows come first and leave the queue as they are
+     * confirmed, so the next ones slide up.
+     */
+    public int $limit = 50;
+
     /** @var array<int, int|string> selected line ids for bulk actions */
     public array $selected = [];
 
@@ -74,18 +82,47 @@ new #[Title('For Review')] class extends Component {
     #[Computed]
     public function rows(): Collection
     {
+        return $this->baseQuery()
+            ->with(['account:id,code,name', 'suggestedAccount:id,code,name', 'suggestedBill:id,bill_no'])
+            ->orderBy('txn_date')
+            ->orderBy('id')
+            ->limit($this->limit)
+            ->get();
+    }
+
+    /**
+     * Every line waiting in this view, including the ones not rendered yet.
+     */
+    #[Computed]
+    public function totalRows(): int
+    {
+        return $this->baseQuery()->count();
+    }
+
+    public function showMore(): void
+    {
+        $this->limit += 50;
+        unset($this->rows);
+    }
+
+    public function showAllRows(): void
+    {
+        $this->limit = max(50, $this->totalRows);
+        unset($this->rows);
+    }
+
+    /**
+     * @return \Illuminate\Database\Eloquent\Builder<BankStatementLine>
+     */
+    private function baseQuery(): \Illuminate\Database\Eloquent\Builder
+    {
         $base = $this->showExcluded
             ? BankStatementLine::query()
                 ->where('match_status', StatementLineMatchStatus::Ignored->value)
                 ->whereNull('created_journal_entry_id')
             : BankStatementLine::query()->forReview();
 
-        return $base
-            ->when($this->accountFilter, fn ($q) => $q->where('account_id', $this->accountFilter))
-            ->with(['account:id,code,name', 'suggestedAccount:id,code,name', 'suggestedBill:id,bill_no'])
-            ->orderBy('txn_date')
-            ->orderBy('id')
-            ->get();
+        return $base->when($this->accountFilter, fn ($q) => $q->where('account_id', $this->accountFilter));
     }
 
     /**
@@ -493,6 +530,13 @@ new #[Title('For Review')] class extends Component {
     public function updatedShowExcluded(): void
     {
         $this->selected = [];
+        $this->limit = 50;
+    }
+
+    public function updatedAccountFilter(): void
+    {
+        $this->selected = [];
+        $this->limit = 50;
     }
 
     public function selectAllVisible(): void
@@ -921,6 +965,14 @@ new #[Title('For Review')] class extends Component {
             </tbody>
         </table>
     </div>
+
+    @if ($this->totalRows > $this->rows->count())
+        <div class="mt-3 flex flex-wrap items-center gap-3 text-sm" data-test="review-show-more">
+            <flux:text>{{ __('Showing :shown of :total transactions, oldest first.', ['shown' => $this->rows->count(), 'total' => $this->totalRows]) }}</flux:text>
+            <flux:button size="sm" wire:click="showMore">{{ __('Show 50 more') }}</flux:button>
+            <flux:button size="sm" variant="ghost" wire:click="showAllRows" wire:confirm="{{ __('Showing everything can make this page slow. Continue?') }}">{{ __('Show all') }}</flux:button>
+        </div>
+    @endif
 
     {{-- Accounts for the category pickers on each row and in the split modal. --}}
     <x-account-combo.options key="categories" :options="$this->categoryOptions" />
