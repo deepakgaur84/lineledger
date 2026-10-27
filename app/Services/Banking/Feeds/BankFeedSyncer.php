@@ -8,6 +8,7 @@ use App\Enums\StatementLineMatchStatus;
 use App\Models\BankFeedAccount;
 use App\Models\BankStatementImport;
 use App\Models\BankStatementLine;
+use App\Models\Contact;
 use App\Services\Banking\Feeds\Akahu\AkahuClient;
 use App\Services\Banking\Feeds\Akahu\AkahuException;
 use App\Services\Banking\Feeds\Akahu\AkahuTransactionMapper;
@@ -127,6 +128,61 @@ class BankFeedSyncer
     }
 
     /**
+     * Active vendors keyed by normalized name. Names shared by two vendors are
+     * left out: guessing between them would be worse than asking.
+     *
+     * @return array<string, int>
+     */
+    private function vendorIdsByName(int $companyId): array
+    {
+        $map = [];
+        $ambiguous = [];
+
+        $vendors = Contact::withoutGlobalScopes()
+            ->where('company_id', $companyId)
+            ->where('is_active', true)
+            ->where('is_vendor', true)
+            ->get(['id', 'display_name']);
+
+        foreach ($vendors as $vendor) {
+            $key = $this->normalizeName((string) $vendor->display_name);
+
+            if ($key === '') {
+                continue;
+            }
+
+            if (isset($map[$key])) {
+                $ambiguous[$key] = true;
+
+                continue;
+            }
+
+            $map[$key] = (int) $vendor->id;
+        }
+
+        return array_diff_key($map, $ambiguous);
+    }
+
+    /**
+     * @param  array<string, int>  $vendors
+     */
+    private function vendorFor(ParsedTransaction $txn, array $vendors): ?int
+    {
+        $merchant = is_array($txn->raw['merchant'] ?? null) ? ($txn->raw['merchant']['name'] ?? null) : null;
+
+        if (! is_string($merchant)) {
+            return null;
+        }
+
+        return $vendors[$this->normalizeName($merchant)] ?? null;
+    }
+
+    private function normalizeName(string $name): string
+    {
+        return trim((string) preg_replace('/[^\p{L}\p{N}]+/u', ' ', mb_strtolower($name)));
+    }
+
+    /**
      * A sync that died part-way (a timeout, a restart) can leave its import in
      * "matching" with the lines saved but never matched. Their ids are already
      * known, so later syncs would skip them — finish that matching here instead.
@@ -192,7 +248,9 @@ class BankFeedSyncer
         if ($new !== []) {
             $report(__('Saving :count new transactions…', ['count' => count($new)]));
 
-            $import = DB::transaction(function () use ($feedAccount, $ledgerAccountId, $new, $now, $timezone, $companyId): BankStatementImport {
+            $vendors = $this->vendorIdsByName($companyId);
+
+            $import = DB::transaction(function () use ($feedAccount, $ledgerAccountId, $new, $now, $timezone, $companyId, $vendors): BankStatementImport {
                 $dates = array_map(fn (ParsedTransaction $t): string => $t->date->toDateString(), $new);
                 sort($dates);
 
@@ -225,6 +283,8 @@ class BankFeedSyncer
                         'balance_cents' => $txn->balanceCents,
                         'raw' => $txn->raw,
                         'match_status' => StatementLineMatchStatus::Unmatched->value,
+                        // The bank's own merchant name, when it matches a vendor we already have.
+                        'suggested_contact_id' => $txn->amountCents < 0 ? $this->vendorFor($txn, $vendors) : null,
                     ]);
                 }
 

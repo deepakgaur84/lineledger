@@ -7,6 +7,7 @@ use App\Models\BankStatementLine;
 use App\Models\Contact;
 use Illuminate\Support\Collection;
 use Livewire\Attributes\Computed;
+use Livewire\Attributes\Renderless;
 
 /**
  * Host side of the per-row `<x-statement-contact-combo>` picker used by the
@@ -96,6 +97,31 @@ trait ManagesStatementLineContacts
     }
 
     /**
+     * Every active contact, once, for the picker to search in the browser — so
+     * typing never waits on a server round trip. Renderless: nothing on the
+     * page re-draws when this is called.
+     *
+     * @return list<array{id: int, n: string, v: int, e: int, c: int}>
+     */
+    #[Renderless]
+    public function contactPool(): array
+    {
+        return Contact::query()
+            ->where('is_active', true)
+            ->orderBy('display_name')
+            ->get(['id', 'display_name', 'is_vendor', 'is_employee', 'is_customer'])
+            ->map(fn (Contact $c): array => [
+                'id' => (int) $c->id,
+                'n' => (string) $c->display_name,
+                'v' => (int) (bool) $c->is_vendor,
+                'e' => (int) (bool) $c->is_employee,
+                'c' => (int) (bool) $c->is_customer,
+            ])
+            ->values()
+            ->all();
+    }
+
+    /**
      * display_name for every payee shown on the page, one query.
      *
      * @return array<int, string>
@@ -145,11 +171,12 @@ trait ManagesStatementLineContacts
         $this->afterLineContactChanged($line, $contact);
     }
 
-    public function startNewLineContact(int $lineId): void
+    public function startNewLineContact(int $lineId, string $name = ''): void
     {
         $state = $this->lineContactState($lineId);
+        $name = trim($name) !== '' ? trim($name) : trim($state['query']);
 
-        $this->lineContact[$lineId] = ['id' => null, 'query' => '', 'creating' => true, 'new_name' => trim($state['query'])];
+        $this->lineContact[$lineId] = ['id' => null, 'query' => '', 'creating' => true, 'new_name' => $name];
     }
 
     public function createLineContact(int $lineId): void
