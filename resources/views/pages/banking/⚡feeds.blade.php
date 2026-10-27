@@ -1,13 +1,14 @@
 <?php
 
 use App\Enums\AccountSubtype;
+use App\Jobs\SyncBankFeedAccount;
 use App\Models\Account;
 use App\Models\BankFeedAccount;
 use App\Models\BankFeedConnection;
 use App\Models\Company;
 use App\Services\Banking\Feeds\Akahu\AkahuClient;
 use App\Services\Banking\Feeds\Akahu\AkahuException;
-use App\Services\Banking\Feeds\BankFeedSyncer;
+use App\Services\Banking\Feeds\BankFeedSyncStatus;
 use Flux\Flux;
 use Illuminate\Support\Collection;
 use Livewire\Attributes\Computed;
@@ -64,6 +65,33 @@ new #[Title('Bank feeds')] class extends Component {
             ->where('is_active', true)
             ->orderBy('code')
             ->get();
+    }
+
+    /**
+     * Progress of any sync started from this page, keyed by feed account id.
+     *
+     * @return array<int, array{state: string, message: string, at: int}>
+     */
+    #[Computed]
+    public function syncStatuses(): array
+    {
+        $statuses = [];
+
+        foreach ($this->feedAccounts as $fa) {
+            $status = BankFeedSyncStatus::get((int) $fa->id);
+
+            if ($status !== null) {
+                $statuses[(int) $fa->id] = $status;
+            }
+        }
+
+        return $statuses;
+    }
+
+    #[Computed]
+    public function anySyncRunning(): bool
+    {
+        return collect($this->syncStatuses)->contains(fn (array $s): bool => $s['state'] === 'running');
     }
 
     private function fillFromAccounts(): void
@@ -173,21 +201,30 @@ new #[Title('Bank feeds')] class extends Component {
         Flux::toast(variant: 'success', text: __('Saved.'));
     }
 
-    public function syncNow(int $feedAccountId, BankFeedSyncer $syncer): void
+    public function syncNow(int $feedAccountId): void
     {
         $feedAccount = BankFeedAccount::query()->where('company_id', $this->company->id)->findOrFail($feedAccountId);
 
-        try {
-            $result = $syncer->sync($feedAccount);
-        } catch (\Throwable $e) {
-            $this->reloadState();
-            Flux::toast(variant: 'danger', text: $e->getMessage());
+        if (! $feedAccount->isLinked() || ! $feedAccount->is_active) {
+            Flux::toast(variant: 'danger', text: __('Link this feed account to a bank account first.'));
 
             return;
         }
 
-        $this->reloadState();
-        Flux::toast(variant: 'success', text: __(':added new, :updated updated.', ['added' => $result['added'], 'updated' => $result['updated']]));
+        if (BankFeedSyncStatus::isRunning((int) $feedAccount->id)) {
+            Flux::toast(text: __('A sync for this account is already running.'));
+
+            return;
+        }
+
+        BankFeedSyncStatus::put((int) $feedAccount->id, 'running', __('Starting…'));
+
+        // Runs after this response is sent, so a long first sync neither blocks
+        // nor times out the page; the status line below follows its progress.
+        SyncBankFeedAccount::dispatchAfterResponse((int) $feedAccount->id, (int) $this->company->id);
+
+        unset($this->syncStatuses, $this->anySyncRunning);
+        Flux::toast(text: __('Sync started. You can leave this page — it keeps running.'));
     }
 
     public function disconnect(): void
@@ -202,7 +239,7 @@ new #[Title('Bank feeds')] class extends Component {
     }
 }; ?>
 
-<section class="w-full">
+<section class="w-full" @if ($this->anySyncRunning) wire:poll.2s @endif>
     <div class="mb-6">
         <flux:heading size="xl" level="1">{{ __('Bank feeds') }}</flux:heading>
         <flux:subheading>{{ __('Pull new transactions from your bank through Akahu every day. They arrive in For Review, where your bank rules and suggestions apply as usual. File import keeps working alongside.') }}</flux:subheading>
@@ -261,6 +298,21 @@ new #[Title('Bank feeds')] class extends Component {
                         @endif
                     </div>
 
+                    @if ($status = ($this->syncStatuses[$fa->id] ?? null))
+                        <div class="mb-3 flex items-center gap-2 text-sm" data-test="feed-sync-status-{{ $fa->id }}">
+                            @if ($status['state'] === 'running')
+                                <flux:icon.loading class="size-4" />
+                                <span>{{ $status['message'] }}</span>
+                            @elseif ($status['state'] === 'done')
+                                <flux:icon.check-circle class="size-4 text-emerald-600" />
+                                <span>{{ $status['message'] }}</span>
+                            @else
+                                <flux:icon.exclamation-triangle class="size-4 text-red-600" />
+                                <span class="text-red-600">{{ $status['message'] }}</span>
+                            @endif
+                        </div>
+                    @endif
+
                     @if ($fa->last_error)
                         <flux:text class="mb-3 text-red-600" data-test="feed-account-error">{{ $fa->last_error }}</flux:text>
                     @endif
@@ -276,7 +328,7 @@ new #[Title('Bank feeds')] class extends Component {
                         <div class="flex gap-2">
                             <flux:button wire:click="saveLink({{ $fa->id }})" data-test="feed-save-link-{{ $fa->id }}">{{ __('Save') }}</flux:button>
                             @if ($fa->isLinked())
-                                <flux:button variant="primary" icon="arrow-path" wire:click="syncNow({{ $fa->id }})" data-test="feed-sync-{{ $fa->id }}">{{ __('Sync now') }}</flux:button>
+                                <flux:button variant="primary" icon="arrow-path" wire:click="syncNow({{ $fa->id }})" :disabled="($this->syncStatuses[$fa->id]['state'] ?? '') === 'running'" data-test="feed-sync-{{ $fa->id }}">{{ __('Sync now') }}</flux:button>
                             @endif
                         </div>
                     </div>
