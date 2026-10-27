@@ -717,6 +717,9 @@ new #[Title('For Review')] class extends Component {
         [$taxCodeId, $secondaryTaxCodeId] = $this->lineTaxIds($line);
 
         try {
+            $startedAt = microtime(true);
+            \Illuminate\Support\Facades\DB::enableQueryLog();
+
             $entry = $action->handle(
                 $line,
                 $accountId ? (int) $accountId : null,
@@ -726,6 +729,18 @@ new #[Title('For Review')] class extends Component {
                 secondaryTaxCodeId: $secondaryTaxCodeId,
                 billAllocations: $allocations !== [] ? $allocations : null,
             );
+
+            $queries = collect(\Illuminate\Support\Facades\DB::getQueryLog());
+            \Illuminate\Support\Facades\DB::disableQueryLog();
+            \Illuminate\Support\Facades\Log::info('for-review accept timing', [
+                'line_id' => $lineId,
+                'total_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                'queries' => $queries->count(),
+                'query_ms' => (int) round($queries->sum('time')),
+                'slowest' => $queries->sortByDesc('time')->take(5)
+                    ->map(fn (array $q): string => round($q['time'], 1).'ms '.mb_substr((string) $q['query'], 0, 160))
+                    ->values()->all(),
+            ]);
             unset($this->rows, $this->billCandidates, $this->contactNames, $this->openBillCounts, $this->lineHint[$lineId]);
             Flux::toast(variant: 'success', text: match ($entry->source_type) {
                 Expense::class => __('Recorded as an expense.'),
@@ -935,7 +950,7 @@ new #[Title('For Review')] class extends Component {
                             default => null,
                         };
                     @endphp
-                    <tr data-test="review-row" wire:key="line-{{ $line->id }}" data-state="{{ $suggested ? 'suggested' : 'unmatched' }}">
+                    <tr data-test="review-row" wire:key="line-{{ $line->id }}" data-state="{{ $suggested ? 'suggested' : 'unmatched' }}" wire:loading.class="opacity-50" wire:target="accept({{ $line->id }})">
                         <td class="px-3 py-2"><flux:checkbox wire:model.live="selected" value="{{ $line->id }}" data-test="review-select" /></td>
                         <td class="px-3 py-2 whitespace-nowrap">{{ $line->txn_date?->toDateString() }}</td>
                         <td class="px-3 py-2 text-muted-foreground">{{ $line->account?->code }}</td>
@@ -1029,7 +1044,7 @@ new #[Title('For Review')] class extends Component {
                                             </flux:tooltip>
                                         @endif
                                     @endif
-                                    <flux:button size="xs" variant="primary" wire:click="accept({{ $line->id }})" data-test="review-accept">{{ $suggested ? __('Confirm') : __('Accept') }}</flux:button>
+                                    <flux:button size="xs" variant="primary" wire:click="accept({{ $line->id }})" wire:loading.attr="disabled" wire:target="accept({{ $line->id }})" data-test="review-accept">{{ $suggested ? __('Confirm') : __('Accept') }}</flux:button>
                                     <flux:button size="xs" variant="ghost" wire:click="openSplit({{ $line->id }})" data-test="review-split">{{ __('Split') }}</flux:button>
                                     <flux:button size="xs" variant="ghost" wire:click="exclude({{ $line->id }})" data-test="review-exclude">{{ __('Exclude') }}</flux:button>
                                 @endif
