@@ -43,6 +43,9 @@ new #[Title('For Review')] class extends Component {
 
     public bool $showExcluded = false;
 
+    /** Fork: free-text filter over description and amount. */
+    public string $search = '';
+
     /**
      * Fork: how many rows to render at once. Every row carries several pickers
      * that re-render on each interaction, so a few hundred feed lines made the
@@ -130,6 +133,7 @@ new #[Title('For Review')] class extends Component {
             ->first()
             ?? app(SaveContact::class)->handle(['display_name' => $name], 'is_vendor');
 
+        $this->dispatch('contacts-changed');
         $this->selectLineContact($lineId, (int) $contact->id);
     }
 
@@ -156,7 +160,21 @@ new #[Title('For Review')] class extends Component {
                 ->whereNull('created_journal_entry_id')
             : BankStatementLine::query()->forReview();
 
-        return $base->when($this->accountFilter, fn ($q) => $q->where('account_id', $this->accountFilter));
+        $term = trim(str_replace(['%', '_'], '', $this->search));
+
+        return $base
+            ->when($this->accountFilter, fn ($q) => $q->where('account_id', $this->accountFilter))
+            ->when($term !== '', function ($q) use ($term): void {
+                $q->where(function ($w) use ($term): void {
+                    $w->whereRaw('LOWER(description) LIKE ?', ['%'.mb_strtolower($term).'%']);
+
+                    $number = preg_replace('/[^0-9.]/', '', $term);
+
+                    if ($number !== '' && is_numeric($number)) {
+                        $w->orWhereRaw('ABS(amount_cents) = ?', [(int) round(((float) $number) * 100)]);
+                    }
+                });
+            });
     }
 
     /**
@@ -524,6 +542,55 @@ new #[Title('For Review')] class extends Component {
     }
 
     /**
+     * Fork: feed lines arrive in an already-committed import, so a new rule never
+     * reached them. Run the active rules over every waiting line that has no
+     * category yet and carry the rule's category / vendor onto it.
+     */
+    private function applyRulesToWaitingLines(): int
+    {
+        $waiting = BankStatementLine::query()
+            ->forReview()
+            ->where('match_status', StatementLineMatchStatus::Unmatched->value)
+            ->whereNull('suggested_account_id')
+            ->get();
+
+        if ($waiting->isEmpty()) {
+            return 0;
+        }
+
+        $matches = app(BankRuleEngine::class)->firstMatchingForMany(
+            (int) $this->company->id,
+            $waiting->mapWithKeys(fn (BankStatementLine $l) => [$l->id => $l->description])->all(),
+        );
+
+        $applied = 0;
+
+        foreach ($waiting as $other) {
+            $rule = $matches[$other->id] ?? null;
+
+            if ($rule === null || ! empty($this->categories[$other->id])) {
+                continue;
+            }
+
+            $other->forceFill([
+                'suggested_account_id' => $rule->action_account_id,
+                'suggested_contact_id' => $rule->action_contact_id ?? $other->suggested_contact_id,
+                'suggestion_source' => StatementSuggestionSource::Rule->value,
+                'match_reason' => __('Categorized by rule ":name".', ['name' => $rule->name]),
+            ])->save();
+
+            // A row the person has not picked a payee on follows the new suggestion.
+            if (isset($this->lineContact[$other->id]) && $this->lineContact[$other->id]['id'] === null && ! $this->lineContact[$other->id]['creating']) {
+                unset($this->lineContact[$other->id]);
+            }
+
+            $applied++;
+        }
+
+        return $applied;
+    }
+
+    /**
      * "Always do this": write a bank rule for this payee with the row's
      * category (and vendor).
      */
@@ -557,9 +624,13 @@ new #[Title('For Review')] class extends Component {
             app(EditLockManager::class)->touch($rule);
         }
 
+        $applied = $this->applyRulesToWaitingLines();
+
         unset($this->rows, $this->ruleCoveredLines, $this->billCandidates, $this->contactNames);
 
-        Flux::toast(variant: 'success', text: __('Rule ":name" created — edit it under Bank rules.', ['name' => $rule->name]));
+        Flux::toast(variant: 'success', text: $applied > 0
+            ? __('Rule ":name" created and applied to :count other transactions — edit it under Bank rules.', ['name' => $rule->name, 'count' => $applied])
+            : __('Rule ":name" created — edit it under Bank rules.', ['name' => $rule->name]));
     }
 
     /**
@@ -596,6 +667,12 @@ new #[Title('For Review')] class extends Component {
     }
 
     public function updatedShowExcluded(): void
+    {
+        $this->selected = [];
+        $this->limit = 50;
+    }
+
+    public function updatedSearch(): void
     {
         $this->selected = [];
         $this->limit = 50;
@@ -853,6 +930,7 @@ new #[Title('For Review')] class extends Component {
             <flux:subheading>{{ __('Imported bank transactions waiting to be categorized, across every account.') }}</flux:subheading>
         </div>
         <div class="flex items-end gap-3">
+            <flux:input wire:model.live.debounce.300ms="search" icon="magnifying-glass" clearable :label="__('Search')" :placeholder="__('Description or amount…')" class="max-w-[260px]" data-test="review-search" />
             <flux:select wire:model.live="accountFilter" :label="__('Account')" class="max-w-[240px]" data-test="review-account-filter">
                 <flux:select.option value="">{{ __('All accounts') }}</flux:select.option>
                 @foreach ($this->bankAccounts as $acct)
@@ -895,7 +973,7 @@ new #[Title('For Review')] class extends Component {
                 @if ($showExcluded)
                     <flux:button size="sm" variant="primary" wire:click="bulkInclude" data-test="bulk-include">{{ __('Include') }}</flux:button>
                 @else
-                    <flux:select wire:model="bulkCategory" size="sm" class="min-w-[200px]" data-test="bulk-category">
+                    <flux:select wire:model.live="bulkCategory" size="sm" class="min-w-[200px]" data-test="bulk-category">
                         <flux:select.option value="">{{ __('Categorize as…') }}</flux:select.option>
                         @foreach ($this->categoryOptions as $opt)
                             <flux:select.option :value="$opt['value']">{{ $opt['label'] }}</flux:select.option>
