@@ -111,7 +111,7 @@ class JournalPoster
      */
     private function applyAccountDimensionDefaults(JournalEntry $entry): void
     {
-        $lines = $entry->lines->filter(fn ($line): bool => $line->class_id === null || $line->location_id === null);
+        $lines = $entry->lines->filter(fn ($line): bool => $line->getAttribute('class_id') === null || $line->getAttribute('location_id') === null);
 
         if ($lines->isEmpty()) {
             return;
@@ -126,7 +126,7 @@ class JournalPoster
             return;
         }
 
-        $bank = $accounts->first(fn (Account $a): bool => in_array($a->subtype, [AccountSubtype::Bank, AccountSubtype::CreditCard], true)
+        $bank = $accounts->first(fn (Account $a): bool => in_array($a->getRawOriginal('subtype'), [AccountSubtype::Bank->value, AccountSubtype::CreditCard->value], true)
             && ($a->default_class_id !== null || $a->default_location_id !== null));
 
         foreach ($lines as $line) {
@@ -136,12 +136,15 @@ class JournalPoster
                 continue;
             }
 
-            $inherits = in_array($account->type, [AccountType::Income, AccountType::Expense], true);
+            $inherits = in_array($account->getRawOriginal('type'), [AccountType::Income->value, AccountType::Expense->value], true);
 
-            $classId = $line->class_id ?? $account->default_class_id ?? ($inherits ? $bank?->default_class_id : null);
-            $locationId = $line->location_id ?? $account->default_location_id ?? ($inherits ? $bank?->default_location_id : null);
+            $ownClass = $line->getAttribute('class_id');
+            $ownLocation = $line->getAttribute('location_id');
 
-            if ($classId !== $line->class_id || $locationId !== $line->location_id) {
+            $classId = $ownClass ?? $account->default_class_id ?? ($inherits ? $bank?->default_class_id : null);
+            $locationId = $ownLocation ?? $account->default_location_id ?? ($inherits ? $bank?->default_location_id : null);
+
+            if ($classId !== $ownClass || $locationId !== $ownLocation) {
                 $line->forceFill(['class_id' => $classId, 'location_id' => $locationId])->saveQuietly();
             }
         }

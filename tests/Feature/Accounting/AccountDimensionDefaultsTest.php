@@ -9,6 +9,7 @@ use App\Models\JournalEntry;
 use App\Models\JournalLine;
 use App\Models\Location;
 use App\Services\Posting\JournalPoster;
+use Illuminate\Support\Collection;
 use Livewire\Livewire;
 
 beforeEach(function () {
@@ -35,7 +36,7 @@ function saveAccountWith(Account $account, array $extra): Account
     ] + $extra, $account);
 }
 
-function postedLines(array $legs): \Illuminate\Support\Collection
+function postedLines(array $legs): Collection
 {
     $entry = JournalEntry::create([
         'company_id' => app('current_company')->id,
