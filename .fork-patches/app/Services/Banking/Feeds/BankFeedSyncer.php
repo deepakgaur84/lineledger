@@ -36,11 +36,13 @@ class BankFeedSyncer
     public function __construct(private readonly StatementMatcher $matcher) {}
 
     /**
+     * @param  (callable(string): mixed)|null  $progress  told what the sync is doing, for the page
      * @return array{added: int, updated: int, skipped: int, import_id: int|null}
      */
-    public function sync(BankFeedAccount $feedAccount, ?CarbonImmutable $now = null): array
+    public function sync(BankFeedAccount $feedAccount, ?CarbonImmutable $now = null, ?callable $progress = null): array
     {
         $now ??= CarbonImmutable::now();
+        $report = $progress ?? static function (string $message): void {};
 
         $feedAccount->loadMissing('connection', 'account');
         $ledgerAccount = $feedAccount->account;
@@ -64,9 +66,18 @@ class BankFeedSyncer
         $timezone = $feedAccount->company->timezone ?: 'Pacific/Auckland';
         $start = $this->startFor($feedAccount, $now, $timezone);
 
+        $this->resumeUnfinishedMatching($feedAccount, $report);
+
+        $report(__('Fetching transactions from Akahu…'));
+
         try {
             $client = AkahuClient::make($connection->app_token, $connection->user_token);
-            $items = $client->transactions($feedAccount->external_id, $start, $now);
+            $items = $client->transactions(
+                $feedAccount->external_id,
+                $start,
+                $now,
+                fn (int $total) => $report(__('Fetched :count transactions from Akahu…', ['count' => $total])),
+            );
         } catch (AkahuException $e) {
             $feedAccount->forceFill(['last_error' => $e->getMessage()])->save();
             $connection->forceFill(['last_error' => $e->getMessage()])->save();
@@ -84,7 +95,7 @@ class BankFeedSyncer
         }
 
         try {
-            $result = $this->apply($feedAccount, (int) $ledgerAccount->id, $parsed, $now, $timezone);
+            $result = $this->apply($feedAccount, (int) $ledgerAccount->id, $parsed, $now, $timezone, $report);
         } catch (Throwable $e) {
             $feedAccount->forceFill(['last_error' => $e->getMessage()])->save();
 
@@ -116,10 +127,37 @@ class BankFeedSyncer
     }
 
     /**
+     * A sync that died part-way (a timeout, a restart) can leave its import in
+     * "matching" with the lines saved but never matched. Their ids are already
+     * known, so later syncs would skip them — finish that matching here instead.
+     *
+     * @param  callable(string): mixed  $report
+     */
+    private function resumeUnfinishedMatching(BankFeedAccount $feedAccount, callable $report): void
+    {
+        $stuck = BankStatementImport::query()
+            ->where('company_id', $feedAccount->company_id)
+            ->where('bank_feed_account_id', $feedAccount->id)
+            ->where('status', BankStatementImportStatus::Matching->value)
+            ->get();
+
+        foreach ($stuck as $import) {
+            $report(__('Finishing matching from an earlier sync…'));
+
+            try {
+                $this->matcher->match($import);
+            } catch (Throwable $e) {
+                report($e);
+            }
+        }
+    }
+
+    /**
      * @param  list<ParsedTransaction>  $parsed
+     * @param  callable(string): mixed  $report
      * @return array{added: int, updated: int, skipped: int, import_id: int|null}
      */
-    private function apply(BankFeedAccount $feedAccount, int $ledgerAccountId, array $parsed, CarbonImmutable $now, string $timezone): array
+    private function apply(BankFeedAccount $feedAccount, int $ledgerAccountId, array $parsed, CarbonImmutable $now, string $timezone, callable $report): array
     {
         $companyId = (int) $feedAccount->company_id;
         $existing = BankStatementLine::query()
@@ -152,6 +190,8 @@ class BankFeedSyncer
         $importId = null;
 
         if ($new !== []) {
+            $report(__('Saving :count new transactions…', ['count' => count($new)]));
+
             $import = DB::transaction(function () use ($feedAccount, $ledgerAccountId, $new, $now, $timezone, $companyId): BankStatementImport {
                 $dates = array_map(fn (ParsedTransaction $t): string => $t->date->toDateString(), $new);
                 sort($dates);
@@ -193,6 +233,7 @@ class BankFeedSyncer
 
             // Match against the ledger, apply bank rules and suggestions; leaves the
             // import "ready" and the unresolved lines in the For Review queue.
+            $report(__('Matching :count transactions against your books and bank rules…', ['count' => count($new)]));
             $this->matcher->match($import);
             $importId = (int) $import->id;
         }

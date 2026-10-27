@@ -212,6 +212,7 @@ class SidebarNavCatalog
         // requires company membership to reach.
         $groups[] = self::group('tools', __('Tools'), [
             self::item('tools.bulk_import', __('Bulk Import'), 'arrow-up-tray', 'tools.bulk-import', ['tools.bulk-import']),
+            self::item('tools.bank_feeds', __('Bank feeds'), 'link', 'banking.feeds', ['banking.feeds']),
         ]);
 
         return array_values(array_filter($groups, fn (array $group): bool => $group['items'] !== []));

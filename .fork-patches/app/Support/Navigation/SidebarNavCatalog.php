@@ -70,10 +70,15 @@ class SidebarNavCatalog
 
         if ($can(Section::Banking)) {
             $groups[] = self::group('banking', __('Banking'), [
+                // Fork additions: For Review is where every imported or feed
+                // transaction waits, so it leads the group; Bank feeds sets up
+                // the automatic daily import.
+                self::item('banking.for_review', __('For Review'), 'clipboard-document-check', 'banking.review', ['banking.review']),
                 self::item('banking.bank_register', __('Bank register'), 'building-library', 'banking.register', ['banking.register']),
                 self::item('banking.cheques', $jurisdiction->cheque('plural'), 'check', 'cheques.index', ['cheques.*']),
                 self::item('banking.deposits', __('Deposits'), 'banknotes', 'deposits.index', ['deposits.*']),
                 self::item('banking.transfers', __('Transfers'), 'arrows-right-left', 'transfers.index', ['transfers.*']),
+                self::item('banking.bank_feeds', __('Bank feeds'), 'link', 'banking.feeds', ['banking.feeds']),
             ]);
         }
 
