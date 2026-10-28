@@ -59,6 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and in the PDF. The rate is now added only when the name doesn't already
   show it ("PST 7.00%" for a code named "PST"). If a name still shows an old
   rate, the real rate is printed beside it.
+- **The classic invoice prints its document discount.** An invoice with a
+  discount on the whole document printed the subtotal, tax and total with
+  nothing between them, so the figures did not add up on the page. The
+  discount now prints between the subtotal and the tax.
 
 ## [1.3.1] - 2026-10-24
 
