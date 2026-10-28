@@ -9,6 +9,7 @@ on:
       - 'Dockerfile'
       - '.dockerignore'
       - 'docker/**'
+      - 'bank-bridge/**'
       - '.github/workflows/docker.yml'
   workflow_dispatch:
 
@@ -108,3 +109,59 @@ jobs:
           # caching is worth it now that the real cause is closed off.
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Fork: the bank bridge — a small Node service that lets LineLedger read
+  # bank-synced transactions from an Actual Budget server. Published as
+  # ghcr.io/<owner>/lineledger-bank-bridge. It rides in this workflow so the
+  # reapply-fork-patches dispatch of docker.yml builds it too (a bot commit
+  # does not trigger a separate workflow on its own).
+  bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ghcr.io/${{ github.repository }}-bank-bridge
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha
+
+      - name: Check this commit is still main's current tip
+        id: freshness
+        # Same guard as the app image above: never publish :edge from a build
+        # that main has already moved past.
+        if: github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          current_tip="$(git rev-parse origin/main)"
+          if [ "$current_tip" != "${{ github.sha }}" ]; then
+            echo "::warning::main has moved on since this build started — skipping the bridge push."
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: bank-bridge
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' && steps.freshness.outputs.stale != 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=bank-bridge
+          cache-to: type=gha,mode=max,scope=bank-bridge
