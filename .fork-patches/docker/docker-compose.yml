@@ -1,0 +1,234 @@
+name: lineledger
+
+x-app-base: &app-base
+  image: ghcr.io/lineledger/lineledger:${LINELEDGER_VERSION:-latest}
+  build:
+    context: ..
+    dockerfile: Dockerfile
+  pull_policy: missing
+  restart: unless-stopped
+  env_file: .env
+  volumes:
+    - storage:/app/storage
+  depends_on:
+    mysql:
+      condition: service_healthy
+
+services:
+  app:
+    <<: *app-base
+    environment:
+      CONTAINER_ROLE: app
+      SERVER_NAME: ${SERVER_NAME:-:8080}
+      # Run php artisan app:upgrade (migrations + post-upgrade steps) on every
+      # boot. false/0/no skips it so an operator can back up first and run
+      # `docker compose exec app php artisan app:upgrade` by hand.
+      MIGRATE_ON_BOOT: ${MIGRATE_ON_BOOT:-true}
+    ports:
+      - "${HTTP_PORT:-8080}:8080"
+      # For direct exposure with automatic HTTPS, set SERVER_NAME to your
+      # domain in .env and uncomment:
+      # - "80:80"
+      # - "443:443"
+      # - "443:443/udp"
+    volumes:
+      - storage:/app/storage
+      - caddy_data:/data
+      - caddy_config:/config
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/up"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+  # Mandatory: backups, restores, recurring documents, and mail are queued.
+  queue:
+    <<: *app-base
+    environment:
+      CONTAINER_ROLE: queue
+    command: php artisan queue:work --queue=default --tries=3 --timeout=120 --sleep=3
+    # The image healthcheck probes HTTP :8080, which worker roles don't serve.
+    healthcheck:
+      disable: true
+    depends_on:
+      app:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+
+  scheduler:
+    <<: *app-base
+    environment:
+      CONTAINER_ROLE: scheduler
+    command: php artisan schedule:work
+    healthcheck:
+      disable: true
+    depends_on:
+      app:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+
+  # mysql is pinned to the 8.4 LTS line on purpose: 8.4.x patch releases
+  # arrive with a normal `docker compose pull`, but a MAJOR version change
+  # (e.g. to 9.x) is a separate procedure — back up with backup.sh, read the
+  # MySQL upgrade notes for the target version, then change the tag.
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    # No binlog on a single-node install: it's replication/PITR overhead, and
+    # with it on, MySQL blocks the non-SUPER app user from creating the
+    # audit-log immutability triggers (error 1419) during migration.
+    command: --skip-log-bin
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE:-lineledger}
+      MYSQL_USER: ${DB_USERNAME:-lineledger}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in .env}
+    volumes:
+      - dbdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${DB_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ---- Fork: bank feeds through Actual Budget --------------------------------
+  #
+  # `actual` is an Actual Budget server: open http://<host>:5006 once, set a
+  # password, create (or import) a budget, then link your banks under
+  # More → Bank Sync. `actual-bank-bridge` is the small service LineLedger talks
+  # to; it reads transactions out of Actual. Set these in .env:
+  #   ACTUAL_BRIDGE_URL=http://actual-bank-bridge:5007
+  #   ACTUAL_BRIDGE_TOKEN=<a long random secret, 16+ characters>
+  # Keep the two versions below identical: the bridge's API library and the
+  # Actual server must be the same release.
+  actual:
+    image: actualbudget/actual-server:${ACTUAL_VERSION:-26.10.0}
+    restart: unless-stopped
+    ports:
+      - "${ACTUAL_PORT:-5006}:5006"
+    volumes:
+      - actual_data:/data
+
+  actual-bank-bridge:
+    image: ${BANK_BRIDGE_IMAGE:-ghcr.io/deepakgaur84/lineledger-bank-bridge}:${BANK_BRIDGE_VERSION:-edge}
+    build:
+      context: ../bank-bridge
+    pull_policy: missing
+    restart: unless-stopped
+    environment:
+      BRIDGE_TOKEN: ${ACTUAL_BRIDGE_TOKEN:-}
+    volumes:
+      - bridge_data:/data
+    depends_on:
+      - actual
+
+  # ---- Optional services: docker compose --profile mail up -d, etc. ----
+
+  # Scheduled database dumps: docker compose --profile backup up -d
+  # Every BACKUP_INTERVAL_SECONDS it writes lineledger-db-<ts>.sql.gz into
+  # BACKUP_DIR and prunes dumps older than BACKUP_KEEP_DAYS. Database only:
+  # attachments and other uploads live in the storage volume, which backup.sh
+  # archives alongside a dump on demand.
+  backup:
+    image: mysql:8.4
+    profiles: [backup]
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_DATABASE:-lineledger}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+    # The image entrypoint execs anything that isn't mysqld, so this loop runs
+    # as-is. `$$` is Compose's escape for a literal `$` inside the container.
+    command:
+      - bash
+      - -eo
+      - pipefail
+      - -c
+      - |
+        umask 077
+        # A `.gitignore` of `*` keeps git from ever listing or adding the
+        # dumps when BACKUP_DIR sits inside a git checkout (see the volume
+        # comment below). World-readable on purpose: git reads it as the
+        # deploy user, and this container runs as root.
+        if [ ! -e /backups/.gitignore ]; then
+          printf '*\n' > /backups/.gitignore && chmod 644 /backups/.gitignore
+        fi
+        while true; do
+          ts="$$(date -u +%Y%m%d-%H%M%S)"
+          out="/backups/lineledger-db-$$ts.sql.gz"
+          if mysqldump --single-transaction --triggers --routines --events -h mysql -uroot -p"$$MYSQL_ROOT_PASSWORD" "$$MYSQL_DATABASE" | gzip > "$$out.part"; then
+            mv "$$out.part" "$$out"
+            echo "backup: wrote $$out"
+          else
+            rm -f "$$out.part"
+            echo "backup: mysqldump failed; retrying in $$BACKUP_INTERVAL_SECONDS s" >&2
+          fi
+          find /backups -name 'lineledger-db-*.sql.gz' -mtime +"$$BACKUP_KEEP_DAYS" -delete
+          sleep "$$BACKUP_INTERVAL_SECONDS"
+        done
+    volumes:
+      # A host bind mount on purpose, not a named volume: `docker compose
+      # down -v` deletes named volumes (dbdata, storage, ...) but never touches
+      # a bind mount, so the dumps outlive a full teardown of the stack.
+      # A relative BACKUP_DIR resolves against this directory, so the default
+      # is docker/backups/ — inside the checkout on a git-clone install. The
+      # loop above drops a `.gitignore` there so git never sees the dumps,
+      # but an out-of-tree path (e.g. BACKUP_DIR=/var/backups/lineledger) is
+      # the better choice.
+      - ${BACKUP_DIR:-./backups}:/backups
+
+  mailpit:
+    image: axllent/mailpit
+    profiles: [mail]
+    restart: unless-stopped
+    # Mailpit has no authentication and its inbox exposes password-reset and MFA
+    # links. Bind to loopback only — reach the UI over an SSH tunnel, never the
+    # public interface. It is a dev/testing convenience, not a production mailer.
+    ports:
+      - "127.0.0.1:8025:8025"
+
+  redis:
+    image: redis:7-alpine
+    profiles: [redis]
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+
+  minio:
+    image: minio/minio
+    profiles: [minio]
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    # No world-known default: the old minioadmin/minioadmin would expose every
+    # attachment and backup blob. Left unset (plain ${VAR}) rather than :?
+    # because a :? default breaks the *default* `docker compose up` — Compose
+    # interpolates this service even when the minio profile is inactive. MinIO
+    # refuses to start without root credentials, so the profile still fails
+    # closed; set both in .env before enabling it. Ports bind to loopback —
+    # reach MinIO via the reverse proxy or an SSH tunnel, never the public
+    # interface.
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - miniodata:/data
+
+volumes:
+  storage:
+  dbdata:
+  caddy_data:
+  caddy_config:
+  redisdata:
+  miniodata:
+  actual_data:
+  bridge_data:
