@@ -9,9 +9,7 @@ use App\Models\BankFeedAccount;
 use App\Models\BankStatementImport;
 use App\Models\BankStatementLine;
 use App\Models\Contact;
-use App\Services\Banking\Feeds\Akahu\AkahuClient;
-use App\Services\Banking\Feeds\Akahu\AkahuException;
-use App\Services\Banking\Feeds\Akahu\AkahuTransactionMapper;
+use App\Services\Banking\Feeds\Contracts\BankFeedProvider;
 use App\Services\Banking\Import\DTO\ParsedTransaction;
 use App\Services\Banking\Import\StatementMatcher;
 use App\Services\Banking\Import\Support\StatementFingerprint;
@@ -69,34 +67,28 @@ class BankFeedSyncer
 
         $this->resumeUnfinishedMatching($feedAccount, $report);
 
-        $report(__('Fetching transactions from Akahu…'));
+        $provider = BankFeedProviders::forConnection($connection);
+
+        $report(__('Fetching transactions from :provider…', ['provider' => $provider->label()]));
 
         try {
-            $client = AkahuClient::make($connection->app_token, $connection->user_token);
-            $items = $client->transactions(
-                $feedAccount->external_id,
+            $parsed = $provider->transactions(
+                $connection,
+                $feedAccount,
                 $start,
                 $now,
-                fn (int $total) => $report(__('Fetched :count transactions from Akahu…', ['count' => $total])),
+                $timezone,
+                fn (int $total) => $report(__('Fetched :count transactions from :provider…', ['count' => $total, 'provider' => $provider->label()])),
             );
-        } catch (AkahuException $e) {
+        } catch (BankFeedException $e) {
             $feedAccount->forceFill(['last_error' => $e->getMessage()])->save();
             $connection->forceFill(['last_error' => $e->getMessage()])->save();
 
             throw $e;
         }
 
-        $parsed = [];
-        foreach ($items as $item) {
-            $txn = AkahuTransactionMapper::toParsed($item, $timezone);
-
-            if ($txn !== null) {
-                $parsed[] = $txn;
-            }
-        }
-
         try {
-            $result = $this->apply($feedAccount, (int) $ledgerAccount->id, $parsed, $now, $timezone, $report);
+            $result = $this->apply($feedAccount, (int) $ledgerAccount->id, $parsed, $now, $timezone, $report, $provider);
         } catch (Throwable $e) {
             $feedAccount->forceFill(['last_error' => $e->getMessage()])->save();
 
@@ -213,7 +205,7 @@ class BankFeedSyncer
      * @param  callable(string): mixed  $report
      * @return array{added: int, updated: int, skipped: int, import_id: int|null}
      */
-    private function apply(BankFeedAccount $feedAccount, int $ledgerAccountId, array $parsed, CarbonImmutable $now, string $timezone, callable $report): array
+    private function apply(BankFeedAccount $feedAccount, int $ledgerAccountId, array $parsed, CarbonImmutable $now, string $timezone, callable $report, BankFeedProvider $provider): array
     {
         $companyId = (int) $feedAccount->company_id;
         $existing = BankStatementLine::query()
@@ -250,7 +242,7 @@ class BankFeedSyncer
 
             $vendors = $this->vendorIdsByName($companyId);
 
-            $import = DB::transaction(function () use ($feedAccount, $ledgerAccountId, $new, $now, $timezone, $companyId, $vendors): BankStatementImport {
+            $import = DB::transaction(function () use ($feedAccount, $ledgerAccountId, $new, $now, $timezone, $companyId, $vendors, $provider): BankStatementImport {
                 $dates = array_map(fn (ParsedTransaction $t): string => $t->date->toDateString(), $new);
                 sort($dates);
 
@@ -261,12 +253,12 @@ class BankFeedSyncer
                     'account_id' => $ledgerAccountId,
                     'bank_feed_account_id' => $feedAccount->id,
                     'source_format' => BankStatementFormat::Feed->value,
-                    'original_filename' => 'Akahu — '.$feedAccount->name.' — '.$now->setTimezone($timezone)->toDateString(),
+                    'original_filename' => $provider->label().' — '.$feedAccount->name.' — '.$now->setTimezone($timezone)->toDateString(),
                     'status' => BankStatementImportStatus::Matching->value,
                     'statement_begin_date' => $dates[0],
                     'statement_end_date' => $dates[count($dates) - 1],
                     'statement_end_balance_cents' => $last->balanceCents,
-                    'parse_meta' => ['source' => 'akahu', 'external_account_id' => $feedAccount->external_id],
+                    'parse_meta' => ['source' => $provider->key(), 'external_account_id' => $feedAccount->external_id],
                     'line_count' => count($new),
                 ]);
 
