@@ -53,6 +53,7 @@ class ReportCatalog
                     ->filter(fn (array $report): bool => match ($report['key']) {
                         'reports.form-1099' => $company->supports(JurisdictionCapability::Form1099),
                         'reports.vat-return' => $company->supports(JurisdictionCapability::VatReturn),
+                        'reports.statutory-accounts' => $company->supports(JurisdictionCapability::UkStatutoryAccounts),
                         'reports.gifi' => $company->usesGifi(),
                         'reports.t5013' => $company->filesT5013(),
                         'reports.t2125' => $company->filesT2125(),

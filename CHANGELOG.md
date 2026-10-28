@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Statutory accounts (UK)** — year-end accounts for small companies as one PDF,
+  laid out the way an accountant presents them: cover, company information and
+  contents, then numbered pages with the directors' report, the Statement of
+  Comprehensive Income, Statement of Financial Position, Statement of Changes in
+  Equity and notes (accounting policies, taxation, tangible fixed assets, debtors,
+  creditors, share capital, related parties), each with the prior year. Choose
+  FRS 102 Section 1A or FRS 105 (micro-entity). Periods are explicit dates, so a
+  5 April year end works; figures are rounded line by line to whole pounds and
+  cast. Every account maps onto a statutory line with a default from its type and
+  name (dividends become a distribution, a director's loan a creditor) and an
+  optional caption that groups accounts in the statements and notes. The company
+  details — regime (UK Companies Act 2006 or the Isle of Man Acts), directors and
+  shareholdings, policies, note text, approval and signatories — live on the
+  report. Download as a PDF to file, or as a Word document (same layout, live
+  page-number fields) to edit before filing; the Accounts tab summarises every
+  year from the one picked to the latest. The documents are always in English,
+  as Companies House takes them, and changing the mapping or the company
+  details needs access to Accounting. New `accounts.statutory_line` /
+  `statutory_label` columns; adds `phpoffice/phpword`.
+
 ### Changed
 
 - **Bank register sorting** — the register now opens newest-first, and every
@@ -15,6 +37,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   running balance after each line, always worked out in date order, so it stays
   correct whatever the sort, page or Show cleared setting. Long registers page
   50 rows at a time instead of loading every line at once.
+
+## [1.3.1] - 2026-10-24
+
+**Highlights.** A patch for the first sign-in on a new install: a site admin
+without two-factor authentication is now told to turn it on before setting up
+email, instead of landing on Settings → Security with no explanation. The
+DigitalOcean Marketplace image build also passes DigitalOcean's image check, and
+Livewire moves to 4.4.8 for a security advisory. No migrations, no backfills and
+no configuration changes; see `UPGRADING.md`.
+
+### Fixed
+
+- **"Set up email" no longer dead-ends for a new site admin.** The site admin
+  area needs two-factor authentication, so the banner's link sent an admin
+  without it to Settings → Security with no explanation. The banner now says
+  two-factor authentication comes first and links to it, and the Security page
+  says why you were sent there (the site admin area, or an organization that
+  requires two-factor authentication).
+  ([#143](https://github.com/lineledger/lineledger/pull/143))
+- **The Marketplace image passes DigitalOcean's image check.** The Packer
+  build installs the pending Ubuntu security updates, removes DigitalOcean's
+  agents and `/opt/digitalocean`, and ends by running DigitalOcean's
+  `99-img-check.sh`, so a build that would be rejected fails before it makes a
+  snapshot. ([#142](https://github.com/lineledger/lineledger/pull/142))
+
+### Security
+
+- **`livewire/livewire` 4.4.8** (from 4.4.7) fixes an authorization bypass in
+  the `#[Authorize]` attribute
+  ([GHSA-mhf7-xp6r-6qrc](https://github.com/advisories/GHSA-mhf7-xp6r-6qrc)).
+  LineLedger doesn't use `#[Authorize]` or `#[Json]`, so it wasn't exposed;
+  the update keeps the dependency audit clean.
+  ([#144](https://github.com/lineledger/lineledger/pull/144))
 
 ## [1.3.0] - 2026-10-22
 
