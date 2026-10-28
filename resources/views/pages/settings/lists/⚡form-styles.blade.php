@@ -310,7 +310,7 @@ new #[Title('Form styles')] class extends Component
                     <flux:error name="f_layout" />
                 </div>
 
-                @if ($f_layout !== 'classic')
+                @if (! in_array($f_layout, ['classic', 'airy'], true))
                     <div data-test="section-order">
                         <flux:label>{{ __('Page sections') }}</flux:label>
                         <flux:description class="mt-1">{{ __('Drag to reorder what appears below the header, or switch a section off. The header always stays on top.') }}</flux:description>
@@ -333,7 +333,7 @@ new #[Title('Form styles')] class extends Component
                         </ul>
                     </div>
                 @else
-                    <flux:text class="text-sm text-muted-foreground" data-test="section-order-classic-note">{{ __('The Classic layout has a fixed structure. Pick another layout to reorder its sections.') }}</flux:text>
+                    <flux:text class="text-sm text-muted-foreground" data-test="section-order-classic-note">{{ __('The Classic and Airy layouts have a fixed structure. Pick another layout to reorder its sections.') }}</flux:text>
                 @endif
 
                 <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">

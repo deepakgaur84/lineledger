@@ -6,6 +6,7 @@ use App\Models\Account;
 use App\Models\BankFeedAccount;
 use App\Models\BankFeedConnection;
 use App\Models\Company;
+use App\Services\Banking\Feeds\ActualBudget\ActualBudgetProvider;
 use App\Services\Banking\Feeds\Akahu\AkahuProvider;
 use App\Services\Banking\Feeds\BankFeedException;
 use App\Services\Banking\Feeds\BankFeedProviders;
@@ -24,6 +25,14 @@ new #[Title('Bank feeds')] class extends Component {
 
     public string $userToken = '';
 
+    public string $actualServerUrl = '';
+
+    public string $actualPassword = '';
+
+    public string $actualSyncId = '';
+
+    public string $actualFilePassword = '';
+
     /** @var array<int, int|string> feed account id => chosen ledger account id ('' = not linked) */
     public array $links = [];
 
@@ -40,6 +49,12 @@ new #[Title('Bank feeds')] class extends Component {
     public function connection(): ?BankFeedConnection
     {
         return BankFeedConnection::query()->where('company_id', $this->company->id)->where('provider', AkahuProvider::KEY)->first();
+    }
+
+    #[Computed]
+    public function actualConnection(): ?BankFeedConnection
+    {
+        return BankFeedConnection::query()->where('company_id', $this->company->id)->where('provider', ActualBudgetProvider::KEY)->first();
     }
 
     /**
@@ -132,7 +147,7 @@ new #[Title('Bank feeds')] class extends Component {
 
     private function reloadState(): void
     {
-        unset($this->connection, $this->feedAccounts, $this->connectedProviders);
+        unset($this->connection, $this->actualConnection, $this->feedAccounts, $this->connectedProviders);
         $this->fillFromAccounts();
     }
 
@@ -154,9 +169,47 @@ new #[Title('Bank feeds')] class extends Component {
         $this->loadAccounts($connection);
     }
 
-    public function reloadAccounts(): void
+    public function saveActual(): void
     {
-        $connection = $this->connection;
+        $provider = BankFeedProviders::get(ActualBudgetProvider::KEY);
+
+        if (! $provider->isAvailable()) {
+            Flux::toast(variant: 'danger', text: (string) $provider->unavailableReason());
+
+            return;
+        }
+
+        $this->validate([
+            'actualServerUrl' => ['required', 'url', 'max:500'],
+            'actualPassword' => ['required', 'string', 'max:500'],
+            'actualSyncId' => ['required', 'string', 'max:200'],
+            'actualFilePassword' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        try {
+            $connection = $provider->connect((int) $this->company->id, [
+                'server_url' => $this->actualServerUrl,
+                'password' => $this->actualPassword,
+                'sync_id' => $this->actualSyncId,
+                'file_password' => $this->actualFilePassword,
+            ]);
+        } catch (BankFeedException $e) {
+            Flux::toast(variant: 'danger', text: $e->getMessage());
+
+            return;
+        }
+
+        $this->actualServerUrl = '';
+        $this->actualPassword = '';
+        $this->actualSyncId = '';
+        $this->actualFilePassword = '';
+
+        $this->loadAccounts($connection);
+    }
+
+    public function reloadAccounts(string $provider = AkahuProvider::KEY): void
+    {
+        $connection = $provider === ActualBudgetProvider::KEY ? $this->actualConnection : $this->connection;
 
         if ($connection !== null) {
             $this->loadAccounts($connection);
@@ -208,6 +261,21 @@ new #[Title('Bank feeds')] class extends Component {
             return;
         }
 
+        if ($accountId !== null) {
+            $other = BankFeedAccount::query()
+                ->where('company_id', $this->company->id)
+                ->where('account_id', $accountId)
+                ->where('is_active', true)
+                ->where('id', '!=', $feedAccount->id)
+                ->first();
+
+            if ($other !== null) {
+                $this->addError('links.'.$feedAccountId, __('That bank account already receives another feed (:name). Unlink it there first, or both feeds would import the same transactions.', ['name' => $other->name]));
+
+                return;
+            }
+        }
+
         $from = trim((string) ($this->syncFrom[$feedAccountId] ?? ''));
 
         $this->validate(["syncFrom.{$feedAccountId}" => ['nullable', 'date_format:Y-m-d']]);
@@ -248,9 +316,10 @@ new #[Title('Bank feeds')] class extends Component {
         Flux::toast(text: __('Sync started. You can leave this page — it keeps running.'));
     }
 
-    public function disconnect(): void
+    public function disconnect(string $provider = AkahuProvider::KEY): void
     {
-        $connection = $this->connection;
+        $connection = $provider === ActualBudgetProvider::KEY ? $this->actualConnection : $this->connection;
+        $label = BankFeedProviders::get($provider === ActualBudgetProvider::KEY ? ActualBudgetProvider::KEY : AkahuProvider::KEY)->label();
 
         if ($connection !== null) {
             BankFeedAccount::query()->where('company_id', $this->company->id)->where('bank_feed_connection_id', $connection->id)->delete();
@@ -260,7 +329,7 @@ new #[Title('Bank feeds')] class extends Component {
         $this->links = [];
         $this->syncFrom = [];
         $this->reloadState();
-        Flux::toast(text: __('Akahu disconnected. Imported transactions were kept.'));
+        Flux::toast(text: __(':provider disconnected. Imported transactions were kept.', ['provider' => $label]));
     }
 }; ?>
 
@@ -276,7 +345,7 @@ new #[Title('Bank feeds')] class extends Component {
                 <div class="flex items-center justify-between gap-2">
                     <flux:heading size="lg">{{ $provider->label() }}</flux:heading>
                     @if (! $provider->isAvailable())
-                        <flux:badge color="zinc">{{ __('Coming soon') }}</flux:badge>
+                        <flux:badge color="zinc">{{ __('Not set up') }}</flux:badge>
                     @elseif (in_array($provider->key(), $this->connectedProviders, true))
                         <flux:badge color="emerald">{{ __('Connected') }}</flux:badge>
                     @else
@@ -291,6 +360,48 @@ new #[Title('Bank feeds')] class extends Component {
         @endforeach
     </div>
 
+    @if ($this->actualConnection?->last_error)
+        <flux:callout variant="danger" icon="exclamation-triangle" class="mb-6" data-test="feed-actual-error">
+            <flux:callout.text>{{ $this->actualConnection->last_error }}</flux:callout.text>
+        </flux:callout>
+    @endif
+
+    <div class="mb-8 rounded-lg border border-border p-4" data-test="feed-actual-section">
+        <flux:heading size="lg">{{ __('Actual Budget connection') }}</flux:heading>
+        <flux:text class="mt-1">
+            {{ __('Actual syncs with your bank; LineLedger reads the result through the bank bridge. In Actual, link your banks under More → Bank Sync, then enter your Actual server address, its password and the budget Sync ID (Settings → Show advanced settings). Stored encrypted and never shown again.') }}
+        </flux:text>
+
+        @if (! $this->providers['actual']->isAvailable())
+            <flux:callout variant="warning" icon="exclamation-triangle" class="mt-3" data-test="feed-actual-unavailable">
+                <flux:callout.text>{{ $this->providers['actual']->unavailableReason() }}</flux:callout.text>
+            </flux:callout>
+        @endif
+
+        @if ($this->actualConnection)
+            <div class="mt-3 flex flex-wrap items-center gap-3">
+                <flux:badge color="emerald" data-test="feed-actual-connected">{{ __('Connected') }}</flux:badge>
+                @if ($this->actualConnection->last_synced_at)
+                    <flux:text>{{ __('Last synced :when', ['when' => $this->actualConnection->last_synced_at->diffForHumans()]) }}</flux:text>
+                @endif
+                <flux:button size="sm" icon="arrow-path" wire:click="reloadAccounts('actual')" data-test="feed-actual-reload">{{ __('Reload accounts') }}</flux:button>
+                <flux:button size="sm" variant="ghost" wire:click="disconnect('actual')" wire:confirm="{{ __('Disconnect Actual Budget? Imported transactions are kept.') }}" data-test="feed-actual-disconnect">{{ __('Disconnect') }}</flux:button>
+            </div>
+        @endif
+
+        <form wire:submit="saveActual" class="mt-4 grid gap-4 sm:grid-cols-2">
+            <flux:input wire:model="actualServerUrl" type="url" :label="__('Actual server address')" placeholder="http://actual:5006" autocomplete="off" data-test="feed-actual-url" />
+            <flux:input wire:model="actualSyncId" :label="__('Budget Sync ID')" autocomplete="off" data-test="feed-actual-sync-id" />
+            <flux:input wire:model="actualPassword" type="password" :label="__('Server password')" autocomplete="off" data-test="feed-actual-password" />
+            <flux:input wire:model="actualFilePassword" type="password" :label="__('Budget file password (only if encrypted)')" autocomplete="off" data-test="feed-actual-file-password" />
+            <div class="sm:col-span-2">
+                <flux:button type="submit" variant="primary" :disabled="! $this->providers['actual']->isAvailable()" data-test="feed-actual-save">
+                    {{ $this->actualConnection ? __('Replace details and reload accounts') : __('Connect and load accounts') }}
+                </flux:button>
+            </div>
+        </form>
+    </div>
+
     @if ($this->connection?->last_error)
         <flux:callout variant="danger" icon="exclamation-triangle" class="mb-6" data-test="feed-connection-error">
             <flux:callout.text>{{ $this->connection->last_error }}</flux:callout.text>
@@ -298,7 +409,7 @@ new #[Title('Bank feeds')] class extends Component {
     @endif
 
     <div class="mb-8 rounded-lg border border-border p-4">
-        <flux:heading size="lg">{{ __('Akahu connection') }}</flux:heading>
+        <flux:heading size="lg">{{ __('Akahu connection (direct — fallback)') }}</flux:heading>
         <flux:text class="mt-1">
             {{ __('Create a personal app at my.akahu.nz, link ANZ, ASB or Wise there, and paste its App ID token and your user access token. They are stored encrypted and never shown again.') }}
         </flux:text>

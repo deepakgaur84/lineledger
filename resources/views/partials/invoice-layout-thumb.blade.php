@@ -28,6 +28,8 @@
         <rect x="32" y="27" width="36" height="3" fill="{{ $ink }}" />
     @elseif ($layout === 'minimal')
         <rect x="64" y="9" width="28" height="2.5" fill="#6b7280" />
+    @elseif ($layout === 'airy')
+        <rect x="70" y="8" width="22" height="9" fill="#d1d5db" />
     @else
         <rect x="58" y="9" width="34" height="5" fill="#374151" />
     @endif

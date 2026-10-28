@@ -2,6 +2,7 @@
 
 namespace App\Actions\Sales;
 
+use App\Enums\InvoiceLayout;
 use App\Enums\InvoiceSection;
 use App\Models\FormStyle;
 use Illuminate\Support\Facades\DB;
@@ -15,7 +16,7 @@ use Illuminate\Support\Facades\DB;
  *
  * Expected $data shape:
  *   name:            string
- *   layout:          ?string (App\Enums\InvoiceLayout value)
+ *   layout:          InvoiceLayout|string|null (unknown values fall back to classic)
  *   show_logo:       ?bool
  *   logo_position:   ?string (App\Enums\LogoPosition value)
  *   logo_max_height: ?int    (px)
@@ -26,7 +27,6 @@ use Illuminate\Support\Facades\DB;
  *   zebra_rows:      ?bool
  *   sections:        ?array  (ordered list of {key: App\Enums\InvoiceSection value, visible: bool})
  *   footer_message:  ?string
- *   layout:         InvoiceLayout|string|null  (unknown values fall back to classic)
  *   is_default:     ?bool
  *   is_active:      ?bool
  */
@@ -42,7 +42,13 @@ final class SaveFormStyle
                 'name' => $data['name'],
             ];
 
-            foreach (['layout', 'logo_position', 'font_family'] as $enumColumn) {
+            if (array_key_exists('layout', $data) && filled($data['layout'])) {
+                $attributes['layout'] = $data['layout'] instanceof InvoiceLayout
+                    ? $data['layout']
+                    : (InvoiceLayout::tryFrom((string) $data['layout']) ?? InvoiceLayout::Classic);
+            }
+
+            foreach (['logo_position', 'font_family'] as $enumColumn) {
                 if (array_key_exists($enumColumn, $data) && filled($data[$enumColumn])) {
                     $attributes[$enumColumn] = $data[$enumColumn];
                 }
