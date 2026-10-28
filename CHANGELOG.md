@@ -63,6 +63,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   discount on the whole document printed the subtotal, tax and total with
   nothing between them, so the figures did not add up on the page. The
   discount now prints between the subtotal and the tax.
+- **The classic invoice shows credits and write-offs.** When a credit memo or
+  a write-off had closed part of an invoice's balance, the classic layout left
+  it out: with no payment it printed only the total, as if the whole amount
+  were still owed, and with a payment the balance due was less than the total
+  minus the payment with nothing to say why. It now prints a Credits and
+  adjustments line, and the balance due whenever anything has been settled.
 
 ## [1.3.1] - 2026-10-24
 

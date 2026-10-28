@@ -469,3 +469,25 @@ it('prints the document discount between the subtotal and the tax', function () 
         ->and(strpos($html, '>Subtotal<'))->toBeLessThan(strpos($html, '>Discount<'))
         ->and(strpos($html, '>Discount<'))->toBeLessThan(strpos($html, '>Total<'));
 });
+
+it('prints credits and write-offs and the balance they leave', function () {
+    $invoice = makePostedInvoice($this);
+    $render = fn () => app(InvoicePdfRenderer::class)->html($this->company, $invoice->fresh());
+
+    // Nothing settled: the total is what is owed, as before.
+    expect($render())->not->toContain('>Balance Due<')->not->toContain('>Credits and adjustments<');
+
+    // A credit with no payment no longer prints as if all 52.50 were owed.
+    $invoice->forceFill(['reconciled_cents' => 2000])->save();
+    expect($render())
+        ->toContain('<td>Credits and adjustments</td>')->toContain('20.00')
+        ->toContain('<td>Balance Due</td>')->toContain('$32.50')
+        ->not->toContain('>Paid<');
+
+    // With a payment as well, both lines explain the balance.
+    $invoice->forceFill(['amount_paid_cents' => 1000])->save();
+    expect($render())
+        ->toContain('<td>Paid</td>')->toContain('10.00')
+        ->toContain('<td>Credits and adjustments</td>')
+        ->toContain('$22.50');
+});
