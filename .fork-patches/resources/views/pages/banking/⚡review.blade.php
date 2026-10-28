@@ -794,9 +794,6 @@ new #[Title('For Review')] class extends Component {
         [$taxCodeId, $secondaryTaxCodeId] = $this->lineTaxIds($line);
 
         try {
-            $startedAt = microtime(true);
-            \Illuminate\Support\Facades\DB::enableQueryLog();
-
             $entry = $action->handle(
                 $line,
                 $accountId ? (int) $accountId : null,
@@ -807,17 +804,6 @@ new #[Title('For Review')] class extends Component {
                 billAllocations: $allocations !== [] ? $allocations : null,
             );
 
-            $queries = collect(\Illuminate\Support\Facades\DB::getQueryLog());
-            \Illuminate\Support\Facades\DB::disableQueryLog();
-            \Illuminate\Support\Facades\Log::info('for-review accept timing', [
-                'line_id' => $lineId,
-                'total_ms' => (int) round((microtime(true) - $startedAt) * 1000),
-                'queries' => $queries->count(),
-                'query_ms' => (int) round($queries->sum('time')),
-                'slowest' => $queries->sortByDesc('time')->take(5)
-                    ->map(fn (array $q): string => round($q['time'], 1).'ms '.mb_substr((string) $q['query'], 0, 160))
-                    ->values()->all(),
-            ]);
             unset($this->rows, $this->billCandidates, $this->contactNames, $this->openBillCounts, $this->lineHint[$lineId]);
             Flux::toast(variant: 'success', text: match ($entry->source_type) {
                 Expense::class => __('Recorded as an expense.'),
