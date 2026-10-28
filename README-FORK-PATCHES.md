@@ -1260,3 +1260,116 @@ Each file below was rebuilt from **upstream 1.2.1 plus only the fork's own chang
 - Upstream tests whose English date expectations changed with §20 (`CountryEnumTest`,
   `DocumentLocaleTest`, `UkCompanySetupTest`) are patched; `InvoiceDesignerTest` now uses a
   unique invoice number per helper call.
+
+## 26. Bank feeds: Actual Budget bridge (all banks) with Akahu as direct fallback
+
+Bank feeds are now **pluggable providers**. The intended path is **Actual Budget → bridge → LineLedger**, so every bank
+(NZ and elsewhere) arrives through one provider. Akahu stays as a direct fallback while Actual is being proven out.
+
+**How it fits together**
+
+- `actual` (the Actual Budget server) and `actual-bank-bridge` (our small Node service) run as two extra services in the
+  same compose stack. LineLedger calls the bridge; the bridge talks to Actual with `@actual-app/api`; Actual talks to the banks.
+- The bridge is **stateless**: LineLedger sends each company's Actual credentials with every request. Calls are queued so only one
+  budget is open at a time. It runs `runBankSync` for the account, then reads the transactions and payee names.
+- Sign convention is unchanged: money in is positive. Actual sub-transactions of a split (`is_child`) are skipped, and LineLedger skips
+  any transaction with no `imported_id`.
+- Registry order is Actual first, Akahu second (`BankFeedProviders`). One connection per company per provider.
+
+**Setting it up (once)**
+
+1. In `.env` next to the compose file set `ACTUAL_BRIDGE_TOKEN` (any long random string; the stack refuses to start without it).
+   Optional: `ACTUAL_VERSION` (default `26.10.0`) and `ACTUAL_PORT` (default `5006`).
+   On the LineLedger service set `ACTUAL_BRIDGE_URL=http://actual-bank-bridge:5007` and `ACTUAL_BRIDGE_TOKEN` to the same value
+   (`config/bank_feeds.php`, `actual` block).
+2. Redeploy with **Build images** ticked once (the bridge image is new). The GHCR package `lineledger-bank-bridge` may need to be
+   made public the first time.
+3. Open Actual (`http://<NAS>:5006`), create the server password and a budget, and link the banks there.
+4. In LineLedger → **Bank feeds**, enter:
+   - **Server address: `http://actual:5006`**
+   - the Actual server password
+   - the budget's **Sync ID** (Actual → Settings → Advanced)
+   - the file password, only if the budget is end-to-end encrypted.
+
+   **Use the container name `actual`, not your NAS address.** The bridge talks to Actual over the compose stack's own network, where
+   the NAS address and published port are not what the bridge should be calling (and `localhost` would point at the bridge itself).
+5. Pick which Actual accounts feed which LineLedger bank accounts, then sync.
+
+**Version rule.** `bank-bridge/package.json` pins `@actual-app/api` to the same version as the Actual server image (currently
+26.10.0). Change `ACTUAL_VERSION` and the bridge's pinned version together, or the API will refuse the server.
+
+**Before linking a real account.** Sync one account first and compare Actual's `imported_id` with the Akahu transaction `_id`
+already in LineLedger, so existing history is not imported twice.
+
+**Known limits.** The merchant name can be lost on the way through Actual (payee name is used). Actual's own Akahu sync is
+experimental upstream.
+
+**Data model**
+
+- `bank_feed_connections` keeps the legacy `app_token` / `user_token` columns (Akahu) and gains an encrypted `credentials` array
+  (Actual) via migration `2026_10_29_000001_add_credentials_to_bank_feed_connections.php`.
+
+**Files (all under `.fork-patches/`, mirroring the real path)**
+
+- `app/Services/Banking/Feeds/Contracts/BankFeedProvider.php`, `DTO/FeedAccountInfo.php`, `BankFeedException.php`,
+  `BankFeedProviders.php`, `Akahu/AkahuProvider.php`, `Akahu/AkahuException.php`, `ActualBudget/ActualBudgetProvider.php`
+- `app/Services/Banking/Feeds/BankFeedSyncer.php`, `app/Models/BankFeedConnection.php`, `config/bank_feeds.php`
+- `resources/views/pages/banking/⚡feeds.blade.php`
+- `database/migrations/2026_10_29_000001_add_credentials_to_bank_feed_connections.php`
+- `tests/Feature/Banking/BankFeedProvidersTest.php`, `tests/Feature/Banking/AkahuFeedSyncTest.php`
+- `bank-bridge/` (`package.json`, `Dockerfile`, `.dockerignore`, `server.mjs`)
+- `.github/workflows/docker.yml` — now has a second `bridge` job that builds `ghcr.io/<owner>/lineledger-bank-bridge`
+  (commit workflow files directly to `.github/workflows/`, not via `.fork-patches`)
+- `docker/docker-compose.yml` — reference copy; **the NAS compose** needs the services below.
+
+**Compose additions (NAS)**
+
+```yaml
+  actual:
+    image: actualbudget/actual-server:${ACTUAL_VERSION:-26.10.0}
+    restart: always
+    ports:
+      - "${ACTUAL_PORT:-5006}:5006"
+    volumes:
+      - ./actual-data:/data
+
+  actual-bank-bridge:
+    image: ghcr.io/deepakgaur84/lineledger-bank-bridge:edge
+    pull_policy: always
+    restart: always
+    environment:
+      BRIDGE_TOKEN: ${ACTUAL_BRIDGE_TOKEN:?set ACTUAL_BRIDGE_TOKEN in .env}
+    volumes:
+      - bridge_data:/data
+    depends_on:
+      - actual
+```
+
+(`bridge_data` also needs declaring under top-level `volumes:`.)
+
+**Related fixes made in the same round**
+
+- **Excluded lines reappearing after sync.** Resume-matching now protects Ignored/created lines and marks a stuck import Ready if
+  matching fails. Cause was not fully verified; the user reports it resolved.
+- **For Review** (`⚡review.blade.php`, `ManagesStatementLineContacts.php`, `statement-contact-combo.blade.php`): row dimming while
+  confirming, a search box, live bulk-category picker, a `contacts-changed` event so new vendors/customers appear in every picker,
+  and new bank rules are applied to the waiting lines immediately.
+- **Lint:** `JournalPoster.php` and `AccountDimensionDefaultsTest.php` use `getAttribute()` / `getRawOriginal()` (Larastan level 5).
+
+**Upload rule (learned the hard way).** Put these files **only** in `.fork-patches/`. Files uploaded only to the real paths are
+reverted by `reapply-fork-patches` on the next push, because the `.fork-patches` copy always wins on conflict.
+
+**On upstream sync:** if upstream edits `BankFeedSyncer.php` or `BankFeedConnection.php`, rebuild from the new upstream file and
+re-add the provider-based changes; the other files are fork-only.
+
+## 27. Upstream sync notes (UK statutory report, Airy invoice layout)
+
+- Upstream added the **UK statutory accounts report**; `app/Support/Reporting/ReportCatalog.php` in `.fork-patches` was rebuilt
+  from upstream's version plus the fork's additions so that report is not lost.
+- Upstream added its own `InvoiceLayout` enum (Classic, **Airy**), `FormStyle`, `SaveFormStyle`, a form-styles page and
+  `InvoiceLayoutParityTest` (renders every layout and checks all fields). The fork's invoice designer (§21) was merged with those:
+  `app/Enums/InvoiceLayout.php`, `app/Actions/Sales/SaveFormStyle.php`,
+  `resources/views/pages/settings/lists/⚡form-styles.blade.php`, `resources/views/partials/invoice-layout-thumb.blade.php`.
+  `SaveFormStyle.php` must import `App\Enums\InvoiceLayout` (a bot merge once dropped it, failing Pint and PHPStan).
+- **Watch:** `InvoiceLayoutParityTest` against the fork's designer layouts is the most likely place for a future failure.
+- **Composer audit** fails on `symfony/mime` CVE-2026-45070 until Symfony releases 8.1.10; nothing to fix on our side.
