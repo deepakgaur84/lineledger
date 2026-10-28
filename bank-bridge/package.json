@@ -1,0 +1,17 @@
+{
+  "name": "lineledger-bank-bridge",
+  "version": "0.1.0",
+  "description": "Small HTTP bridge that lets LineLedger read bank-synced transactions from an Actual Budget server.",
+  "private": true,
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@actual-app/api": "26.10.0"
+  }
+}

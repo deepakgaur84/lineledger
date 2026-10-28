@@ -8,7 +8,7 @@ return [
     |--------------------------------------------------------------------------
     |
     | Automatic transaction import from a bank-data aggregator. Akahu is the
-    | only provider so far. The tokens themselves are stored per company
+    | first provider; Actual Budget (via the bridge) is the second. The tokens themselves are stored per company
     | (encrypted) on the bank-feed connection, not here.
     |
     */
@@ -16,6 +16,19 @@ return [
     'akahu' => [
         'base_url' => env('AKAHU_BASE_URL', 'https://api.akahu.io/v1'),
         'timeout' => (int) env('AKAHU_TIMEOUT', 30),
+    ],
+
+    /*
+    | Actual Budget, through the bank bridge service (docker-compose service
+    | `actual-bank-bridge`). Both values must be set for the provider to be usable;
+    | each company's own Actual server address, password and budget id are stored
+    | on its bank-feed connection (encrypted), not here.
+    */
+    'actual' => [
+        'bridge_url' => env('ACTUAL_BRIDGE_URL'),
+        'bridge_token' => env('ACTUAL_BRIDGE_TOKEN'),
+        // A bank sync inside Actual can take minutes.
+        'timeout' => (int) env('ACTUAL_BRIDGE_TIMEOUT', 600),
     ],
 
     // Time of day (server/scheduler time) for the daily sync.

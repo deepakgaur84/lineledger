@@ -94,6 +94,37 @@ services:
       timeout: 5s
       retries: 20
 
+  # ---- Fork: bank feeds through Actual Budget --------------------------------
+  #
+  # `actual` is an Actual Budget server: open http://<host>:5006 once, set a
+  # password, create (or import) a budget, then link your banks under
+  # More → Bank Sync. `actual-bank-bridge` is the small service LineLedger talks
+  # to; it reads transactions out of Actual. Set these in .env:
+  #   ACTUAL_BRIDGE_URL=http://actual-bank-bridge:5007
+  #   ACTUAL_BRIDGE_TOKEN=<a long random secret, 16+ characters>
+  # Keep the two versions below identical: the bridge's API library and the
+  # Actual server must be the same release.
+  actual:
+    image: actualbudget/actual-server:${ACTUAL_VERSION:-26.10.0}
+    restart: unless-stopped
+    ports:
+      - "${ACTUAL_PORT:-5006}:5006"
+    volumes:
+      - actual_data:/data
+
+  actual-bank-bridge:
+    image: ${BANK_BRIDGE_IMAGE:-ghcr.io/deepakgaur84/lineledger-bank-bridge}:${BANK_BRIDGE_VERSION:-edge}
+    build:
+      context: ../bank-bridge
+    pull_policy: missing
+    restart: unless-stopped
+    environment:
+      BRIDGE_TOKEN: ${ACTUAL_BRIDGE_TOKEN:-}
+    volumes:
+      - bridge_data:/data
+    depends_on:
+      - actual
+
   # ---- Optional services: docker compose --profile mail up -d, etc. ----
 
   # Scheduled database dumps: docker compose --profile backup up -d
@@ -199,3 +230,5 @@ volumes:
   caddy_config:
   redisdata:
   miniodata:
+  actual_data:
+  bridge_data:
