@@ -192,10 +192,35 @@ class BankFeedSyncer
         foreach ($stuck as $import) {
             $report(__('Finishing matching from an earlier sync…'));
 
+            // Matching rewrites the status of every line in the import, which would
+            // bring back lines the person already excluded and unlink ones they
+            // posted. Remember those decisions and put them back afterwards.
+            $protected = BankStatementLine::query()
+                ->where('bank_statement_import_id', $import->id)
+                ->where(fn ($q) => $q
+                    ->where('match_status', StatementLineMatchStatus::Ignored->value)
+                    ->orWhereNotNull('created_journal_entry_id'))
+                ->get(['id', 'match_status', 'matched_journal_line_id', 'match_confidence', 'match_reason'])
+                ->keyBy('id');
+
             try {
                 $this->matcher->match($import);
             } catch (Throwable $e) {
                 report($e);
+
+                // Without this the import stays "matching" and every later sync
+                // runs the same failing pass again. Its lines are already in For
+                // Review; they just carry no suggestions.
+                $import->forceFill(['status' => BankStatementImportStatus::Ready->value])->save();
+            } finally {
+                foreach ($protected as $line) {
+                    BankStatementLine::query()->whereKey($line->id)->update([
+                        'match_status' => $line->getRawOriginal('match_status'),
+                        'matched_journal_line_id' => $line->matched_journal_line_id,
+                        'match_confidence' => $line->match_confidence,
+                        'match_reason' => $line->match_reason,
+                    ]);
+                }
             }
         }
     }

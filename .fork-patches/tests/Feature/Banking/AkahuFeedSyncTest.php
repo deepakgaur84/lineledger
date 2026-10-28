@@ -257,6 +257,21 @@ it('finishes matching left unfinished by an interrupted sync', function () {
     expect($import->fresh()->status)->toBe(BankStatementImportStatus::Ready);
 });
 
+it('keeps excluded lines excluded when it finishes an unfinished matching', function () {
+    fakeAkahu([akahuTxn('tx_keep', '2026-10-22T11:00:00.000Z', -9.00)]);
+    app(BankFeedSyncer::class)->sync($this->feed, CarbonImmutable::parse('2026-10-23T02:00:00Z'));
+
+    $line = BankStatementLine::query()->where('external_id', 'tx_keep')->firstOrFail();
+    $line->forceFill(['match_status' => StatementLineMatchStatus::Ignored->value])->save();
+    BankStatementImport::query()->firstOrFail()->forceFill(['status' => BankStatementImportStatus::Matching->value])->save();
+
+    fakeAkahu([]);
+    app(BankFeedSyncer::class)->sync($this->feed->fresh(), CarbonImmutable::parse('2026-10-24T02:00:00Z'));
+
+    expect($line->fresh()->match_status)->toBe(StatementLineMatchStatus::Ignored)
+        ->and(BankStatementLine::query()->forReview()->count())->toBe(0);
+});
+
 it('pre-fills the vendor from the feed merchant name when a vendor of that name exists', function () {
     $vendor = app(SaveContact::class)->handle(['display_name' => 'Countdown'], 'is_vendor');
 
