@@ -69,6 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   were still owed, and with a payment the balance due was less than the total
   minus the payment with nothing to say why. It now prints a Credits and
   adjustments line, and the balance due whenever anything has been settled.
+- **The classic invoice prints your payment instructions.** The "How customers
+  can pay" text from Settings → Invoices showed in the customer portal but
+  never on the classic invoice PDF. It now prints under a How to pay heading
+  in the footer of any invoice that still has a balance, as the portal does.
 
 ## [1.3.1] - 2026-10-24
 

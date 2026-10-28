@@ -491,3 +491,24 @@ it('prints credits and write-offs and the balance they leave', function () {
         ->toContain('<td>Credits and adjustments</td>')
         ->toContain('$22.50');
 });
+
+it('prints the payment instructions while the invoice has a balance', function () {
+    $invoice = makePostedInvoice($this);
+    $render = fn () => app(InvoicePdfRenderer::class)->html($this->company, $invoice->fresh());
+
+    expect($render())->not->toContain('How to pay');
+
+    $this->company->invoiceSettingsOrNew()->forceFill([
+        'company_id' => $this->company->id,
+        'payment_instructions' => "Interac e-Transfer to billing@example.test\nReference: your invoice number",
+    ])->save();
+    $this->company->unsetRelation('invoiceSettings');
+
+    expect($render())
+        ->toContain('<div class="how-to-pay-label">How to pay</div>')
+        ->toContain("Interac e-Transfer to billing@example.test\nReference: your invoice number");
+
+    // Paid in full: nothing left to pay, so no instructions — as in the portal.
+    $invoice->forceFill(['amount_paid_cents' => $invoice->total_cents])->save();
+    expect($render())->not->toContain('How to pay');
+});
