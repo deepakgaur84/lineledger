@@ -14,7 +14,8 @@ use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
-new #[Title('Form styles')] class extends Component {
+new #[Title('Form styles')] class extends Component
+{
     use HoldsEditLock;
 
     public Company $company;

@@ -26,6 +26,7 @@ use Illuminate\Support\Facades\DB;
  *   zebra_rows:      ?bool
  *   sections:        ?array  (ordered list of {key: App\Enums\InvoiceSection value, visible: bool})
  *   footer_message:  ?string
+ *   layout:         InvoiceLayout|string|null  (unknown values fall back to classic)
  *   is_default:     ?bool
  *   is_active:      ?bool
  */
@@ -85,6 +86,7 @@ final class SaveFormStyle
                 $style->update($attributes);
             } else {
                 $style = FormStyle::create($attributes + [
+                    'layout' => InvoiceLayout::Classic,
                     'show_logo' => $data['show_logo'] ?? true,
                     'is_default' => $data['is_default'] ?? false,
                     'is_active' => $data['is_active'] ?? true,
