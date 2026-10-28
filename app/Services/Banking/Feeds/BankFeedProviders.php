@@ -21,7 +21,7 @@ final class BankFeedProviders
     {
         $providers = [];
 
-        foreach ([new ActualBudgetProvider, new AkahuProvider] as $provider) {
+        foreach ([new AkahuProvider, new ActualBudgetProvider] as $provider) {
             $providers[$provider->key()] = $provider;
         }
 

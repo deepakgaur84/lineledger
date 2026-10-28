@@ -13,7 +13,6 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * encrypted at rest and never serialized.
  *
  * @property string $provider
- * @property array<string, string>|null $credentials
  * @property string $app_token
  * @property string $user_token
  */
@@ -22,12 +21,11 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'provider',
     'app_token',
     'user_token',
-    'credentials',
     'status',
     'last_error',
     'last_synced_at',
 ])]
-#[Hidden(['app_token', 'user_token', 'credentials'])]
+#[Hidden(['app_token', 'user_token'])]
 class BankFeedConnection extends Model
 {
     use BelongsToCompany;
@@ -48,7 +46,6 @@ class BankFeedConnection extends Model
         return [
             'app_token' => 'encrypted',
             'user_token' => 'encrypted',
-            'credentials' => 'encrypted:array',
             'last_synced_at' => 'datetime',
         ];
     }
