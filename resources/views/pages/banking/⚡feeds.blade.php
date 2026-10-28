@@ -6,9 +6,11 @@ use App\Models\Account;
 use App\Models\BankFeedAccount;
 use App\Models\BankFeedConnection;
 use App\Models\Company;
-use App\Services\Banking\Feeds\Akahu\AkahuClient;
-use App\Services\Banking\Feeds\Akahu\AkahuException;
+use App\Services\Banking\Feeds\Akahu\AkahuProvider;
+use App\Services\Banking\Feeds\BankFeedException;
+use App\Services\Banking\Feeds\BankFeedProviders;
 use App\Services\Banking\Feeds\BankFeedSyncStatus;
+use App\Services\Banking\Feeds\Contracts\BankFeedProvider;
 use Flux\Flux;
 use Illuminate\Support\Collection;
 use Livewire\Attributes\Computed;
@@ -37,7 +39,33 @@ new #[Title('Bank feeds')] class extends Component {
     #[Computed]
     public function connection(): ?BankFeedConnection
     {
-        return BankFeedConnection::query()->where('company_id', $this->company->id)->where('provider', 'akahu')->first();
+        return BankFeedConnection::query()->where('company_id', $this->company->id)->where('provider', AkahuProvider::KEY)->first();
+    }
+
+    /**
+     * Every provider LineLedger knows about, in display order.
+     *
+     * @return array<string, BankFeedProvider>
+     */
+    #[Computed]
+    public function providers(): array
+    {
+        return BankFeedProviders::all();
+    }
+
+    /**
+     * Provider keys this company has a connection for.
+     *
+     * @return list<string>
+     */
+    #[Computed]
+    public function connectedProviders(): array
+    {
+        return BankFeedConnection::query()
+            ->where('company_id', $this->company->id)
+            ->pluck('provider')
+            ->map(fn ($key): string => (string) $key)
+            ->all();
     }
 
     /**
@@ -47,7 +75,7 @@ new #[Title('Bank feeds')] class extends Component {
     public function feedAccounts(): Collection
     {
         return BankFeedAccount::query()
-            ->with('account')
+            ->with('account', 'connection')
             ->where('company_id', $this->company->id)
             ->orderBy('institution')
             ->orderBy('name')
@@ -104,7 +132,7 @@ new #[Title('Bank feeds')] class extends Component {
 
     private function reloadState(): void
     {
-        unset($this->connection, $this->feedAccounts);
+        unset($this->connection, $this->feedAccounts, $this->connectedProviders);
         $this->fillFromAccounts();
     }
 
@@ -115,10 +143,10 @@ new #[Title('Bank feeds')] class extends Component {
             'userToken' => ['required', 'string', 'max:500'],
         ]);
 
-        $connection = BankFeedConnection::query()->updateOrCreate(
-            ['company_id' => $this->company->id, 'provider' => 'akahu'],
-            ['app_token' => trim($this->appToken), 'user_token' => trim($this->userToken), 'status' => 'active', 'last_error' => null],
-        );
+        $connection = BankFeedProviders::get(AkahuProvider::KEY)->connect((int) $this->company->id, [
+            'app_token' => $this->appToken,
+            'user_token' => $this->userToken,
+        ]);
 
         $this->appToken = '';
         $this->userToken = '';
@@ -137,9 +165,11 @@ new #[Title('Bank feeds')] class extends Component {
 
     private function loadAccounts(BankFeedConnection $connection): void
     {
+        $provider = BankFeedProviders::forConnection($connection);
+
         try {
-            $items = AkahuClient::make($connection->app_token, $connection->user_token)->accounts();
-        } catch (AkahuException $e) {
+            $items = $provider->accounts($connection);
+        } catch (BankFeedException $e) {
             $connection->forceFill(['last_error' => $e->getMessage()])->save();
             $this->reloadState();
             Flux::toast(variant: 'danger', text: $e->getMessage());
@@ -148,30 +178,21 @@ new #[Title('Bank feeds')] class extends Component {
         }
 
         foreach ($items as $item) {
-            $externalId = $item['_id'] ?? null;
-
-            if (! is_string($externalId) || $externalId === '') {
-                continue;
-            }
-
-            $balance = $item['balance'] ?? [];
-            $currency = is_array($balance) ? ($balance['currency'] ?? null) : null;
-
             BankFeedAccount::query()->updateOrCreate(
-                ['bank_feed_connection_id' => $connection->id, 'external_id' => $externalId],
+                ['bank_feed_connection_id' => $connection->id, 'external_id' => $item->externalId],
                 [
                     'company_id' => $this->company->id,
-                    'name' => (string) ($item['name'] ?? $externalId),
-                    'institution' => is_array($item['connection'] ?? null) ? ($item['connection']['name'] ?? null) : null,
-                    'account_number' => is_string($item['formatted_account'] ?? null) ? $item['formatted_account'] : null,
-                    'currency' => is_string($currency) && strlen($currency) === 3 ? strtoupper($currency) : null,
+                    'name' => $item->name,
+                    'institution' => $item->institution,
+                    'account_number' => $item->accountNumber,
+                    'currency' => $item->currency,
                 ],
             );
         }
 
         $connection->forceFill(['last_error' => null])->save();
         $this->reloadState();
-        Flux::toast(variant: 'success', text: __('Loaded :count accounts from Akahu.', ['count' => count($items)]));
+        Flux::toast(variant: 'success', text: __('Loaded :count accounts from :provider.', ['count' => count($items), 'provider' => $provider->label()]));
     }
 
     public function saveLink(int $feedAccountId): void
@@ -229,8 +250,12 @@ new #[Title('Bank feeds')] class extends Component {
 
     public function disconnect(): void
     {
-        BankFeedConnection::query()->where('company_id', $this->company->id)->where('provider', 'akahu')->delete();
-        BankFeedAccount::query()->where('company_id', $this->company->id)->delete();
+        $connection = $this->connection;
+
+        if ($connection !== null) {
+            BankFeedAccount::query()->where('company_id', $this->company->id)->where('bank_feed_connection_id', $connection->id)->delete();
+            $connection->delete();
+        }
 
         $this->links = [];
         $this->syncFrom = [];
@@ -242,7 +267,28 @@ new #[Title('Bank feeds')] class extends Component {
 <section class="w-full" @if ($this->anySyncRunning) wire:poll.2s @endif>
     <div class="mb-6">
         <flux:heading size="xl" level="1">{{ __('Bank feeds') }}</flux:heading>
-        <flux:subheading>{{ __('Pull new transactions from your bank through Akahu every day. They arrive in For Review, where your bank rules and suggestions apply as usual. File import keeps working alongside.') }}</flux:subheading>
+        <flux:subheading>{{ __('Pull new transactions from your bank every day. They arrive in For Review, where your bank rules and suggestions apply as usual. File import keeps working alongside.') }}</flux:subheading>
+    </div>
+
+    <div class="mb-8 grid gap-4 sm:grid-cols-2" data-test="feed-providers">
+        @foreach ($this->providers as $provider)
+            <div class="rounded-lg border border-border p-4 {{ $provider->isAvailable() ? '' : 'opacity-70' }}" wire:key="provider-{{ $provider->key() }}" data-test="feed-provider-{{ $provider->key() }}">
+                <div class="flex items-center justify-between gap-2">
+                    <flux:heading size="lg">{{ $provider->label() }}</flux:heading>
+                    @if (! $provider->isAvailable())
+                        <flux:badge color="zinc">{{ __('Coming soon') }}</flux:badge>
+                    @elseif (in_array($provider->key(), $this->connectedProviders, true))
+                        <flux:badge color="emerald">{{ __('Connected') }}</flux:badge>
+                    @else
+                        <flux:badge color="amber">{{ __('Not connected') }}</flux:badge>
+                    @endif
+                </div>
+                <flux:text class="mt-1">{{ $provider->description() }}</flux:text>
+                @if ($provider->unavailableReason())
+                    <flux:text class="mt-2 text-sm">{{ $provider->unavailableReason() }}</flux:text>
+                @endif
+            </div>
+        @endforeach
     </div>
 
     @if ($this->connection?->last_error)
@@ -281,7 +327,7 @@ new #[Title('Bank feeds')] class extends Component {
 
     @if ($this->feedAccounts->isNotEmpty())
         <flux:heading size="lg" class="mb-2">{{ __('Accounts') }}</flux:heading>
-        <flux:text class="mb-4">{{ __('Link each Akahu account to the matching bank or credit card account. Only linked accounts sync. The first sync starts at the date you give, or 30 days back.') }}</flux:text>
+        <flux:text class="mb-4">{{ __('Link each feed account to the matching bank or credit card account. Only linked accounts sync. The first sync starts at the date you give, or 30 days back.') }}</flux:text>
 
         <div class="space-y-4">
             @foreach ($this->feedAccounts as $fa)
@@ -289,6 +335,7 @@ new #[Title('Bank feeds')] class extends Component {
                     <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
                         <div>
                             <span class="font-medium">{{ $fa->name }}</span>
+                            <flux:badge size="sm" color="zinc">{{ $fa->connection ? ((($this->providers[$fa->connection->provider] ?? null)?->label()) ?? $fa->connection->provider) : '' }}</flux:badge>
                             <span class="text-sm text-muted-foreground">
                                 {{ $fa->institution }}{{ $fa->account_number ? ' · '.$fa->account_number : '' }}{{ $fa->currency ? ' · '.$fa->currency : '' }}
                             </span>

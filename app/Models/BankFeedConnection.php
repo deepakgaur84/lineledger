@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * A company's credentials for a bank-data aggregator (Akahu). The two tokens are
  * encrypted at rest and never serialized.
  *
+ * @property string $provider
  * @property string $app_token
  * @property string $user_token
  */
