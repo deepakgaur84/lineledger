@@ -1373,3 +1373,17 @@ re-add the provider-based changes; the other files are fork-only.
   `SaveFormStyle.php` must import `App\Enums\InvoiceLayout` (a bot merge once dropped it, failing Pint and PHPStan).
 - **Watch:** `InvoiceLayoutParityTest` against the fork's designer layouts is the most likely place for a future failure.
 - **Composer audit** fails on `symfony/mime` CVE-2026-45070 until Symfony releases 8.1.10; nothing to fix on our side.
+
+- **`form_styles.layout` column exists twice.** The fork's designer migration (`2026_10_14_000001`) and upstream's Airy migration
+  (`2026_10_21_000002`) both add it. The patched copy of the upstream one skips the add when the column exists; without that the
+  app container crash-loops on "Duplicate column name 'layout'". Keep that guard on any upstream rewrite of the migration.
+- **Parity test vs the fork's designed layouts.** `InvoiceLayoutParityTest` needs every layout to print the provincial tax number
+  (QST/PST). The designed layouts share `pdf/invoices/sections/_footer.blade.php`, which now includes
+  `pdf.invoices.partials.tax-numbers` (the same partial Classic and Airy use) instead of printing only `$company->tax_number`.
+- **Form styles page is a list, not a table.** Upstream's `InvoiceAiryLayoutTest` looks for `data-test="style-layout-cell"` in a
+  `<td>`; the fork's page renders a `<span>`, so the page carries that data-test on the span and the patched test expects `</span>`
+  (`tests/Feature/Invoices/InvoiceAiryLayoutTest.php`).
+- **New vendor on For Review.** A vendor name typed into a row but never ticked is now created when the row is confirmed
+  (`createPendingLineContact()` in `ManagesStatementLineContacts.php`, called from accept, create-rule and save-split).
+  The file-import wizard (`pages/banking/⚡import.blade.php`, now a patched file) does the same on confirm, confirm-all, create-rule and
+  before every commit (`createAllPendingLineContacts()`). On upstream sync, rebuild that file from upstream and re-add those calls.

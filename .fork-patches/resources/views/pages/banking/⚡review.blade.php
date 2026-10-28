@@ -602,6 +602,8 @@ new #[Title('For Review')] class extends Component {
             return;
         }
 
+        $this->createPendingLineContact($lineId);
+
         $accountId = (int) ($this->categories[$lineId] ?? 0) ?: (int) $line->suggested_account_id;
 
         if ($accountId === 0) {
@@ -780,6 +782,8 @@ new #[Title('For Review')] class extends Component {
             return;
         }
 
+        $this->createPendingLineContact($lineId);
+
         $accountId = $this->categories[$lineId] ?? $line->suggested_account_id;
         $billRaw = $this->lineBill[$lineId] ?? ($line->suggested_bill_id ?? ($line->suggestedBillAllocations() !== [] ? 'allocations' : null));
         $allocations = $billRaw === 'allocations' ? $line->suggestedBillAllocations() : [];
@@ -869,6 +873,8 @@ new #[Title('For Review')] class extends Component {
 
             return;
         }
+
+        $this->createPendingLineContact($line->id);
 
         $payload = collect($this->splits)
             ->filter(fn (array $s): bool => $s['account_id'] && trim((string) $s['amount']) !== '')
