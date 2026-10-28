@@ -39,19 +39,19 @@ final class ActualBudgetProvider implements BankFeedProvider
         return false;
     }
 
-    public function unavailableReason(): ?string
+    public function unavailableReason(): string
     {
         return __('Coming soon. The bridge service is the next build.');
     }
 
     public function connect(int $companyId, array $credentials): BankFeedConnection
     {
-        throw new BankFeedException((string) $this->unavailableReason());
+        throw new BankFeedException($this->unavailableReason());
     }
 
     public function accounts(BankFeedConnection $connection): array
     {
-        throw new BankFeedException((string) $this->unavailableReason());
+        throw new BankFeedException($this->unavailableReason());
     }
 
     public function transactions(
@@ -62,6 +62,6 @@ final class ActualBudgetProvider implements BankFeedProvider
         string $timezone,
         ?callable $onPage = null,
     ): array {
-        throw new BankFeedException((string) $this->unavailableReason());
+        throw new BankFeedException($this->unavailableReason());
     }
 }
