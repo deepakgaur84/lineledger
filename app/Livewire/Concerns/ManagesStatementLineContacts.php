@@ -179,6 +179,28 @@ trait ManagesStatementLineContacts
         $this->lineContact[$lineId] = ['id' => null, 'query' => '', 'creating' => true, 'new_name' => $name];
     }
 
+    /**
+     * A new contact name typed into a row but never ticked would otherwise be
+     * dropped when the row is confirmed. Create it first so the row is recorded
+     * against it. Does nothing when no new name is pending.
+     */
+    public function createPendingLineContact(int $lineId): void
+    {
+        $state = $this->lineContactState($lineId);
+
+        if ($state['creating'] && $state['id'] === null && trim($state['new_name']) !== '') {
+            $this->createLineContact($lineId);
+        }
+    }
+
+    /** Same, for every row on the page — used before a whole-import commit. */
+    public function createAllPendingLineContacts(): void
+    {
+        foreach (array_keys($this->lineContact) as $lineId) {
+            $this->createPendingLineContact((int) $lineId);
+        }
+    }
+
     public function createLineContact(int $lineId): void
     {
         $line = $this->statementLineForContact($lineId);

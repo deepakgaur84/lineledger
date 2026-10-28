@@ -241,7 +241,8 @@ it('lets the layout be chosen on the form styles page', function () {
         ->set('f_layout', 'airy')
         ->call('save')
         ->assertHasNoErrors()
-        ->assertSeeHtml('data-test="style-layout-cell">Airy</td>');
+        // Fork: the form styles page is a list, not a table, so the cell is a span.
+        ->assertSeeHtml('data-test="style-layout-cell">Airy</span>');
 
     expect(FormStyle::query()->where('name', 'Clean')->value('layout'))->toBe(InvoiceLayout::Airy);
 });

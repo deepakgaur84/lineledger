@@ -250,7 +250,7 @@ new #[Title('Form styles')] class extends Component
                                 @endif
                                 <span class="min-w-0">
                                     <span class="block truncate text-sm font-medium">{{ $s->name }}</span>
-                                    <span class="block text-xs text-muted-foreground">{{ __(($s->layout ?? \App\Enums\InvoiceLayout::default())->label()) }}@if (! $s->is_active) · {{ __('Inactive') }}@endif</span>
+                                    <span class="block text-xs text-muted-foreground" data-test="style-layout-cell">{{ __(($s->layout ?? \App\Enums\InvoiceLayout::default())->label()) }}@if (! $s->is_active) · {{ __('Inactive') }}@endif</span>
                                 </span>
                                 @if ($s->is_default)
                                     <flux:badge color="emerald" size="sm" class="ms-auto" data-test="style-default-badge">{{ __('Default') }}</flux:badge>

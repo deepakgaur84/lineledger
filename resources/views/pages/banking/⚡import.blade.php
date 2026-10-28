@@ -658,6 +658,8 @@ new #[Title('Import statement')] class extends Component {
 
     public function confirmSuggestion(int $lineId): void
     {
+        $this->createPendingLineContact($lineId);
+
         $line = $this->lineFor($lineId);
 
         if ($line) {
@@ -669,6 +671,8 @@ new #[Title('Import statement')] class extends Component {
 
     public function confirmAllSuggestions(): void
     {
+        $this->createAllPendingLineContacts();
+
         $import = $this->import;
 
         if (! $import) {
@@ -693,6 +697,8 @@ new #[Title('Import statement')] class extends Component {
      */
     public function createRule(int $lineId): void
     {
+        $this->createPendingLineContact($lineId);
+
         $line = $this->lineFor($lineId);
 
         if (! $line) {
@@ -840,6 +846,8 @@ new #[Title('Import statement')] class extends Component {
 
     public function confirm(int $lineId): void
     {
+        $this->createPendingLineContact($lineId);
+
         $line = $this->lineFor($lineId);
 
         if ($line && $line->matched_journal_line_id !== null) {
@@ -910,6 +918,8 @@ new #[Title('Import statement')] class extends Component {
 
     public function confirmAllAndCommit(): void
     {
+        $this->createAllPendingLineContacts();
+
         $import = $this->import;
 
         if (! $import) {
@@ -932,6 +942,8 @@ new #[Title('Import statement')] class extends Component {
 
     private function performCommit(bool $leaveUnconfirmed): void
     {
+        $this->createAllPendingLineContacts();
+
         $import = $this->import;
 
         if (! $import) {
