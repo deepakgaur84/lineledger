@@ -18,6 +18,9 @@ use App\Services\Posting\InvoicePoster;
 use App\Services\Posting\ReceiptPoster;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Testing\TestResponse;
+use Livewire\Livewire;
+use Livewire\Mechanisms\HandleRequests\EndpointResolver;
 use Tests\TestCase;
 
 /*
@@ -244,4 +247,84 @@ function docxText(string $bytes): string
     $xml = preg_replace('#</w:p>#', ' ', $xml);
 
     return preg_replace('/\s+/', ' ', html_entity_decode(strip_tags($xml), ENT_QUOTES | ENT_XML1));
+}
+
+/**
+ * Open $url as $user and return the snapshot of $component on that page: what
+ * the browser keeps, and can post back to Livewire's update endpoint long after
+ * the page loaded. Shared by the Livewire re-authorization tests.
+ *
+ * @param  array<string, mixed>  $session
+ */
+function livewireReplayCapture(User $user, string $url, string $component, array $session = []): string
+{
+    $html = test()->actingAs($user)->withSession($session)->get($url)->assertOk()->getContent();
+
+    livewireReplayEndRequest();
+
+    return livewireReplaySnapshotIn($html, $component);
+}
+
+/**
+ * The snapshot of $component in rendered HTML: a full page, or the
+ * effects.html of an update response.
+ */
+function livewireReplaySnapshotIn(string $html, string $component): string
+{
+    preg_match_all('/wire:snapshot="([^"]+)"/', $html, $matches);
+
+    foreach ($matches[1] as $raw) {
+        $snapshot = html_entity_decode($raw, ENT_QUOTES | ENT_HTML5);
+
+        if ((json_decode($snapshot, true)['memo']['name'] ?? null) === $component) {
+            return $snapshot;
+        }
+    }
+
+    throw new RuntimeException("No {$component} snapshot in the HTML.");
+}
+
+/**
+ * Post $snapshot back to Livewire's update endpoint the way the browser does
+ * (a JSON body and the X-Livewire header), with optional property updates and
+ * method calls given as [method, ...params]. Unlike Livewire::test(), which
+ * switches route middleware off, this runs the endpoint for real, so Livewire's
+ * persistent route middleware and BindCurrentCompanyHook both apply.
+ *
+ * @param  array<int, array<int, mixed>>  $calls
+ * @param  array<string, mixed>  $updates
+ */
+function livewireReplay(string $snapshot, array $calls = [], array $updates = []): TestResponse
+{
+    $payload = ['components' => [[
+        'snapshot' => $snapshot,
+        'updates' => (object) $updates,
+        'calls' => array_map(fn (array $call): array => [
+            'path' => '',
+            'method' => array_shift($call),
+            'params' => $call,
+        ], $calls),
+    ]]];
+
+    $response = test()->call('POST', EndpointResolver::updatePath(), [], [], [], [
+        'CONTENT_TYPE' => 'application/json',
+        'HTTP_X_LIVEWIRE' => '1',
+    ], json_encode($payload));
+
+    livewireReplayEndRequest();
+
+    return $response;
+}
+
+/**
+ * Reset what a real request would not carry over. A test's requests share one
+ * application, so drop the bound company and Livewire's per-request state (the
+ * last route its persistent middleware ran for, the models it resolved), as
+ * Livewire::test() does after each render.
+ */
+function livewireReplayEndRequest(): void
+{
+    app()->forgetInstance('current_company');
+
+    Livewire::flushState();
 }

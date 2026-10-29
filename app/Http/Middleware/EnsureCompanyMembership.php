@@ -8,6 +8,7 @@ use App\Models\User;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\URL;
+use Livewire\Livewire;
 use Symfony\Component\HttpFoundation\Response;
 
 class EnsureCompanyMembership
@@ -26,7 +27,11 @@ class EnsureCompanyMembership
         app()->instance('current_company', $company);
         URL::defaults(['company' => $company->slug]);
 
-        if (! $user->isCurrentCompany($company)) {
+        // Only a page load moves the user's most-recently-used company. Livewire
+        // re-runs this middleware on every update to re-authorize the page (it is
+        // persistent, see AppServiceProvider), and a background update in one tab
+        // must not flip the company the user's other tabs fall back to.
+        if (! Livewire::isLivewireRequest() && ! $user->isCurrentCompany($company)) {
             $user->switchCompany($company);
         }
 

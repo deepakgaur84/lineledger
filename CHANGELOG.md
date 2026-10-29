@@ -82,6 +82,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Losing access now applies to pages already open.** Buttons, forms and
+  searches on an open page checked that you were signed in, but not that you
+  could still use the page, so someone removed from an organization, moved to a
+  role or sections without that page, or no longer a site admin could keep
+  working in it. Each action now re-checks what loading the page does:
+  membership and role, section access, sections switched off for the platform,
+  the organization's two-factor requirement, the portal audience and site-admin
+  status. The organization the page works in must also still be yours,
+  including in search and navigation on settings pages; the site admin area and
+  the customer and employee portals keep their own rules.
 - **`symfony/mime` 8.1.10** (from 8.1.7) fixes an email header injection through
   MIME parameter names that contain non-token characters
   ([CVE-2026-45070](https://symfony.com/cve-2026-45070)). LineLedger never takes a
