@@ -15,6 +15,7 @@ use App\Models\Contact;
 use App\Models\JournalEntry;
 use App\Models\TaxCode;
 use App\Services\Banking\Import\OpenBillMatcher;
+use App\Services\Banking\StatementLineCategoryGuard;
 use App\Services\Posting\BillPaymentPoster;
 use App\Services\Posting\ExpensePoster;
 use Carbon\CarbonImmutable;
@@ -32,6 +33,10 @@ use Illuminate\Support\Facades\DB;
  *   inflow  + contact             → the plain journal entry, contact on the contra leg
  *   otherwise                     → the plain journal entry (unchanged behaviour)
  *
+ * The category is checked first, whichever path follows: it must be an account
+ * of the line's own organization, and not an AR / AP / Undeposited Funds control
+ * account ({@see StatementLineCategoryGuard}).
+ *
  * Every path posts through the audited posters, stamps the line as Created with
  * the bank-side journal line (what the reconciliation ticks) and the entry it
  * created, and — on the expense path — remembers the category and tax code as
@@ -48,6 +53,7 @@ final class RecordStatementLine
         private readonly SaveBillPayment $saveBillPayment,
         private readonly BillPaymentPoster $billPaymentPoster,
         private readonly OpenBillMatcher $bills,
+        private readonly StatementLineCategoryGuard $categories,
     ) {}
 
     /**
@@ -73,6 +79,10 @@ final class RecordStatementLine
 
             if ($accountId !== null && $accountId === (int) $account->id) {
                 throw new PostingValidationException(__('Choose a category other than the bank account itself.'));
+            }
+
+            if ($accountId !== null) {
+                $this->categories->assertUsable($line, [$accountId]);
             }
 
             $contact = $contactId !== null ? $this->resolveContact($line, $contactId) : null;

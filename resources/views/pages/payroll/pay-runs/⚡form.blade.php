@@ -17,6 +17,7 @@ use App\Support\Payroll\EarningTypeCatalogue;
 use Carbon\CarbonImmutable;
 use Flux\Flux;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
@@ -317,11 +318,11 @@ new #[Title('Pay run')] class extends Component {
     {
         // Field validation throws a ValidationException Livewire surfaces inline.
         $validated = $this->validate([
-            'payroll_schedule_id' => ['required', 'integer', 'exists:payroll_schedules,id'],
+            'payroll_schedule_id' => ['required', 'integer', Rule::exists('payroll_schedules', 'id')->where('company_id', $this->company->id)],
             'period_start_date' => ['required', 'date'],
             'period_end_date' => ['required', 'date', 'after_or_equal:period_start_date'],
             'pay_date' => ['required', 'date'],
-            'bank_account_id' => ['nullable', 'integer', 'exists:accounts,id'],
+            'bank_account_id' => ['nullable', 'integer', Rule::exists('accounts', 'id')->where('company_id', $this->company->id)->where('subtype', AccountSubtype::Bank->value)],
         ]);
 
         $lines = $this->selectedLines();

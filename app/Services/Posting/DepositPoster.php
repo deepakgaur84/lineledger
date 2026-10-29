@@ -183,6 +183,8 @@ class DepositPoster
                 throw UnbalancedJournalException::from($entry->totalDebitsCents(), $entry->totalCreditsCents());
             }
 
+            $this->journalPoster->ensureLineAccountsInCompany($entry);
+
             foreach (array_unique([...$oldAccountIds, ...$entry->lines->pluck('account_id')->all()]) as $id) {
                 Account::withoutGlobalScopes()->find($id)?->recomputeBalance();
             }

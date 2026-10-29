@@ -5,6 +5,7 @@ namespace App\Actions\Accounting;
 use App\Exceptions\Posting\LinkedJournalEntryException;
 use App\Models\JournalEntry;
 use App\Services\Posting\EntryNumberGenerator;
+use App\Services\Posting\JournalPoster;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
@@ -32,10 +33,16 @@ use Illuminate\Support\Facades\DB;
  * debit_cents / credit_cents are always HOME cents (the entry balances in home).
  * The optional currency_code / fx_rate / foreign_* fields are a memo of the
  * original foreign amount on a foreign-account line; they do not affect balancing.
+ *
+ * Every line must be on one of the current organization's accounts, checked
+ * here as well as at posting, because this also rewrites a posted entry in place.
  */
 final class SaveJournalEntry
 {
-    public function __construct(protected EntryNumberGenerator $numbers) {}
+    public function __construct(
+        protected EntryNumberGenerator $numbers,
+        protected JournalPoster $poster,
+    ) {}
 
     /**
      * @param  array<string, mixed>  $data
@@ -99,6 +106,8 @@ final class SaveJournalEntry
                     ] : []),
                 ]);
             }
+
+            $this->poster->ensureLineAccountsInCompany($entry);
 
             $entry->refresh();
 

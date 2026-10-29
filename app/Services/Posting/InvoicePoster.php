@@ -229,6 +229,8 @@ class InvoicePoster
                 );
             }
 
+            $this->journalPoster->ensureLineAccountsInCompany($entry);
+
             // Recompute balances for every touched account (old + new).
             $newAccountIds = $entry->lines->pluck('account_id')->all();
             foreach (array_unique(array_merge($oldAccountIds, $newAccountIds)) as $id) {

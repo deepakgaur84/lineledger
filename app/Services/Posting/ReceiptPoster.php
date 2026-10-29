@@ -216,6 +216,8 @@ class ReceiptPoster
                 );
             }
 
+            $this->journalPoster->ensureLineAccountsInCompany($entry);
+
             // 3. Recompute each touched invoice's amount_paid from the
             // CURRENT set of all live applications (across all receipts).
             // This naturally unwinds whatever the old application was and

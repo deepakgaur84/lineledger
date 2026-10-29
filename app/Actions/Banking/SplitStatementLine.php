@@ -8,6 +8,7 @@ use App\Exceptions\Posting\PostingValidationException;
 use App\Models\BankStatementLine;
 use App\Models\Contact;
 use App\Models\TaxCode;
+use App\Services\Banking\StatementLineCategoryGuard;
 use App\Services\Posting\DepositPoster;
 use App\Services\Posting\ExpensePoster;
 use Carbon\CarbonImmutable;
@@ -24,7 +25,9 @@ use Illuminate\Support\Facades\DB;
  * expense lines carry no contact), or the default contact on each deposit line
  * (a line's own contact_id still wins). Split parts may carry purchase tax
  * codes; the part's amount is then the tax-inclusive gross, exactly as a
- * single-line Add.
+ * single-line Add. Each part's account must be the line's own organization's,
+ * and not an AR / AP / Undeposited Funds control account
+ * ({@see StatementLineCategoryGuard}).
  */
 final class SplitStatementLine
 {
@@ -33,6 +36,7 @@ final class SplitStatementLine
         private readonly DepositPoster $depositPoster,
         private readonly SaveExpense $saveExpense,
         private readonly ExpensePoster $expensePoster,
+        private readonly StatementLineCategoryGuard $categories,
     ) {}
 
     /**
@@ -55,6 +59,8 @@ final class SplitStatementLine
         if (array_filter($splits, fn (array $s): bool => (int) $s['amount_cents'] <= 0) !== []) {
             throw new PostingValidationException(__('Each split amount must be greater than zero.'));
         }
+
+        $this->categories->assertUsable($line, array_map(fn (array $s): int => (int) $s['account_id'], $splits));
 
         DB::transaction(function () use ($line, $splits, $payeeContactId): void {
             $account = $line->account()->firstOrFail();
