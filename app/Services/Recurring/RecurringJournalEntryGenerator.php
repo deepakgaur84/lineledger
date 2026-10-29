@@ -4,10 +4,13 @@ namespace App\Services\Recurring;
 
 use App\Actions\Accounting\SaveJournalEntry;
 use App\Enums\RecurrenceEndType;
+use App\Exceptions\Posting\PeriodLockedException;
+use App\Exceptions\Posting\UnbalancedJournalException;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\JournalEntry;
 use App\Models\RecurringJournalEntry;
+use App\Services\Posting\JournalPoster;
 use Carbon\CarbonImmutable;
 use Closure;
 use Illuminate\Support\Collection;
@@ -17,8 +20,9 @@ use RuntimeException;
 
 /**
  * Turns memorized journal-entry schedules into Draft journal entries by feeding the
- * existing SaveJournalEntry action. Never posts to the general ledger — a human
- * reviews and posts each generated draft.
+ * existing SaveJournalEntry action. Drafts by default — a human reviews and posts
+ * each one — unless the schedule has auto_post on (fork), in which case each entry is
+ * posted straight away; a locked period leaves it as a draft.
  *
  * Mirrors {@see RecurringDocumentGenerator}: binds app('current_company') for the
  * action call (not bound in a job/command), and uses a row lock plus a re-read of
@@ -150,6 +154,10 @@ class RecurringJournalEntryGenerator
     {
         $created = $this->withCompany($company, fn (): JournalEntry => $this->createDraftFor($row, $date));
 
+        if ($row->auto_post) {
+            $created = $this->autoPost($company, $created);
+        }
+
         $row->occurrences_generated = (int) $row->occurrences_generated + 1;
         $row->last_generated_at = now();
         $row->next_run_date = $this->calculator->next($row, $date)->toDateString();
@@ -158,6 +166,25 @@ class RecurringJournalEntryGenerator
         $row->save();
 
         return $created;
+    }
+
+    /**
+     * Post a freshly generated entry. A locked period (or a template that somehow
+     * no longer balances) leaves it as a draft, logged, instead of aborting the run.
+     */
+    protected function autoPost(Company $company, JournalEntry $entry): JournalEntry
+    {
+        try {
+            return $this->withCompany($company, fn (): JournalEntry => app(JournalPoster::class)->post($entry));
+        } catch (PeriodLockedException|UnbalancedJournalException $e) {
+            Log::warning('Recurring journal auto-post skipped; left as a draft.', [
+                'journal_entry_id' => $entry->id,
+                'company_id' => $company->id,
+                'reason' => $e->getMessage(),
+            ]);
+
+            return $entry;
+        }
     }
 
     protected function createDraftFor(RecurringJournalEntry $row, CarbonImmutable $date): JournalEntry

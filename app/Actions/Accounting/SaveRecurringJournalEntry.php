@@ -26,6 +26,7 @@ use Illuminate\Support\Facades\DB;
  *   end_type:        string  never|on_date|after_occurrences
  *   end_date:        ?string
  *   max_occurrences: ?int
+ *   auto_post:       ?bool   post each generated entry instead of leaving a draft (default false)
  *   lines: array<int, array{
  *     account_id: int, debit_cents: int, credit_cents: int,
  *     memo: ?string, contact_id: ?int, class_id: ?int, location_id: ?int, fund_id: ?int
@@ -50,6 +51,7 @@ final class SaveRecurringJournalEntry
             $header = [
                 'name' => $data['name'] ?? null,
                 'memo' => $data['memo'] ?? null,
+                'auto_post' => (bool) ($data['auto_post'] ?? false),
                 'frequency' => $frequency,
                 'start_date' => $data['start_date'],
                 'day_anchor' => $anchor,

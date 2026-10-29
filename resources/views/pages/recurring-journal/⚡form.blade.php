@@ -33,6 +33,8 @@ new #[Title('Recurring journal entry')] class extends Component {
 
     public string $memo = '';
 
+    public bool $auto_post = false;
+
     public string $frequency = 'monthly';
 
     public string $start_date = '';
@@ -68,6 +70,7 @@ new #[Title('Recurring journal entry')] class extends Component {
             $this->recurring = $recurring->load('lines');
             $this->name = $recurring->name ?? '';
             $this->memo = $recurring->memo ?? '';
+            $this->auto_post = (bool) $recurring->auto_post;
             $this->frequency = $recurring->frequency->value;
             $this->start_date = $recurring->start_date->toDateString();
             $this->day_of_month = $recurring->day_of_month;
@@ -162,6 +165,7 @@ new #[Title('Recurring journal entry')] class extends Component {
         $validated = $this->validate([
             'name' => ['nullable', 'string', 'max:255'],
             'memo' => ['nullable', 'string'],
+            'auto_post' => ['boolean'],
             'frequency' => ['required', Rule::in(array_column(RecurrenceFrequency::cases(), 'value'))],
             'start_date' => ['required', 'date'],
             'day_of_month' => ['nullable', 'integer', 'min:1', 'max:31'],
@@ -215,6 +219,7 @@ new #[Title('Recurring journal entry')] class extends Component {
         $this->recurring = app(SaveRecurringJournalEntry::class)->handle([
             'name' => $validated['name'] ?: null,
             'memo' => $validated['memo'] ?: null,
+            'auto_post' => $validated['auto_post'],
             'frequency' => $validated['frequency'],
             'start_date' => $validated['start_date'],
             'day_of_month' => $validated['day_of_month'] ?: null,
@@ -304,6 +309,13 @@ new #[Title('Recurring journal entry')] class extends Component {
         <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
             <flux:input wire:model="name" :label="__('Schedule name')" placeholder="{{ __('e.g. Monthly depreciation') }}" data-test="recurring-journal-name-input" />
             <flux:input wire:model="memo" :label="__('Memo')" :description="__('Applied to each generated entry.')" />
+        </div>
+
+        <div class="space-y-1">
+            <flux:switch wire:model="auto_post" :label="__('Post each entry automatically')" data-test="recurring-journal-auto-post" />
+            <flux:text class="text-sm text-muted-foreground">
+                {{ __('Off: each generated entry is saved as a draft for you to review and post. On: it is posted to the ledger as soon as it is generated. If its date falls in a locked period it is left as a draft.') }}
+            </flux:text>
         </div>
 
         <flux:separator :text="__('Schedule')" />

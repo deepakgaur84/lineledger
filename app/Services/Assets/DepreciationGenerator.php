@@ -3,10 +3,13 @@
 namespace App\Services\Assets;
 
 use App\Actions\Accounting\SaveJournalEntry;
+use App\Exceptions\Posting\PeriodLockedException;
+use App\Exceptions\Posting\UnbalancedJournalException;
 use App\Models\Asset;
 use App\Models\AssetDepreciationEntry;
 use App\Models\Company;
 use App\Models\JournalEntry;
+use App\Services\Posting\JournalPoster;
 use App\Services\Recurring\RecurringJournalEntryGenerator;
 use Carbon\CarbonImmutable;
 use Closure;
@@ -19,7 +22,9 @@ use Illuminate\Support\Facades\Log;
  * entries by feeding the existing SaveJournalEntry action — one draft per
  * company per uncovered month, bundling every due asset as a debit
  * (depreciation expense) / credit (accumulated depreciation) line pair.
- * Never posts to the general ledger — a human reviews and posts each draft.
+ * Drafts by default — a human reviews and posts each one. Fork: when the company
+ * setting settings.assets.auto_post_depreciation is on, each month's entry is posted
+ * straight after it is created (a locked period leaves it as a draft).
  *
  * Mirrors {@see RecurringJournalEntryGenerator}: binds
  * app('current_company') for the action call (not bound in a job/command).
@@ -133,13 +138,34 @@ class DepreciationGenerator
 
         ksort($due);
 
+        $autoPost = (bool) data_get($company->settings, 'assets.auto_post_depreciation', false);
+
         foreach ($due as $periodKey => $items) {
-            $created->push(DB::transaction(
+            $entry = DB::transaction(
                 fn (): JournalEntry => $this->createDraftFor($company, CarbonImmutable::parse($periodKey), $items)
-            ));
+            );
+
+            // Posted after the draft + idempotency rows commit, so a posting
+            // failure can never roll back (and regenerate) the month's draft.
+            $created->push($autoPost ? $this->autoPost($company, $entry) : $entry);
         }
 
         return $created;
+    }
+
+    protected function autoPost(Company $company, JournalEntry $entry): JournalEntry
+    {
+        try {
+            return $this->withCompany($company, fn (): JournalEntry => app(JournalPoster::class)->post($entry));
+        } catch (PeriodLockedException|UnbalancedJournalException $e) {
+            Log::warning('Depreciation auto-post skipped; left as a draft.', [
+                'journal_entry_id' => $entry->id,
+                'company_id' => $company->id,
+                'reason' => $e->getMessage(),
+            ]);
+
+            return $entry;
+        }
     }
 
     /**

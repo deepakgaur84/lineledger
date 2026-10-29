@@ -4,6 +4,7 @@ use App\Enums\AssetStatus;
 use App\Models\Asset;
 use App\Models\AssetCategory;
 use App\Models\Company;
+use Flux\Flux;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
@@ -36,9 +37,28 @@ new #[Title('Fixed assets')] class extends Component {
     /** @var array<int, string> */
     private const SORT_FIELDS = ['asset_no', 'name', 'acquired_date', 'cost_cents', 'status'];
 
+    public bool $autoPostDepreciation = false;
+
     public function mount(Company $company): void
     {
         $this->company = $company;
+        $this->autoPostDepreciation = (bool) data_get($company->settings, 'assets.auto_post_depreciation', false);
+    }
+
+    /**
+     * Company-wide: post each month's generated depreciation entry straight away
+     * instead of leaving it as a draft. Stored in the company's settings JSON.
+     */
+    public function updatedAutoPostDepreciation(bool $value): void
+    {
+        $settings = $this->company->settings ?? [];
+        $settings['assets'] = array_merge($settings['assets'] ?? [], ['auto_post_depreciation' => $value]);
+
+        $this->company->forceFill(['settings' => $settings])->save();
+
+        Flux::toast(variant: 'success', text: $value
+            ? __('Monthly depreciation will now be posted automatically.')
+            : __('Monthly depreciation will now be saved as drafts.'));
     }
 
     public function sortBy(string $field): void
@@ -112,6 +132,13 @@ new #[Title('Fixed assets')] class extends Component {
         <flux:button variant="primary" icon="plus" :href="route('assets.create', ['company' => $company->slug])" wire:navigate data-test="new-asset-button">
             {{ __('New asset') }}
         </flux:button>
+    </div>
+
+    <div class="mb-4 space-y-1 rounded-lg border border-border p-4" data-test="asset-auto-post-depreciation">
+        <flux:switch wire:model.live="autoPostDepreciation" :label="__('Post monthly depreciation automatically')" data-test="asset-auto-post-switch" />
+        <flux:text class="text-sm text-muted-foreground">
+            {{ __('Applies to every asset set to auto-generate depreciation. Off: each month is saved as a draft journal entry for you to review and post. On: it is posted as soon as it is generated; a month in a locked period stays a draft.') }}
+        </flux:text>
     </div>
 
     <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">

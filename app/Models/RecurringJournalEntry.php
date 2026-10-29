@@ -16,13 +16,13 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
  * A memorized journal entry: a balanced debit/credit template plus a schedule that
- * generates Draft journal entries (never posts). Sibling of {@see RecurringDocument},
+ * generates Draft journal entries (posted automatically only when auto_post is on). Sibling of {@see RecurringDocument},
  * but JE lines are debit/credit and need no contact, so it has its own model.
  */
 #[Fillable([
     'company_id', 'name', 'memo', 'frequency', 'start_date', 'day_of_month', 'day_anchor',
     'end_type', 'end_date', 'max_occurrences', 'occurrences_generated',
-    'next_run_date', 'last_generated_at', 'is_active', 'paused_reason',
+    'next_run_date', 'last_generated_at', 'is_active', 'paused_reason', 'auto_post',
 ])]
 class RecurringJournalEntry extends Model implements RecurringSchedule
 {
@@ -96,6 +96,7 @@ class RecurringJournalEntry extends Model implements RecurringSchedule
             'occurrences_generated' => 'integer',
             'last_generated_at' => 'datetime',
             'is_active' => 'boolean',
+            'auto_post' => 'boolean',
         ];
     }
 }

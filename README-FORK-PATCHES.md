@@ -1437,3 +1437,26 @@ up to 60 per run.) Now the button creates **every occurrence already due** in on
 - Files: `app/Services/Recurring/RecurringDocumentGenerator.php`, `app/Services/Recurring/RecurringJournalEntryGenerator.php`, the two
   `⚡show.blade.php` pages above, `⚡recurring.blade.php` (docs), `tests/Feature/Recurring/RecurringCatchUpTest.php`.
 - **On upstream sync:** rebuild each patched file from the new upstream version and re-add only the lines described here.
+
+## 29. Auto-post for recurring journals and monthly depreciation
+
+Upstream always leaves generated recurring journal entries and monthly depreciation as **drafts** for a human to post. The fork
+adds an opt-in so they can post themselves. Both default to **off** (drafts, unchanged behaviour).
+
+- **Recurring journal entries — per schedule.** New `recurring_journal_entries.auto_post` boolean (migration
+  `2026_10_30_000001_add_auto_post_to_recurring_journal_entries.php`, guarded with `Schema::hasColumn`). A "Post each entry
+  automatically" switch on the memorized-journal form saves it; the schedule page shows "Posts automatically" / "Saved as drafts".
+  `RecurringJournalEntryGenerator::generateStep()` posts the draft through `JournalPoster` right after creating it, so the
+  nightly run, catch-up and **Generate now** all honour it.
+- **Monthly depreciation — company-wide.** One draft covers every asset for the month, so the switch is per company: "Post monthly
+  depreciation automatically" at the top of the Fixed assets list, stored in the company `settings` JSON
+  (`settings.assets.auto_post_depreciation`, no new column, no change to `Company.php`). `DepreciationGenerator::generateDue()` posts
+  each month's entry after the draft and its idempotency rows have committed, so a posting failure can never regenerate the month.
+- **Locked period / unbalanced:** the entry is left as a draft (logged) and the run carries on, as invoice auto-post already does.
+  Depreciation for months on or before the lock date is still skipped entirely, as before.
+- Docs text updated on the Accounting and Fixed assets pages.
+- Files: migration above, `app/Models/RecurringJournalEntry.php`, `app/Actions/Accounting/SaveRecurringJournalEntry.php`,
+  `app/Services/Recurring/RecurringJournalEntryGenerator.php` (also carries the §28 catch-up), `app/Services/Assets/DepreciationGenerator.php`,
+  `pages/recurring-journal/⚡form.blade.php`, `pages/recurring-journal/⚡show.blade.php` (also §28), `pages/assets/⚡index.blade.php`,
+  `pages/docs/⚡accounting.blade.php`, `pages/docs/⚡fixed-assets.blade.php`, `tests/Feature/Recurring/RecurringAutoPostTest.php`.
+- **On upstream sync:** rebuild each patched file from the new upstream version and re-add only the lines described here.

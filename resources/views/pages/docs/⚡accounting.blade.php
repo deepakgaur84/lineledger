@@ -339,7 +339,7 @@ new #[Title('Documentation — Accounting')] class extends Component {}; ?>
         />
 
         <x-docs.callout type="note" heading="{{ __('Generated entries are always drafts') }}">
-            {{ __('A schedule never posts on its own — each due date produces a Draft journal entry for you to review and post, so nothing hits your books unseen. Open a schedule to see its Next run and Generated counters and a Generated entries table linking every entry it has produced. Select Generate now to create the next one early, or use the Actions menu to Edit, Pause, Resume, or Delete it. If an account the schedule depends on is deleted, the schedule pauses itself, shows a red Needs attention badge, and records the reason on its page rather than failing quietly.') }}
+            {{ __('By default a schedule does not post on its own — each due date produces a Draft journal entry for you to review and post, so nothing hits your books unseen. If you would rather not review each one, switch on Post each entry automatically on the schedule: every entry is then posted the moment it is generated (an entry that would land in a locked period is left as a draft instead). Open a schedule to see its Next run and Generated counters and a Generated entries table linking every entry it has produced. Select Generate now to create the next one early, or use the Actions menu to Edit, Pause, Resume, or Delete it. If an account the schedule depends on is deleted, the schedule pauses itself, shows a red Needs attention badge, and records the reason on its page rather than failing quietly.') }}
         </x-docs.callout>
 
         <x-docs.callout type="tip" heading="{{ __('Memorize an entry you already have') }}">
