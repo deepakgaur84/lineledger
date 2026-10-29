@@ -39,6 +39,9 @@ new #[Title('Bank feeds')] class extends Component {
     /** @var array<int, string> feed account id => first-sync start date (Y-m-d) */
     public array $syncFrom = [];
 
+    /** Show feed accounts that are not linked to a ledger account (hidden by default). */
+    public bool $showUnlinked = false;
+
     public function mount(Company $company): void
     {
         $this->company = $company;
@@ -98,6 +101,29 @@ new #[Title('Bank feeds')] class extends Component {
     }
 
     /**
+     * The feed accounts to list. Once at least one is linked, unlinked ones stay
+     * out of the way until accounts are reloaded; with nothing linked yet
+     * everything is shown, so there is something to link.
+     *
+     * @return Collection<int, BankFeedAccount>
+     */
+    #[Computed]
+    public function visibleFeedAccounts(): Collection
+    {
+        if ($this->showUnlinked || $this->feedAccounts->doesntContain(fn (BankFeedAccount $fa): bool => $fa->isLinked())) {
+            return $this->feedAccounts;
+        }
+
+        return $this->feedAccounts->filter(fn (BankFeedAccount $fa): bool => $fa->isLinked())->values();
+    }
+
+    #[Computed]
+    public function unlinkedCount(): int
+    {
+        return $this->feedAccounts->reject(fn (BankFeedAccount $fa): bool => $fa->isLinked())->count();
+    }
+
+    /**
      * @return Collection<int, Account>
      */
     #[Computed]
@@ -147,7 +173,7 @@ new #[Title('Bank feeds')] class extends Component {
 
     private function reloadState(): void
     {
-        unset($this->connection, $this->actualConnection, $this->feedAccounts, $this->connectedProviders);
+        unset($this->connection, $this->actualConnection, $this->feedAccounts, $this->visibleFeedAccounts, $this->unlinkedCount, $this->connectedProviders);
         $this->fillFromAccounts();
     }
 
@@ -244,6 +270,9 @@ new #[Title('Bank feeds')] class extends Component {
         }
 
         $connection->forceFill(['last_error' => null])->save();
+
+        // Loading accounts is how new ones get linked, so show the unlinked ones.
+        $this->showUnlinked = true;
         $this->reloadState();
         Flux::toast(variant: 'success', text: __('Loaded :count accounts from :provider.', ['count' => count($items), 'provider' => $provider->label()]));
     }
@@ -438,10 +467,17 @@ new #[Title('Bank feeds')] class extends Component {
 
     @if ($this->feedAccounts->isNotEmpty())
         <flux:heading size="lg" class="mb-2">{{ __('Accounts') }}</flux:heading>
-        <flux:text class="mb-4">{{ __('Link each feed account to the matching bank or credit card account. Only linked accounts sync. The first sync starts at the date you give, or 30 days back.') }}</flux:text>
+        <flux:text class="mb-4">{{ __('Link each feed account to the matching bank or credit card account. Only linked accounts sync, and accounts not linked are hidden once one is linked. The first sync starts at the date you give, or 30 days back.') }}</flux:text>
+
+        @if (! $showUnlinked && $this->unlinkedCount > 0 && $this->feedAccounts->count() > $this->unlinkedCount)
+            <flux:text class="mb-4 text-sm" data-test="feed-unlinked-hidden">
+                {{ trans_choice('{1} :count account that is not linked is hidden.|[2,*] :count accounts that are not linked are hidden.', $this->unlinkedCount, ['count' => $this->unlinkedCount]) }}
+                {{ __('Click Reload accounts to show them.') }}
+            </flux:text>
+        @endif
 
         <div class="space-y-4">
-            @foreach ($this->feedAccounts as $fa)
+            @foreach ($this->visibleFeedAccounts as $fa)
                 <div class="rounded-lg border border-border p-4" data-test="feed-account-row" wire:key="feed-{{ $fa->id }}">
                     <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
                         <div>

@@ -1316,6 +1316,11 @@ budget access, not bank connections. So:
 - One Actual connection per company: to try a different budget in the same company, use "Replace details and reload accounts"
   (links to the old budget's accounts stop syncing until the old Sync ID is entered again).
 
+**Bank feeds page: unlinked accounts are hidden.** Once at least one feed account is linked to a ledger account, the Accounts list
+shows only linked ones, with a note saying how many are hidden. Only "Reload accounts" (or saving connection details, which
+reloads too) reveals the rest, so new accounts can be linked; there is deliberately no show/hide toggle. With nothing linked yet,
+everything is shown. (Files: `⚡feeds.blade.php`, `BankFeedProvidersTest.php`.)
+
 **Bridge retry.** Opening a budget (sign-in + download) is retried once, after 2 seconds, if Actual drops the connection
 (`network-failure`, "other side closed", reset socket). The first download of a large budget can hit this; the retry
 succeeds from the partly cached copy. Bank syncs are never retried.
