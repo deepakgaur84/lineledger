@@ -8,6 +8,7 @@ use App\Exceptions\Posting\PostingValidationException;
 use App\Models\BankStatementLine;
 use App\Models\Contact;
 use App\Models\TaxCode;
+use App\Services\Banking\StatementLineCurrencyGuard;
 use App\Services\Posting\DepositPoster;
 use App\Services\Posting\ExpensePoster;
 use Carbon\CarbonImmutable;
@@ -25,6 +26,11 @@ use Illuminate\Support\Facades\DB;
  * (a line's own contact_id still wins). Split parts may carry purchase tax
  * codes; the part's amount is then the tax-inclusive gross, exactly as a
  * single-line Add.
+ *
+ * On a foreign-currency account the Deposit / Expense takes the account's
+ * currency, so its posters book home cents at the transaction date's rate with
+ * the foreign memo on every leg; a part in a third currency is refused
+ * ({@see StatementLineCurrencyGuard}).
  */
 final class SplitStatementLine
 {
@@ -33,6 +39,7 @@ final class SplitStatementLine
         private readonly DepositPoster $depositPoster,
         private readonly SaveExpense $saveExpense,
         private readonly ExpensePoster $expensePoster,
+        private readonly StatementLineCurrencyGuard $currencyGuard,
     ) {}
 
     /**
@@ -58,6 +65,8 @@ final class SplitStatementLine
 
         DB::transaction(function () use ($line, $splits, $payeeContactId): void {
             $account = $line->account()->firstOrFail();
+            $this->currencyGuard->assertCategoriesFit($account, array_map(fn (array $s): int => (int) $s['account_id'], $splits));
+
             $date = CarbonImmutable::parse($line->txn_date)->toDateString();
             $memo = ($line->description !== null && $line->description !== '') ? $line->description : null;
             $payee = $payeeContactId !== null ? $this->resolvePayee($line, $payeeContactId) : null;

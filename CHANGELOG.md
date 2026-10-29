@@ -79,6 +79,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `backup:import`. The keys now come back revoked, still linked to the audit
   entries they made, and the owner creates new ones. A restore that fails
   partway also no longer leaves an empty organization behind. Reported in #158.
+- **Foreign-currency bank lines post at their home value.** On a bank or
+  credit-card account in a foreign currency, a line added from For Review or
+  the statement import without a vendor or tax code (every deposit, and most
+  fees and charges) was booked at the statement's foreign amount as if it were
+  home currency, with no foreign amount kept: 100.00 USD went in as 100.00 CAD
+  instead of 135.00 at a 1.35 rate. Home balances, exchange gains and losses
+  and the period-end revaluation were then off by the exchange rate. These
+  lines are now converted at the rate for the transaction date and keep the
+  foreign amount, as expenses, deposits and transfers already did, so a line
+  posts the same home value however it is recorded. Paying a bill from an
+  account in the bill's own currency now also lowers that account's foreign
+  balance, not only its home balance. A line with no rate for its date is
+  refused until you enter one, and a line can't be categorized to an account
+  in a third currency; record a transfer instead. Entries posted before this
+  fix keep their amounts.
 
 ### Security
 

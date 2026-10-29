@@ -6796,6 +6796,7 @@
   "That bill no longer exists — record the line as an expense instead.": "Cette facture n’existe plus — enregistrez plutôt la ligne comme une dépense.",
   "That bill's remaining balance no longer matches this amount.": "Le solde restant de cette facture fournisseur ne correspond plus à ce montant.",
   "That bill's type does not match this contact — check the contact's roles.": "Le type de cette facture ne correspond pas à ce contact — vérifiez les rôles du contact.",
+  "That category is an account in another currency — record a transfer between the two accounts instead.": "Cette catégorie est un compte dans une autre devise — enregistrez plutôt un virement entre les deux comptes.",
   "That company uses a different currency.": "Cette organisation utilise une autre devise.",
   "That contact belongs to another company.": "Ce contact appartient à une autre organisation.",
   "That contact no longer exists — choose another.": "Ce contact n’existe plus — choisissez-en un autre.",
