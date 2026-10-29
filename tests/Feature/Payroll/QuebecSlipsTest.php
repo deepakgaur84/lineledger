@@ -20,7 +20,8 @@ beforeEach(function () {
     $this->company = Company::factory()->create([
         'address_country' => 'CA',
         'features_payroll' => true,
-        'tax_number' => '1234567890',
+        'payroll_rq_identification_number' => '1234567890',
+        'payroll_rq_file_number' => 'RS0001',
         'qhsf_rate_bp' => 192,
         'cnesst_rate_bp' => 200,
         'wsdrf_applicable' => true,
@@ -103,7 +104,9 @@ it('aggregates RL-1 slips for Quebec employees only and reconciles the boxes', f
     $slip = $slips[0];
     expect($slip['contact_id'])->toBe($this->quebecer->id)
         ->and($slip['boxA'])->toBeGreaterThan(0) // employment income
-        ->and($slip['boxB'])->toBeGreaterThan(0) // QPP
+        ->and($slip['boxBA'])->toBeGreaterThan(0) // QPP (base + first additional)
+        ->and($slip['boxBB'])->toBe(0) // no second additional QPP on $60,000
+        ->and($slip['boxC'])->toBeGreaterThan(0) // EI
         ->and($slip['boxE'])->toBeGreaterThan(0) // Quebec tax
         ->and($slip['boxG'])->toBeGreaterThan(0) // QPP pensionable
         ->and($slip['boxH'])->toBeGreaterThan(0) // QPIP premium

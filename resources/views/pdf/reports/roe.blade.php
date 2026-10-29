@@ -31,7 +31,7 @@
         <tr><td class="label">Block 12 — Final pay period ending</td><td>{{ $roe['final_period_end'] ?? '—' }}</td></tr>
         <tr><td class="label">Block 16 — Reason for issuing</td><td>{{ $roe['reason_label'] }}</td></tr>
         <tr><td class="label">Block 15A — Total insurable hours</td><td>{{ $roe['total_insurable_hours'] }}</td></tr>
-        <tr><td class="label">Block 15B — Total insurable earnings</td><td>{{ $fmt($roe['total_insurable_earnings_cents']) }}</td></tr>
+        <tr><td class="label">Block 15B — Total insurable earnings@if (isset($roe['block_15b_periods'])) (last {{ $roe['block_15b_periods'] }} pay periods)@endif</td><td>{{ $fmt($roe['total_insurable_earnings_cents']) }}</td></tr>
     </table>
 
     <strong>Block 15C — Insurable earnings by pay period (most recent first)</strong>
@@ -49,10 +49,10 @@
         @endforeach
         </tbody>
         <tfoot>
-            <tr><td>Total</td><td class="num">{{ $roe['total_insurable_hours'] }}</td><td class="num">{{ $fmt($roe['total_insurable_earnings_cents']) }}</td></tr>
+            <tr><td>Total</td><td class="num">{{ $roe['total_insurable_hours'] }}</td><td class="num">{{ $fmt(array_sum(array_column($roe['periods'], 'insurable_earnings_cents'))) }}</td></tr>
         </tfoot>
     </table>
 
-    <div class="footer">Generated {{ \App\Support\Reporting\GeneratedAt::label($company) }}. Transcribe into Service Canada ROE Web. Electronic submission is not provided.</div>
+    <div class="footer">Generated {{ \App\Support\Reporting\GeneratedAt::label($company) }}. Transcribe into Service Canada ROE Web, or upload the ROE Web XML (.BLK) there with Upload a Payroll Extract File; ROE Web works out Block 15B from Block 15C. LineLedger does not submit the ROE.</div>
 </body>
 </html>

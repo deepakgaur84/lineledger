@@ -26,6 +26,10 @@ new #[Title('Payroll settings')] class extends Component {
 
     public string $f_rp_account = '';
 
+    public string $f_rq_identification_number = '';
+
+    public string $f_rq_file_number = '';
+
     public string $f_contact_name = '';
 
     public string $f_contact_email = '';
@@ -91,6 +95,8 @@ new #[Title('Payroll settings')] class extends Component {
         $this->f_portal_team_calendar = (bool) $company->portal_team_calendar;
         $this->f_business_number = $company->payroll_business_number ?? '';
         $this->f_rp_account = $company->payroll_rp_account ?? '';
+        $this->f_rq_identification_number = $company->payroll_rq_identification_number ?? '';
+        $this->f_rq_file_number = $company->payroll_rq_file_number ?? '';
         $this->f_contact_name = $company->payroll_contact_name ?? '';
         $this->f_contact_email = $company->payroll_contact_email ?? '';
         $this->f_contact_phone = $company->payroll_contact_phone ?? '';
@@ -137,11 +143,22 @@ new #[Title('Payroll settings')] class extends Component {
 
     public function save(): void
     {
+        // Revenu Québec numbers are stored bare: 1234567890 and RS0001. Spaces and
+        // dashes go; a file number typed as its four digits gets the RS prefix.
+        $this->f_rq_identification_number = preg_replace('/[\s-]+/', '', $this->f_rq_identification_number) ?? '';
+        $this->f_rq_file_number = mb_strtoupper(preg_replace('/[\s-]+/', '', $this->f_rq_file_number) ?? '');
+
+        if (preg_match('/^\d{4}$/', $this->f_rq_file_number) === 1) {
+            $this->f_rq_file_number = 'RS'.$this->f_rq_file_number;
+        }
+
         $validated = $this->validate([
             'f_standard_annual_hours' => ['required', 'integer', 'min:1', 'max:8760'],
             'f_overtime_threshold' => ['nullable', 'numeric', 'min:0', 'max:168'],
             'f_business_number' => ['nullable', 'string', 'max:20'],
             'f_rp_account' => ['nullable', 'string', 'max:20'],
+            'f_rq_identification_number' => ['nullable', 'regex:/^\d{10}$/'],
+            'f_rq_file_number' => ['nullable', 'regex:/^RS\d{4}$/'],
             'f_contact_name' => ['nullable', 'string', 'max:255'],
             'f_contact_email' => ['nullable', 'email', 'max:255'],
             'f_contact_phone' => ['nullable', 'string', 'max:50'],
@@ -152,6 +169,9 @@ new #[Title('Payroll settings')] class extends Component {
             'f_wc.*.rate' => ['nullable', 'numeric', 'min:0'],
             'f_wc.*.annual_max' => ['nullable', 'numeric', 'min:0'],
             'f_wc.*.board_account' => ['nullable', 'string', 'max:50'],
+        ], [
+            'f_rq_identification_number.regex' => __('The Revenu Québec identification number is 10 digits.'),
+            'f_rq_file_number.regex' => __('The Revenu Québec file number is RS followed by 4 digits, for example RS0001.'),
         ]);
 
         // Merge the pay-statement toggles into the existing settings JSON.
@@ -168,6 +188,8 @@ new #[Title('Payroll settings')] class extends Component {
             'portal_team_calendar' => $this->f_portal_team_calendar,
             'payroll_business_number' => $validated['f_business_number'] ?: null,
             'payroll_rp_account' => $validated['f_rp_account'] ?: null,
+            'payroll_rq_identification_number' => $validated['f_rq_identification_number'] ?: null,
+            'payroll_rq_file_number' => $validated['f_rq_file_number'] ?: null,
             'payroll_contact_name' => $validated['f_contact_name'] ?: null,
             'payroll_contact_email' => $validated['f_contact_email'] ?: null,
             'payroll_contact_phone' => $validated['f_contact_phone'] ?: null,
@@ -214,6 +236,16 @@ new #[Title('Payroll settings')] class extends Component {
                     @endforeach
                 </flux:select>
                 <flux:text class="mt-1 text-sm text-muted-foreground">{{ \App\Enums\RemittanceFrequency::from($f_remittance_frequency)->dueDateHint() }}</flux:text>
+            </div>
+
+            {{-- Revenu Québec source deductions (RL-1) --}}
+            <div class="rounded-lg border border-border p-5">
+                <flux:heading size="lg" class="mb-1">{{ __('Revenu Québec source deductions') }}</flux:heading>
+                <flux:text class="mb-4 text-sm text-muted-foreground">{{ __('Your identification number and file number for source deductions, as printed on your Remittance of Source Deductions and Employer Contributions. RL-1 slips for employees who work in Quebec are filed under them; your QST number is a different account.') }}</flux:text>
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <flux:input wire:model="f_rq_identification_number" :label="__('Identification number')" placeholder="1234567890" data-test="rq-identification-number" />
+                    <flux:input wire:model="f_rq_file_number" :label="__('File number')" placeholder="RS0001" data-test="rq-file-number" />
+                </div>
             </div>
 
             {{-- Payroll defaults --}}

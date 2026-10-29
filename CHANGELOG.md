@@ -79,6 +79,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `backup:import`. The keys now come back revoked, still linked to the audit
   entries they made, and the owner creates new ones. A restore that fails
   partway also no longer leaves an empty organization behind. Reported in #158.
+- **RL-1 slips report every box they compute the way Revenu Québec asks.**
+  Box A left out taxable benefits given in kind (an employer-paid group life
+  premium, say), so it came out lower than T4 box 14; box B added the second
+  additional QPP contribution to the first; and the Employment Insurance
+  premiums withheld from Quebec employees appeared nowhere. Following the RL-1
+  guide (RL-1.G-V, 2026-10), box A now includes those benefits, box B is split
+  into B.A (base and first additional QPP) and B.B (second additional QPP), and
+  box C reports the EI premiums, on the RL-1 page, in the slips CSV, the slip
+  and summary PDFs and the XML; boxes the guide leaves blank stay blank, and
+  the summary splits the employer QPP contribution into its lines 22 and 24.
+  The XML now files the slips under your Revenu Québec identification number
+  and file number (for example 1234567890 and RS0001), set in a new Revenu
+  Québec source deductions block in Settings → Payroll, instead of the GST/HST
+  number, and waits until both are set. Slips finalized before this fix are
+  shown as issued, with a note to unlock and finalize them again (and to file
+  amended slips for any already filed). Official paper RL-1 slips still need a
+  Revenu Québec authorization number, and Revenu Québec takes RL-slip XML only
+  from software it has certified. New `companies.payroll_rq_identification_number`
+  and `payroll_rq_file_number` columns.
+- **The ROE Web XML is a file ROE Web accepts.** The download used made-up
+  element names and numbered the blocks wrongly (the SIN as Block 14, the
+  employee as Block 19), so it failed Service Canada's schema. It is now the
+  ROE Web payroll extract, version 2.0, checked against that schema: Block 5
+  carries your CRA payroll account (the Business Number and RP account from
+  Settings → Payroll, never the GST/HST number), Block 6 the pay period type,
+  Block 8 the SIN, Block 9 the employee's name and address, Block 15A the
+  insurable hours rounded up to whole hours, Block 15C every consecutive pay
+  period (0.00 for one with no pay), and Block 16 the three-character reason
+  code with your payroll contact. It downloads as a `.BLK` file to upload in ROE
+  Web with Upload a Payroll Extract File, where it arrives as a draft to check
+  and submit. Without a payroll account or payroll contact, or before any pay
+  is posted for the employee, the page says what to fix instead of downloading
+  a file ROE Web would refuse.
+- **The ROE reports all insurable earnings.** Each pay period on the ROE
+  showed only the earnings under the EI maximum insurable earnings ($68,900
+  for 2026), so a high earner's last pay periods looked like periods with no
+  pay and their EI benefit rate came out too low. The ROE now reports every
+  insurable dollar, as Service Canada requires, and the worksheet's Block 15B
+  totals the last 14 biweekly (27 weekly, 13 semi-monthly, 7 monthly) pay
+  periods, as the ROE guide counts them. T4 box 24 stays capped. New
+  `pay_run_lines.roe_insurable_earnings_cents` column; pay runs calculated
+  before it are read from their earning lines, so there is nothing to backfill.
 
 ### Security
 

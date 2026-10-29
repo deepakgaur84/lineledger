@@ -104,6 +104,8 @@ use Illuminate\Support\Facades\Storage;
     'portal_team_calendar',
     'payroll_business_number',
     'payroll_rp_account',
+    'payroll_rq_identification_number',
+    'payroll_rq_file_number',
     'payroll_contact_name',
     'payroll_contact_email',
     'payroll_contact_phone',
