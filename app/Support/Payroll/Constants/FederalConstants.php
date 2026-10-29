@@ -215,6 +215,28 @@ final class FederalConstants
     }
 
     /**
+     * The federal basic personal amount (maximum BPAF) of every table effective
+     * on or before the given date: the current one and each earlier one. A TD1
+     * total claim equal to one of them claims the basic amount only (claim
+     * code 1), from whichever year's form it came. See
+     * {@see PayrollConstantSet::isFederalBasicClaim()}.
+     *
+     * @return list<int>
+     */
+    public static function basicPersonalAmountsOnOrBefore(string $date): array
+    {
+        $amounts = [];
+
+        foreach (self::PERIODS as $effective => $values) {
+            if ($effective <= $date) {
+                $amounts[] = (int) $values['tax']['bpa_max_cents'];
+            }
+        }
+
+        return array_values(array_unique($amounts));
+    }
+
+    /**
      * @return array<int, string> Effective dates of every loaded table.
      */
     public static function loadedPeriods(): array

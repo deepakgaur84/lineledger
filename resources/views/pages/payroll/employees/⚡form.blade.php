@@ -78,6 +78,8 @@ new #[Title('Employee payroll setup')] class extends Component {
 
     public bool $income_tax_exempt = false;
 
+    public bool $indian_act_exempt = false;
+
     public bool $workers_comp_exempt = false;
 
     public string $workers_comp_rate = '';
@@ -183,6 +185,7 @@ new #[Title('Employee payroll setup')] class extends Component {
             $this->wage_expense_account_id = $profile->wage_expense_account_id;
             $this->is_active = $profile->is_active;
             $this->income_tax_exempt = $profile->income_tax_exempt;
+            $this->indian_act_exempt = (bool) $profile->indian_act_exempt;
             $this->workers_comp_exempt = $profile->workers_comp_exempt;
             $this->workers_comp_rate = $profile->workers_comp_rate_bp !== null ? (string) ((int) $profile->workers_comp_rate_bp / 100) : '';
             $this->cpt30_election_date = $profile->cpt30_election_date?->toDateString() ?? '';
@@ -426,6 +429,7 @@ new #[Title('Employee payroll setup')] class extends Component {
             'authorized_annual_deductions' => ['nullable', 'string', new MoneyString],
             'cpt30_election_date' => ['nullable', 'date'],
             'income_tax_exempt' => ['boolean'],
+            'indian_act_exempt' => ['boolean'],
             'workers_comp_exempt' => ['boolean'],
             'workers_comp_rate' => ['nullable', 'numeric', 'min:0'],
             'vacation_policy' => ['required', 'in:accrue,pay_each_cheque'],
@@ -517,6 +521,7 @@ new #[Title('Employee payroll setup')] class extends Component {
             'wage_expense_account_id' => $validated['wage_expense_account_id'] ?: null,
             'is_active' => $validated['is_active'],
             'income_tax_exempt' => $this->income_tax_exempt,
+            'indian_act_exempt' => $this->indian_act_exempt,
             'workers_comp_exempt' => $this->workers_comp_exempt,
             'workers_comp_rate_bp' => $this->workers_comp_rate !== '' ? (int) round((float) $this->workers_comp_rate * 100) : null,
             'cpt30_election_date' => $this->province_of_employment === 'QC' ? null : ($validated['cpt30_election_date'] ?: null),
@@ -745,7 +750,7 @@ new #[Title('Employee payroll setup')] class extends Component {
         {{-- Tax / TD1 --}}
         <div class="rounded-lg border border-border p-5">
             <flux:heading size="lg" class="mb-1">{{ __('Tax credits (TD1)') }}</flux:heading>
-            <flux:text class="mb-4 text-sm text-muted-foreground">{{ __('Total claim amounts from the employee’s federal and provincial TD1 forms.') }}</flux:text>
+            <flux:text class="mb-4 text-sm text-muted-foreground">{{ __('Total claim amounts from the employee’s federal and provincial TD1 forms. Enter 0 when the employee claims no personal amounts with you, for example on a second job (claim code 0).') }}</flux:text>
             <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <flux:input wire:model="td1_federal_claim" :label="__('Federal claim amount')" inputmode="decimal" />
                 <flux:input wire:model="td1_provincial_claim" :label="$province_of_employment === 'QC' ? __('Quebec source-deductions claim (TP-1015.3)') : __('Provincial claim amount')" inputmode="decimal" />
@@ -762,7 +767,8 @@ new #[Title('Employee payroll setup')] class extends Component {
                 @if ($province_of_employment === 'QC')
                     <flux:switch wire:model="qpip_exempt" :label="__('QPIP exempt')" />
                 @endif
-                <flux:switch wire:model="income_tax_exempt" :label="__('Income tax exempt')" :description="__('No income tax withheld; CPP/EI still apply.')" />
+                <flux:switch wire:model="income_tax_exempt" :label="__('Income tax exempt')" :description="__('No income tax withheld, but the pay is still taxable income (T4 box 14). CPP/EI still apply.')" />
+                <flux:switch wire:model="indian_act_exempt" :label="__('Indian Act exempt income')" :description="$province_of_employment === 'QC' ? __('Employment income exempt under section 87 of the Indian Act: no income tax withheld, and the T4 reports it under code 71. EI and QPIP still apply. QPP applies only if you elected coverage on form RR-2-V; if not, also turn on QPP exempt.') : __('Employment income exempt under section 87 of the Indian Act: no income tax withheld, and the T4 reports it under code 71. EI still applies. CPP applies only if you elected coverage on form CPT124; if not, also turn on CPP exempt.')" />
             </div>
 
             @if ($province_of_employment !== 'QC')

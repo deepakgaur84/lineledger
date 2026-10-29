@@ -22,6 +22,13 @@ use Illuminate\Contracts\Encryption\DecryptException;
  */
 class T4XmlGenerator
 {
+    /** Indian Act "Other information" code → its CRA T4 XML element. */
+    private const INDIAN_ACT_OTHER_INFO = [
+        '71' => 'indn_empe_amt',
+        '94' => 'indn_xmpt_rpp_amt',
+        '95' => 'indn_xmpt_unn_amt',
+    ];
+
     /**
      * @param  array<int, array<string, mixed>>  $slips  From {@see T4SlipCalculator::slipsForYear()}
      * @param  array<string, int>  $summary  From {@see T4SlipCalculator::summary()}
@@ -123,6 +130,22 @@ class T4XmlGenerator
         $this->money($doc, $amt, 'chrty_dons_amt', $other['46'] ?? 0);  // Box 46 (charitable donations)
         $this->money($doc, $amt, 'pens_adjt_amt', $other['52'] ?? 0);   // Box 52 (pension adjustment)
         $t4Slip->appendChild($amt);
+
+        // Indian Act exempt income (RC4120, "Indians – Employment"), as the CRA
+        // T4 XML specification (2026) names it under <OTH_INFO>: code 71
+        // <indn_empe_amt> ("If you are reporting this type of income, enter 0.00
+        // in box 14"), code 94 <indn_xmpt_rpp_amt>, code 95 <indn_xmpt_unn_amt>.
+        $otherInfo = $doc->createElement('OTH_INFO');
+
+        foreach (self::INDIAN_ACT_OTHER_INFO as $code => $element) {
+            if (($other[$code] ?? 0) > 0) {
+                $this->money($doc, $otherInfo, $element, $other[$code]);
+            }
+        }
+
+        if ($otherInfo->hasChildNodes()) {
+            $t4Slip->appendChild($otherInfo);
+        }
 
         return $t4Slip;
     }

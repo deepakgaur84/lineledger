@@ -8,6 +8,7 @@ use App\Services\Payroll\Calculators\EiCalculator;
 use App\Services\Payroll\Calculators\IncomeTaxCalculator;
 use App\Services\Payroll\Calculators\QpipCalculator;
 use App\Services\Payroll\PayrollDeductionEngine;
+use App\Services\Payroll\Verification\PayrollVerificationDataset;
 use App\Services\Payroll\Verification\PayrollVerificationRunner;
 use App\Support\Payroll\Constants\PayrollConstantsRepository;
 
@@ -40,6 +41,23 @@ it('matches every loaded payroll reference value to the exact cent', function ()
             }
         }
     }
+});
+
+it('locks the TD1 claim code 0 and partial claim anchors worked in Td1TotalClaimTest', function () {
+    // tests/Unit/Payroll/Td1TotalClaimTest.php derives these from the T4127
+    // 122nd edition formulas step by step (Ontario, biweekly, $1,500 gross).
+    $checks = collect(PayrollVerificationDataset::checks())->keyBy('id');
+
+    $claims = fn (string $id) => [
+        $checks[$id]->federalClaimCents,
+        $checks[$id]->provincialClaimCents,
+        $checks[$id]->expectedFederalTaxCents,
+        $checks[$id]->expectedProvincialTaxCents,
+    ];
+
+    expect($claims('on-biweekly-1500-tax-2026'))->toBe([1645200, 1298900, 9853, 6249])
+        ->and($claims('on-biweekly-1500-claim-code-0-2026'))->toBe([0, 0, 18712, 8772])
+        ->and($claims('on-biweekly-1500-partial-claim-2026'))->toBe([800000, 1298900, 14404, 6249]);
 });
 
 it('has at least one verified reference per statutory component', function () {

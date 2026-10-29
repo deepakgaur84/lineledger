@@ -32,11 +32,13 @@ use Illuminate\Validation\ValidationException;
  *   hourly_rate_cents:                ?int
  *   default_hours_per_period:         ?string|float
  *   payroll_schedule_id:              ?int
- *   td1_federal_claim_cents:          int
+ *   td1_federal_claim_cents:          int (the TD1 line 13 total; 0 = claim code 0)
  *   td1_federal_code:                 ?string
- *   td1_provincial_claim_cents:       int
+ *   td1_provincial_claim_cents:       int (0 = claim code 0; Quebec: TP-1015.3-V line 10)
  *   td1_provincial_code:              ?string
  *   cpp_exempt, ei_exempt, qpip_exempt: bool
+ *   income_tax_exempt:                bool (no income tax withheld; still T4 box 14)
+ *   indian_act_exempt:                bool (Indian Act s.87 exempt; T4 code 71)
  *   additional_tax_per_period_cents:  int
  *   vacation_policy:                  string (VacationPolicy value)
  *   vacation_rate_bp:                 int
@@ -84,6 +86,7 @@ final class SaveEmployeePayrollProfile
                 'ei_exempt' => (bool) ($data['ei_exempt'] ?? false),
                 'qpip_exempt' => (bool) ($data['qpip_exempt'] ?? false),
                 'income_tax_exempt' => (bool) ($data['income_tax_exempt'] ?? false),
+                'indian_act_exempt' => (bool) ($data['indian_act_exempt'] ?? false),
                 'workers_comp_exempt' => (bool) ($data['workers_comp_exempt'] ?? false),
                 'workers_comp_rate_bp' => isset($data['workers_comp_rate_bp']) && $data['workers_comp_rate_bp'] !== ''
                     ? (int) $data['workers_comp_rate_bp']
