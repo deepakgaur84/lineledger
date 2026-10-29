@@ -9,6 +9,7 @@ use App\Models\Company;
 use App\Models\Contact;
 use App\Models\EmployeePayrollProfile;
 use App\Support\Locales;
+use App\Support\Payroll\PayrollContactPhone;
 use DOMDocument;
 use DOMElement;
 use Illuminate\Contracts\Encryption\DecryptException;
@@ -210,62 +211,49 @@ class RoeXmlGenerator
     }
 
     /**
-     * The CRA payroll program account for Block 5, from Settings → Payroll: the
-     * 9-digit Business Number with the RP account beside it (RP0001, or just
-     * 0001), or all 15 characters in the Business Number field. Null when it isn't
-     * one ROE Web accepts: 9 digits not all zeros, "RP", 4 digits above 0000.
+     * The CRA payroll program account for Block 5: the one the T4 files under,
+     * from the Business Number and RP account in Settings → Payroll
+     * ({@see Company::payrollAccountNumber()}: RP0001 or just 0001, or the whole
+     * account typed in either field). Null when there is none, or when it is one
+     * ROE Web refuses: an all-zero Business Number or reference number.
      */
     private function payrollAccount(Company $company): ?string
     {
-        $bn = mb_strtoupper(preg_replace('/[\s-]+/', '', (string) $company->payroll_business_number) ?? '');
-        $program = mb_strtoupper(preg_replace('/[\s-]+/', '', (string) $company->payroll_rp_account) ?? '');
+        $account = $company->payrollAccountNumber();
 
-        if (preg_match('/^\d{9}$/', $bn) === 1) {
-            $bn .= preg_match('/^\d{4}$/', $program) === 1 ? 'RP'.$program : $program;
-        }
-
-        if (preg_match('/^(\d{9})RP(\d{4})$/', $bn, $parts) !== 1 || $parts[1] === '000000000' || $parts[2] === '0000') {
+        if ($account === null || substr($account, 0, 9) === '000000000' || substr($account, -4) === '0000') {
             return null;
         }
 
-        return $bn;
+        return $account;
     }
 
     /**
      * The Block 16 contact, from the payroll contact in Settings → Payroll: a
-     * first and a last name, and a 10-digit North American phone number split
-     * into area code, number and an optional extension (up to 8 digits). Null
-     * when either is missing or unusable.
+     * first and a last name, and the phone number as the payroll settings accept
+     * it ({@see PayrollContactPhone}: 10 digits and an optional extension), split
+     * into area code, 7-digit number and extension. Null when either is missing
+     * or unusable.
      *
      * @return array{first: string, last: string, area: string, number: string, extension: string}|null
      */
     private function payrollContact(Company $company): ?array
     {
         $names = preg_split('/\s+/', trim((string) $company->payroll_contact_name)) ?: [];
+        $phone = PayrollContactPhone::parse($company->payroll_contact_phone);
 
-        if (count($names) < 2) {
+        if (count($names) < 2 || $phone === null) {
             return null;
         }
 
         $last = (string) array_pop($names);
 
-        [$main, $extension] = preg_split('/\s*(?:extension|ext\.?|poste|x|#)\s*/i', (string) $company->payroll_contact_phone, 2) + [1 => ''];
-        $digits = preg_replace('/\D/', '', $main) ?? '';
-
-        if (strlen($digits) === 11 && str_starts_with($digits, '1')) {
-            $digits = substr($digits, 1);
-        }
-
-        if (strlen($digits) !== 10) {
-            return null;
-        }
-
         return [
             'first' => implode(' ', $names),
             'last' => $last,
-            'area' => substr($digits, 0, 3),
-            'number' => substr($digits, 3),
-            'extension' => substr(preg_replace('/\D/', '', $extension) ?? '', 0, 8),
+            'area' => $phone->areaCode,
+            'number' => str_replace('-', '', $phone->number),
+            'extension' => (string) $phone->extension,
         ];
     }
 
