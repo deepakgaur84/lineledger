@@ -142,6 +142,27 @@ with the unchanged deploy script (its `config:cache` picks the settings up), run
 Nothing in the database changed. Deploy the previous release again; it ignores
 `TRUSTED_HOSTS` and `TRUSTED_PROXIES` and goes back to trusting every peer.
 
+### Employee SINs survive a restore
+
+**No migrations, no config or env changes.** A restore now encrypts each employee SIN with
+this server's key, so it comes back readable whichever server made the backup. A restore
+made before this release stored the SINs unencrypted, where the app can't read them, and
+`app:upgrade` gains a fourth step that repairs them, Encrypted columns
+(`backup:repair-encrypted-columns`).
+
+- **It encrypts the SINs an earlier restore stored unencrypted**, with this server's key,
+  so they read back exactly as they were stored. It never touches a value that is already
+  encrypted, and a second run finds nothing. To see first what it would change in each
+  organization, run `php artisan backup:repair-encrypted-columns --dry-run`; give it an
+  organization's ID or slug to check just that one.
+- **A SIN encrypted under a different `APP_KEY` can't be recovered.** The step counts
+  these for each organization (`… do not decrypt with this APP_KEY`) and leaves them as
+  they are: enter each one again on the employee's payroll setup. Until you do, the RL-1
+  and ROE exports file 000000000 for that employee, and the T4 page names the employee and
+  refuses the CRA XML download. The printed T4 slip shows only the SIN's last four digits.
+- **A backup no longer fails on such a SIN.** It leaves the SIN out, and the restore
+  preview says how many employees come back without one.
+
 ### Void reversals carry the foreign-currency memo
 
 Upgrade as usual: back up first, then let `app:upgrade` run. This backfill is its fifth

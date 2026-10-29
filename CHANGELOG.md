@@ -101,8 +101,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   back without one.
 - **RL-1 and ROE exports file the unknown-SIN placeholder.** When a SIN can't be
   decrypted, for example after a database is restored under a different
-  `APP_KEY`, the RL-1 and ROE XML exports failed. They now file 000000000, as
-  the T4 export already did.
+  `APP_KEY`, the RL-1 and ROE XML exports failed. They now file 000000000,
+  while the T4 XML export refuses such a SIN and names the employee.
 - **Backups restore next to the organization they came from.** On the server
   that made it, a restore stopped with a database error for any organization
   that had ever invited a teammate, turned on inbox email, taken a card payment
