@@ -5,19 +5,23 @@ namespace App\Services\Posting;
 use App\Enums\AuditAction;
 use App\Exceptions\Posting\AlreadyPostedException;
 use App\Exceptions\Posting\PeriodLockedException;
+use App\Exceptions\Posting\PostingValidationException;
 use App\Exceptions\Posting\UnbalancedJournalException;
 use App\Models\Account;
 use App\Models\JournalEntry;
+use App\Models\JournalLine;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
 use App\Services\Reconciliation\BankReconciliationLockGuard;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
 /**
  * The single chokepoint for committing journal entries to the ledger.
- * Posting is atomic, balanced, and respects the company lock date.
+ * Posting is atomic, balanced, respects the company lock date, and keeps every
+ * line on the entry's own organization's accounts.
  * After post, the entry is immutable; corrections happen via void().
  */
 class JournalPoster
@@ -52,6 +56,8 @@ class JournalPoster
             if ($entry->company->isLockedFor($entryDate)) {
                 throw PeriodLockedException::for($entryDate, CarbonImmutable::parse($entry->company->lock_date));
             }
+
+            $this->ensureLineAccountsInCompany($entry);
 
             // No reconciliation check here: a new entry has no lines a completed
             // reconciliation has claimed, so a back-dated posting changes no
@@ -198,6 +204,35 @@ class JournalPoster
         }
 
         $this->reconciliationLockGuard->ensureLinesNotReconciled((int) $entry->company_id, $entry->lines);
+    }
+
+    /**
+     * Refuse an entry with a line on another organization's account. A journal
+     * line carries no company_id — it belongs to an organization only through
+     * its entry — so nothing else stops a line from moving another
+     * organization's balances and reports. post() runs this for every entry;
+     * whatever rewrites a posted entry's lines in place (a document's repost(),
+     * the opening-balance entry, an edit to a manual entry) calls it once the
+     * lines are rebuilt, inside its transaction.
+     *
+     * It reads the saved lines rather than the loaded relation, so a line added
+     * after the entry was loaded is checked too.
+     *
+     * @throws PostingValidationException
+     */
+    public function ensureLineAccountsInCompany(JournalEntry $entry): void
+    {
+        $foreign = JournalLine::query()
+            ->where('journal_entry_id', $entry->id)
+            ->whereNotExists(fn (QueryBuilder $accounts) => $accounts->select('accounts.id')
+                ->from('accounts')
+                ->whereColumn('accounts.id', 'journal_lines.account_id')
+                ->where('accounts.company_id', $entry->company_id))
+            ->exists();
+
+        if ($foreign) {
+            throw new PostingValidationException(__('A line uses an account that belongs to another organization.'));
+        }
     }
 
     /**

@@ -92,6 +92,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status. The organization the page works in must also still be yours,
   including in search and navigation on settings pages; the site admin area and
   the customer and employee portals keep their own rules.
+- **Every account a form sends is checked against your organization.** Some
+  forms took an account id from the page and used it as it came, so a tampered
+  request could name an account of another organization. Each of these now
+  accepts only your organization's own accounts, of the kind the field holds (a
+  bank account to pay from, an expense to charge, a liability to owe): the
+  journal entry form, including Save changes on a posted entry and Save as
+  template, and the invoice form's Save as template; the penalty, interest and
+  commission accounts on a tax-return payment; the service charge and interest
+  accounts on a reconciliation; the For Review feed (Accept, bulk categorize,
+  Split and Always do this) and the statement import wizard; and the payroll
+  pages: pay runs, payroll cheques, the PD7A, Revenu Québec and workers'
+  compensation remittances, and the wage, earning, deduction, pay schedule and
+  time-off policy fields of an employee's setup. A bank-feed category also can't
+  be the Accounts Receivable, Accounts Payable or Undeposited Funds control
+  account, which the category picker already leaves out. Behind the forms,
+  the ledger itself now refuses to post, repost or save a journal line on
+  another organization's account, whichever form, API call or job built it.
+  The API already checked these ids.
 - **`symfony/mime` 8.1.10** (from 8.1.7) fixes an email header injection through
   MIME parameter names that contain non-token characters
   ([CVE-2026-45070](https://symfony.com/cve-2026-45070)). LineLedger never takes a

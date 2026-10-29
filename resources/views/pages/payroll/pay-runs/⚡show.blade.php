@@ -17,6 +17,7 @@ use App\Services\Posting\PayRunPoster;
 use App\Support\Money;
 use Flux\Flux;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
@@ -99,7 +100,7 @@ new #[Title('Pay run')] class extends Component {
     {
         $this->validate([
             'startingChequeNumber' => ['required', 'integer', 'min:1'],
-            'bankAccountId' => ['required', 'integer', 'exists:accounts,id'],
+            'bankAccountId' => ['required', 'integer', Rule::exists('accounts', 'id')->where('company_id', $this->company->id)->where('subtype', AccountSubtype::Bank->value)],
         ]);
 
         try {

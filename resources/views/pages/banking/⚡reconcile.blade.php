@@ -20,6 +20,7 @@ use App\Support\Money;
 use Flux\Flux;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
@@ -207,6 +208,19 @@ new #[Title('Reconcile')] class extends Component {
         $id ??= (clone $income)->where('subtype', AccountSubtype::OtherIncome->value)->orderBy('code')->value('id');
 
         return $id !== null ? (int) $id : null;
+    }
+
+    /**
+     * The service-charge and interest accounts arrive from the browser, so each
+     * must be one of this organization's accounts (as the API's reconciliation
+     * request requires) before anything is posted or remembered.
+     */
+    protected function validateAdjustmentAccounts(): void
+    {
+        $this->validate([
+            'serviceChargeAccountId' => ['nullable', 'integer', Rule::exists('accounts', 'id')->where('company_id', $this->company->id)],
+            'interestAccountId' => ['nullable', 'integer', Rule::exists('accounts', 'id')->where('company_id', $this->company->id)],
+        ]);
     }
 
     /**
@@ -404,6 +418,8 @@ new #[Title('Reconcile')] class extends Component {
             return;
         }
 
+        $this->validateAdjustmentAccounts();
+
         $account = Account::query()->findOrFail($this->account_id);
 
         try {
@@ -495,6 +511,8 @@ new #[Title('Reconcile')] class extends Component {
         if (! $rec) {
             return;
         }
+
+        $this->validateAdjustmentAccounts();
 
         try {
             $beginningCents = $this->beginningBalance === '' ? 0 : Money::fromString($this->beginningBalance)->cents;

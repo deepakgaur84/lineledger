@@ -202,6 +202,8 @@ class SalesReceiptPoster
                 );
             }
 
+            $this->journalPoster->ensureLineAccountsInCompany($entry);
+
             $newAccountIds = $entry->lines->pluck('account_id')->all();
             foreach (array_unique(array_merge($oldAccountIds, $newAccountIds)) as $id) {
                 Account::withoutGlobalScopes()->find($id)?->recomputeBalance();

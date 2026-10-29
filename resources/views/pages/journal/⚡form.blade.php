@@ -365,7 +365,10 @@ new #[Title('Journal entry')] class extends Component
     public function saveAsTemplate(): void
     {
         $validated = $this->validate(
-            ['template_name' => ['required', 'string', 'max:255']],
+            [
+                'template_name' => ['required', 'string', 'max:255'],
+                'lines.*.account_id' => ['nullable', 'integer', Rule::exists('accounts', 'id')->where('company_id', $this->company->id)],
+            ],
             attributes: ['template_name' => __('template name')],
         );
 
@@ -702,7 +705,7 @@ new #[Title('Journal entry')] class extends Component
             'entryDate' => ['required', 'date'],
             'memo' => ['nullable', 'string'],
             'lines' => ['array', 'min:2'],
-            'lines.*.account_id' => ['required', 'integer', 'exists:accounts,id'],
+            'lines.*.account_id' => ['required', 'integer', Rule::exists('accounts', 'id')->where('company_id', $companyId)],
             'lines.*.contact_id' => ['nullable', 'integer'],
             'lines.*.debit' => ['nullable', 'string', new MoneyString],
             'lines.*.credit' => ['nullable', 'string', new MoneyString],

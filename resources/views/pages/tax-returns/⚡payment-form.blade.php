@@ -164,8 +164,11 @@ new #[Title('Record tax payment')] class extends Component {
             'reference' => ['nullable', 'string', 'max:120'],
             'net_amount' => ['required', 'string', new MoneyString],
             'penalty' => ['required', 'string', new MoneyString],
+            'penalty_account_id' => ['nullable', 'integer', Rule::exists('accounts', 'id')->where('company_id', $this->company->id)],
             'interest' => ['required', 'string', new MoneyString],
+            'interest_account_id' => ['nullable', 'integer', Rule::exists('accounts', 'id')->where('company_id', $this->company->id)],
             'commission' => ['required', 'string', new MoneyString],
+            'commission_account_id' => ['nullable', 'integer', Rule::exists('accounts', 'id')->where('company_id', $this->company->id)],
             'notes' => ['nullable', 'string', 'max:2000'],
         ];
 

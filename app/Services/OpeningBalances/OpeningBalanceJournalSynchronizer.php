@@ -329,6 +329,8 @@ class OpeningBalanceJournalSynchronizer
             throw UnbalancedJournalException::from($entry->totalDebitsCents(), $entry->totalCreditsCents());
         }
 
+        $this->journalPoster->ensureLineAccountsInCompany($entry);
+
         $this->journalPoster->recomputeAccounts(array_unique([...$oldAccountIds, ...$entry->lines->pluck('account_id')->all()]));
 
         $entry = $entry->fresh(['lines']);

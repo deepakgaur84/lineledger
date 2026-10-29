@@ -5,6 +5,7 @@ use App\Actions\Payroll\TerminateEmployee;
 use App\Actions\Portal\IssuePortalLoginToken;
 use App\Notifications\Portal\EmployeePortalLoginLinkNotification;
 use App\Enums\AccountSubtype;
+use App\Enums\AccountType;
 use App\Enums\Country;
 use App\Enums\PayBasis;
 use App\Enums\RoeReason;
@@ -23,6 +24,7 @@ use App\Support\Payroll\Constants\PayrollConstantsRepository;
 use App\Support\Payroll\PayrollItemType;
 use Flux\Flux;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
@@ -407,13 +409,20 @@ new #[Title('Employee payroll setup')] class extends Component {
 
     public function save(SaveEmployeePayrollProfile $action): void
     {
+        $companyId = $this->company->id;
+
+        // Ids the browser sends must be this organization's, and an account of
+        // the kind the field holds: wages and earnings to an expense, deductions
+        // and contributions owed to a liability.
+        $account = fn (AccountType $type) => Rule::exists('accounts', 'id')->where('company_id', $companyId)->where('type', $type->value);
+
         $validated = $this->validate([
             'province_of_employment' => ['required', 'in:'.implode(',', array_keys($this->provinceOptions))],
             'pay_basis' => ['required', 'in:salary,hourly,commission'],
             'annual_salary' => ['nullable', 'string', 'required_if:pay_basis,salary', new MoneyString],
             'hourly_rate' => ['nullable', 'string', 'required_if:pay_basis,hourly', new MoneyString],
             'default_hours_per_period' => ['nullable', 'numeric', 'min:0'],
-            'payroll_schedule_id' => ['nullable', 'integer', 'exists:payroll_schedules,id'],
+            'payroll_schedule_id' => ['nullable', 'integer', Rule::exists('payroll_schedules', 'id')->where('company_id', $companyId)],
             'sin' => ['nullable', 'string', 'max:20'],
             'date_of_birth' => ['nullable', 'date'],
             'hire_date' => ['nullable', 'date'],
@@ -434,7 +443,7 @@ new #[Title('Employee payroll setup')] class extends Component {
             'banked_overtime_agreement_date' => ['nullable', 'date'],
             'banked_overtime_multiplier' => ['nullable', 'in:,10000,15000,20000'],
             'approver_user_id' => ['nullable', 'integer', 'exists:users,id'],
-            'wage_expense_account_id' => ['nullable', 'integer', 'exists:accounts,id'],
+            'wage_expense_account_id' => ['nullable', 'integer', $account(AccountType::Expense)],
             'is_active' => ['boolean'],
             'has_opening_balances' => ['boolean'],
             'opening_balances_as_of' => ['nullable', 'date'],
@@ -457,8 +466,8 @@ new #[Title('Employee payroll setup')] class extends Component {
             'recurring_items.*.amount' => ['nullable', 'string', new MoneyString],
             'recurring_items.*.percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'recurring_items.*.annual_maximum' => ['nullable', 'string', new MoneyString],
-            'recurring_items.*.expense_account_id' => ['nullable', 'integer', 'exists:accounts,id'],
-            'recurring_items.*.liability_account_id' => ['nullable', 'integer', 'exists:accounts,id'],
+            'recurring_items.*.expense_account_id' => ['nullable', 'integer', $account(AccountType::Expense)],
+            'recurring_items.*.liability_account_id' => ['nullable', 'integer', $account(AccountType::Liability)],
             'recurring_items.*.t4_box' => ['nullable', 'string', 'max:10'],
             'recurring_items.*.is_active' => ['boolean'],
             'recurring_items.*.taxable_federal' => ['boolean'],
@@ -477,7 +486,7 @@ new #[Title('Employee payroll setup')] class extends Component {
             'recurring_items.*.pre_tax_federal' => ['boolean'],
             'recurring_items.*.pre_tax_provincial' => ['boolean'],
             'time_off_policies' => ['array'],
-            'time_off_policies.*.time_off_policy_id' => ['nullable', 'integer', 'exists:time_off_policies,id'],
+            'time_off_policies.*.time_off_policy_id' => ['nullable', 'integer', Rule::exists('time_off_policies', 'id')->where('company_id', $companyId)],
             'time_off_policies.*.opening_balance' => ['nullable', 'numeric', 'min:0'],
         ]);
 
