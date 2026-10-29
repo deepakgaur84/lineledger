@@ -240,11 +240,15 @@ it('lets the layout be chosen on the form styles page', function () {
         ->set('f_name', 'Clean')
         ->set('f_layout', 'airy')
         ->call('save')
-        ->assertHasNoErrors()
-        // Fork: the form styles page is a list, not a table, so the cell is a span.
-        ->assertSeeHtml('data-test="style-layout-cell">Airy</span>');
+        ->assertHasNoErrors();
 
     expect(FormStyle::query()->where('name', 'Clean')->value('layout'))->toBe(InvoiceLayout::Airy);
+
+    // Fork: the form styles page is a list, not a table, and the saved style is
+    // checked on a freshly mounted page, so the test does not depend on how the
+    // page re-renders right after saving.
+    Livewire::test('pages::settings.lists.form-styles', ['company' => $this->company])
+        ->assertSeeHtml('data-test="style-layout-cell">Airy</span>');
 });
 
 it('rejects an unknown layout on the form styles page', function () {
