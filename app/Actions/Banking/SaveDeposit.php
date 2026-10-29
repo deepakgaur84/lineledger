@@ -3,9 +3,8 @@
 namespace App\Actions\Banking;
 
 use App\Enums\DepositStatus;
-use App\Models\CustomerReceipt;
 use App\Models\Deposit;
-use App\Models\SalesReceipt;
+use App\Services\Posting\DepositPoster;
 use App\Services\Posting\DocumentNumberGenerator;
 use Illuminate\Support\Facades\DB;
 
@@ -18,9 +17,14 @@ use Illuminate\Support\Facades\DB;
  * deposit to DepositPoster::repost() to rebuild the GL entry in place.
  *
  * Each line is one of two kinds:
- *   - receipt-source: { customer_receipt_id: int, amount_cents?: int, description?: string }
- *       (amount_cents defaults to the receipt's amount when omitted)
+ *   - receipt-source: { customer_receipt_id | sales_receipt_id: int, amount_cents?: int, description?: string }
+ *       (amount_cents defaults to the receipt's amount when omitted, and must equal it when given)
  *   - other:          { account_id: int, contact_id?: int, amount_cents: int, description?: string }
+ *
+ * Receipt lines are checked before anything is written
+ * (DepositPoster::ensureReceiptLinesDepositable()): each must be a posted
+ * receipt of this organization, received into Undeposited Funds, on no other
+ * deposit that hasn't been voided, and deposited for its own amount.
  *
  * Expected $data shape (cents-based, framework-agnostic):
  *   bank_account_id: int
@@ -31,7 +35,10 @@ use Illuminate\Support\Facades\DB;
  */
 final class SaveDeposit
 {
-    public function __construct(protected DocumentNumberGenerator $numbers) {}
+    public function __construct(
+        protected DocumentNumberGenerator $numbers,
+        protected DepositPoster $poster,
+    ) {}
 
     /**
      * @param  array<string, mixed>  $data
@@ -40,6 +47,11 @@ final class SaveDeposit
     {
         return DB::transaction(function () use ($data, $deposit): Deposit {
             $company = app('current_company');
+
+            // Before anything is written, and with the receipts row-locked: each
+            // receipt line must be one Undeposited Funds still holds, for its own
+            // amount — whatever the form or the API sent.
+            $receipts = $this->poster->ensureReceiptLinesDepositable((int) $company->id, $data['lines'], $deposit);
 
             $header = [
                 'bank_account_id' => $data['bank_account_id'],
@@ -68,15 +80,13 @@ final class SaveDeposit
 
             foreach (array_values($data['lines']) as $index => $line) {
                 if (! empty($line['customer_receipt_id'])) {
-                    $receipt = CustomerReceipt::withoutGlobalScopes()->where('company_id', $company->id)->find($line['customer_receipt_id']);
-                    $amountCents = isset($line['amount_cents'])
-                        ? (int) $line['amount_cents']
-                        : (int) ($receipt?->amount_cents ?? 0);
+                    // Found, posted, undeposited and for this amount: checked above.
+                    $receipt = $receipts['customer']->findOrFail((int) $line['customer_receipt_id']);
 
                     $deposit->lines()->create([
-                        'customer_receipt_id' => $line['customer_receipt_id'],
-                        'description' => $line['description'] ?? 'Receipt '.($receipt?->receipt_no ?? ''),
-                        'amount_cents' => $amountCents,
+                        'customer_receipt_id' => $receipt->id,
+                        'description' => $line['description'] ?? 'Receipt '.$receipt->receipt_no,
+                        'amount_cents' => (int) $receipt->amount_cents,
                         'line_order' => $index,
                     ]);
 
@@ -84,15 +94,12 @@ final class SaveDeposit
                 }
 
                 if (! empty($line['sales_receipt_id'])) {
-                    $salesReceipt = SalesReceipt::withoutGlobalScopes()->where('company_id', $company->id)->find($line['sales_receipt_id']);
-                    $amountCents = isset($line['amount_cents'])
-                        ? (int) $line['amount_cents']
-                        : (int) ($salesReceipt?->total_cents ?? 0);
+                    $salesReceipt = $receipts['sales']->findOrFail((int) $line['sales_receipt_id']);
 
                     $deposit->lines()->create([
-                        'sales_receipt_id' => $line['sales_receipt_id'],
-                        'description' => $line['description'] ?? 'Sales receipt '.($salesReceipt?->sales_receipt_no ?? ''),
-                        'amount_cents' => $amountCents,
+                        'sales_receipt_id' => $salesReceipt->id,
+                        'description' => $line['description'] ?? 'Sales receipt '.$salesReceipt->sales_receipt_no,
+                        'amount_cents' => (int) $salesReceipt->total_cents,
                         'line_order' => $index,
                     ]);
 

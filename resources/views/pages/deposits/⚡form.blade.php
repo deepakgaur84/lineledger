@@ -4,6 +4,7 @@ use App\Actions\Banking\SaveDeposit;
 use App\Enums\AccountSubtype;
 use App\Enums\DepositStatus;
 use App\Exceptions\Posting\PeriodLockedException;
+use App\Livewire\Attributes\LockedRows;
 use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Livewire\Concerns\HandlesPeriodLockOverride;
 use App\Models\Account;
@@ -28,6 +29,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
 use Livewire\Component;
@@ -53,10 +55,14 @@ new #[Title('Make deposit')] class extends Component
     public ?int $duplicateFromId = null;
 
     /**
-     * Receipts available for deposit: keyed by receipt_id → include
+     * Receipts available for deposit, built on the server by
+     * loadAvailableReceipts(). Only each row's tick box is the browser's to
+     * change: which receipt a row is, and its amount, are refused like a
+     * #[Locked] property.
      *
      * @var array<int, array{source: string, receipt_id: int, date: string, receipt_no: string, contact: string, payment_method: ?string, reference: ?string, amount: int, included: bool}>
      */
+    #[LockedRows(except: 'included')]
     public array $availableReceipts = [];
 
     /** Column the receipt picker is sorted by; one of self::SORT_FIELDS. */
@@ -73,6 +79,7 @@ new #[Title('Make deposit')] class extends Component
      *
      * @var array<int, int>
      */
+    #[Locked]
     public array $receiptOrder = [];
 
     private const SORT_FIELDS = ['included', 'date', 'receipt_no', 'contact', 'payment_method', 'reference', 'amount'];
@@ -502,21 +509,50 @@ new #[Title('Make deposit')] class extends Component
 
         $lines = [];
 
+        // Only which receipts are ticked comes from the browser. Each one is read
+        // again, so its line carries the receipt's current number, payer and
+        // amount; SaveDeposit then checks it is still posted and undeposited.
+        $customerReceipts = CustomerReceipt::query()->with('contact')
+            ->whereKey($included->where('source', 'customer')->pluck('receipt_id')->all())
+            ->get()
+            ->keyBy('id');
+
+        $salesReceipts = SalesReceipt::query()->with('contact')
+            ->whereKey($included->where('source', 'sales')->pluck('receipt_id')->all())
+            ->get()
+            ->keyBy('id');
+
         foreach ($included as $row) {
             if (($row['source'] ?? 'customer') === 'sales') {
+                $sale = $salesReceipts->get((int) $row['receipt_id']);
+
+                if ($sale === null) {
+                    $this->addError('deposit', __('That receipt could not be found.'));
+
+                    return null;
+                }
+
                 $lines[] = [
-                    'sales_receipt_id' => $row['receipt_id'],
-                    'description' => 'Sales receipt '.$row['receipt_no'].' — '.$row['contact'],
-                    'amount_cents' => $row['amount'],
+                    'sales_receipt_id' => $sale->id,
+                    'description' => 'Sales receipt '.$sale->sales_receipt_no.' — '.($sale->contact?->display_name ?? __('Cash sale')),
+                    'amount_cents' => (int) $sale->total_cents,
                 ];
 
                 continue;
             }
 
+            $receipt = $customerReceipts->get((int) $row['receipt_id']);
+
+            if ($receipt === null) {
+                $this->addError('deposit', __('That receipt could not be found.'));
+
+                return null;
+            }
+
             $lines[] = [
-                'customer_receipt_id' => $row['receipt_id'],
-                'description' => 'Receipt '.$row['receipt_no'].' — '.$row['contact'],
-                'amount_cents' => $row['amount'],
+                'customer_receipt_id' => $receipt->id,
+                'description' => 'Receipt '.$receipt->receipt_no.' — '.($receipt->contact?->display_name ?? '—'),
+                'amount_cents' => (int) $receipt->amount_cents,
             ];
         }
 
@@ -594,7 +630,13 @@ new #[Title('Make deposit')] class extends Component
             return;
         }
 
-        $deposit = app(SaveDeposit::class)->handle($data, $this->deposit);
+        try {
+            $deposit = app(SaveDeposit::class)->handle($data, $this->deposit);
+        } catch (RuntimeException $e) {
+            $this->addError('deposit', $e->getMessage());
+
+            return;
+        }
 
         Flux::toast(variant: 'success', text: __('Draft saved.'));
         $this->redirectRoute('deposits.show', ['company' => $this->company->slug, 'deposit' => $deposit->id], navigate: true);
