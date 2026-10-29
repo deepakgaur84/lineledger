@@ -191,7 +191,7 @@ new #[Title('Documentation — Fundraising')] class extends Component {}; ?>
         />
 
         <x-docs.callout type="note" heading="{{ __('What issuing does to your books') }}">
-            {{ __('Issuing a cash receipt posts no general-ledger entry — the money was already booked when you recorded the donation or the deposit, so posting again would double-count the revenue. An in-kind receipt you create here with an Asset / expense account to debit is different: issuing it debits that account and credits donation revenue for the fair market value, putting the donated property on your books. A receipt spawned from an in-kind donation has no debit account, because the donation already booked the property; leave it that way unless the gift was never recorded elsewhere. Issuing also runs the CRA checks first — the eligible amount must be greater than zero, an advantage needs a description, and an in-kind gift needs its property description (plus an appraisal at $1,000 or more).') }}
+            {{ __('Issuing a cash receipt posts no general-ledger entry — the money was already booked when you recorded the donation or the deposit, so posting again would double-count the revenue. An in-kind receipt you create here with an Asset / expense account to debit is different: issuing it debits that account and credits donation revenue for the fair market value, putting the donated property on your books. A receipt created from a donation never posts, in kind or not: the donation already booked the gift, so its form has no debit account to pick. Issuing also runs the CRA checks first — the eligible amount must be greater than zero, an advantage needs a description, and an in-kind gift needs its property description (plus an appraisal at $1,000 or more).') }}
         </x-docs.callout>
 
         <x-docs.figure
@@ -199,6 +199,18 @@ new #[Title('Documentation — Fundraising')] class extends Component {}; ?>
             alt="{{ __('An issued donation receipt showing the receipt number, the Issued badge, the donor name, the Gift type, Gift date, Fair market value, Advantage, Eligible amount, and Issued date, with Print, Reissue, and Void buttons') }}"
             caption="{{ __('An issued receipt on Demo Community Society. Print opens the official PDF; Reissue and Void are the only ways to change it once issued.') }}"
         />
+
+        <flux:heading size="md" class="mt-6">{{ __('Receipts created from a donation') }}</flux:heading>
+        <flux:text>
+            {{ __('A receipt created by Create an official donation receipt stays linked to its donation, and the donation is the record of the gift: it books the gift to the ledger and owns the donor, gift type, gift date and amount. The receipt’s form shows those four read-only, with a link to the donation, and you fill in only what belongs to the receipt itself — any advantage and, for a gift in kind, the property description and appraisal. There is no debit account to pick, because issuing a receipt created from a donation never posts anything.') }}
+        </flux:text>
+        <ul class="list-disc ps-6 space-y-1">
+            <li>{{ __('While the receipt is a draft, saving the donation updates it, so a corrected donor, gift type, date or amount always reaches the receipt.') }}</li>
+            <li>{{ __('Issue receipt waits until the donation is posted: a draft donation may still be a pledge, and the CRA allows no receipt for a gift not yet received. Issuing takes the donation’s figures as they stand.') }}</li>
+            <li>{{ __('Voiding the donation voids its receipt too, issued or draft, with the reason “Donation DON-… was voided.” The receipt keeps its number, the T3010 Summary stops counting it, and the void waits while someone has the receipt open for editing.') }}</li>
+            <li>{{ __('A receipt issued before its donation was posted, as earlier versions allowed, is replaced rather than edited: changing the donation’s donor, gift type, date or amount voids it and opens a corrected draft in its place, as Reissue does. Issue the corrected draft once the donation is posted and send it to the donor.') }}</li>
+            <li>{{ __('Reissue keeps the corrected draft linked to the donation. To change the donor, gift type, date or amount, edit the donation while it is a draft; once it is posted, void it and record the gift again.') }}</li>
+        </ul>
 
         <flux:heading size="md" class="mt-6">{{ __('Cancel or correct an issued receipt') }}</flux:heading>
         <flux:text>

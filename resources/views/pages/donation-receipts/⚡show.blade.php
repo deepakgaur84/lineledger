@@ -33,7 +33,7 @@ new #[Title('Donation receipt')] class extends Component {
         abort_unless($company->isRegisteredCharity(), 403);
         abort_unless($donationReceipt->company_id === $company->id, 404);
 
-        $this->receipt = $donationReceipt->load('contact', 'journalEntry', 'reissuedFrom');
+        $this->receipt = $donationReceipt->load('contact', 'journalEntry', 'reissuedFrom', 'donation');
     }
 
     #[GuardsEditLock]
@@ -67,7 +67,13 @@ new #[Title('Donation receipt')] class extends Component {
     #[GuardsEditLock]
     public function reissue(): void
     {
-        $draft = app(DonationReceiptIssuer::class)->reissue($this->receipt);
+        try {
+            $draft = app(DonationReceiptIssuer::class)->reissue($this->receipt);
+        } catch (\InvalidArgumentException $e) {
+            Flux::toast(variant: 'danger', text: $e->getMessage());
+
+            return;
+        }
 
         Flux::toast(variant: 'success', text: __('A corrected draft was created.'));
 
@@ -149,6 +155,17 @@ new #[Title('Donation receipt')] class extends Component {
                 <div>{{ $receipt->in_kind_description ?: '—' }}</div>
                 @if ($receipt->appraised_by)
                     <div class="mt-2 text-muted-foreground">{{ __('Appraised by :who on :when', ['who' => $receipt->appraised_by, 'when' => $receipt->appraisal_date?->format('M j, Y')]) }}</div>
+                @endif
+            </div>
+        @endif
+
+        @if ($receipt->donation)
+            <flux:separator />
+            <div class="text-sm" data-test="donation-receipt-donation">
+                <a href="{{ route('donations.show', ['company' => $company, 'donation' => $receipt->donation]) }}" wire:navigate class="text-primary hover:underline">{{ __('View donation :number', ['number' => $receipt->donation->donation_no]) }}</a>
+                <div class="mt-1 text-muted-foreground">{{ __('The donation books this gift, so issuing the receipt posts nothing to the ledger.') }}</div>
+                @if ($receipt->isDraft() && $receipt->donation->isDraft())
+                    <div class="mt-1 text-muted-foreground" data-test="donation-receipt-post-donation-first">{{ __('Post the donation before issuing this receipt.') }}</div>
                 @endif
             </div>
         @endif

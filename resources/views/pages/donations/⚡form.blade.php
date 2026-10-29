@@ -138,6 +138,8 @@ new #[Title('Donation')] class extends Component {
             return;
         }
 
+        $receiptBefore = $this->donation?->donationReceipt;
+
         $donation = app(SaveDonation::class)->handle([
             'contact_id' => $validated['contact_id'] ?: null,
             'gift_type' => $validated['gift_type'],
@@ -153,7 +155,16 @@ new #[Title('Donation')] class extends Component {
             'notes' => $this->notes ?: null,
         ], $this->donation);
 
-        Flux::toast(variant: 'success', text: __('Donation saved.'));
+        // An issued receipt is never edited: SaveDonation voided it and opened a
+        // corrected draft in its place.
+        if ($receiptBefore !== null && (int) $donation->donation_receipt_id !== $receiptBefore->id) {
+            Flux::toast(variant: 'warning', text: __('Donation saved. Receipt :old was already issued, so it was voided and replaced by draft receipt :new.', [
+                'old' => $receiptBefore->receipt_no,
+                'new' => $donation->donationReceipt?->receipt_no,
+            ]));
+        } else {
+            Flux::toast(variant: 'success', text: __('Donation saved.'));
+        }
 
         $this->redirectRoute('donations.show', ['company' => $this->company, 'donation' => $donation], navigate: true);
     }
@@ -224,6 +235,16 @@ new #[Title('Donation')] class extends Component {
 
         @if ($company->isRegisteredCharity() && ! $donation?->exists)
             <flux:switch wire:model="issue_receipt" :label="__('Create an official donation receipt')" :description="__('Spawns a draft receipt you can review and issue.')" data-test="donation-issue-receipt" />
+        @endif
+
+        @if ($donation?->donationReceipt && ! $donation->donationReceipt->isVoid())
+            <flux:text class="text-sm" data-test="donation-linked-receipt-note">
+                @if ($donation->donationReceipt->isIssued())
+                    {{ __('Receipt :number has been issued for this donation. Changing the donor, gift type, date or amount voids it and opens a corrected draft in its place.', ['number' => $donation->donationReceipt->receipt_no]) }}
+                @else
+                    {{ __('Draft receipt :number follows this donation: saving updates its donor, gift type, date and amount.', ['number' => $donation->donationReceipt->receipt_no]) }}
+                @endif
+            </flux:text>
         @endif
 
         <flux:textarea wire:model="notes" :label="__('Notes')" rows="2" data-test="donation-notes" />

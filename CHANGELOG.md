@@ -79,6 +79,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `backup:import`. The keys now come back revoked, still linked to the audit
   entries they made, and the owner creates new ones. A restore that fails
   partway also no longer leaves an empty organization behind. Reported in #158.
+- **An in-kind receipt created from a donation no longer books the gift
+  twice.** Such a receipt can't be issued until the property is described, and
+  the receipt form that takes the description also offered an Asset / expense
+  account to debit. Picking one made Issue receipt post the gift a second time,
+  doubling donation revenue and the asset in the statements and the T3010. A
+  receipt created from a donation now never posts, whatever its draft says: its
+  form shows the donation's donor, gift type, date and amount read-only and asks
+  only for the receipt's own details, and saving or issuing drops any debit
+  account. A stand-alone in-kind receipt still posts as before. An issued
+  receipt that shows both a View donation and a View journal entry link was
+  booked twice: Reissue it to reverse the extra entry, then issue the corrected
+  draft and send it to the donor.
+- **A receipt created from a donation stays in step with it.** Correcting a
+  draft donation left its draft receipt at the amount, date, donor and gift type
+  first keyed, and voiding a donation (a returned cheque) left its receipt
+  issued and counted on the T3010. Saving a draft donation now updates its draft
+  receipt, and voiding a donation voids its receipt, issued or draft, keeping
+  the number. Issue receipt waits until the donation is posted — a draft may
+  still be a pledge — and takes the donation's figures as they then stand. An
+  issued receipt is never edited: if its donation still changes, which only a
+  receipt issued before its donation was posted allows, it is voided and
+  replaced by a corrected draft, as Reissue does. Reissue keeps the corrected
+  draft linked to the donation.
 
 ### Security
 
