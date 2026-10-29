@@ -1,5 +1,7 @@
 <?php
 
+use App\Actions\Payroll\SaveEmployeePayrollProfile;
+use App\Actions\Payroll\SavePayRun;
 use App\Actions\Sales\SaveInvoice;
 use App\Enums\AccountSubtype;
 use App\Enums\CompanyRole;
@@ -13,8 +15,12 @@ use App\Models\Invoice;
 use App\Models\JournalEntry;
 use App\Models\JournalLine;
 use App\Models\PaymentMethod;
+use App\Models\PayrollSchedule;
+use App\Models\PayRun;
 use App\Models\User;
+use App\Services\Payroll\CalculatePayRun;
 use App\Services\Posting\InvoicePoster;
+use App\Services\Posting\PayRunPoster;
 use App\Services\Posting\ReceiptPoster;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -342,4 +348,85 @@ function livewireReplayEndRequest(): void
     app()->forgetInstance('current_company');
 
     Livewire::flushState();
+}
+
+/**
+ * Save, calculate and post a one-employee pay run, for the year-end filing tests
+ * (RL-1 slips, Record of Employment).
+ */
+function payrollFilingPostRun(PayrollSchedule $schedule, Contact $employee, string $periodStart, string $periodEnd, string $payDate): PayRun
+{
+    $run = app(SavePayRun::class)->handle([
+        'payroll_schedule_id' => $schedule->id,
+        'period_start_date' => $periodStart,
+        'period_end_date' => $periodEnd,
+        'pay_date' => $payDate,
+        'lines' => [['contact_id' => $employee->id]],
+    ]);
+    app(CalculatePayRun::class)->calculate($run);
+    app(PayRunPoster::class)->post($run->fresh());
+
+    return $run->fresh(['lines']);
+}
+
+/**
+ * XPath over a generated filing XML document (no namespaces), for the filing tests.
+ */
+function payrollFilingXpath(string $xml): DOMXPath
+{
+    $doc = new DOMDocument;
+    expect($doc->loadXML($xml))->toBeTrue();
+
+    return new DOMXPath($doc);
+}
+
+/**
+ * Validate an XML document against an official XSD; returns libxml's messages,
+ * empty when the document is valid.
+ *
+ * @return array<int, string>
+ */
+function payrollFilingSchemaErrors(string $xml, string $xsdPath): array
+{
+    $previous = libxml_use_internal_errors(true);
+    libxml_clear_errors();
+
+    $doc = new DOMDocument;
+    $valid = $doc->loadXML($xml) && $doc->schemaValidate($xsdPath);
+    $errors = array_map(fn (LibXMLError $e): string => trim($e->message), libxml_get_errors());
+
+    libxml_clear_errors();
+    libxml_use_internal_errors($previous);
+
+    return $valid ? [] : ($errors !== [] ? $errors : ['The document did not validate.']);
+}
+
+/**
+ * A salaried Quebec employee on the given schedule, optionally with standing pay
+ * items (recurring earnings, deductions or employer-paid benefits), for the RL-1
+ * filing tests.
+ *
+ * @param  array<int, array<string, mixed>>  $recurringItems
+ */
+function payrollFilingQuebecEmployee(PayrollSchedule $schedule, int $annualSalaryCents, array $recurringItems = [], string $name = 'Québec Employé'): Contact
+{
+    [$first, $last] = explode(' ', $name, 2) + [1 => ''];
+    $employee = Contact::create(['display_name' => $name, 'first_name' => $first, 'last_name' => $last, 'is_employee' => true]);
+
+    app(SaveEmployeePayrollProfile::class)->handle([
+        'contact_id' => $employee->id,
+        'sin' => '046454286',
+        'hire_date' => '2025-01-06',
+        'province_of_employment' => 'QC',
+        'pay_basis' => 'salary',
+        'annual_salary_cents' => $annualSalaryCents,
+        'payroll_schedule_id' => $schedule->id,
+        'td1_federal_claim_cents' => 1645200,
+        'td1_provincial_claim_cents' => 1895200,
+        'vacation_policy' => 'accrue',
+        'vacation_rate_bp' => 400,
+        'recurring_items' => $recurringItems,
+    ]);
+
+    return $employee;
 }

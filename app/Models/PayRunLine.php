@@ -14,7 +14,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'company_id', 'pay_run_id', 'contact_id', 'employee_payroll_profile_id',
     'province_of_employment', 'pay_basis', 'hours_worked', 'insurable_hours',
     'hourly_rate_cents', 'annual_salary_cents', 'regular_earnings_cents', 'gross_cents',
-    'cpp_pensionable_cents', 'ei_insurable_cents', 'qpip_insurable_cents',
+    'cpp_pensionable_cents', 'ei_insurable_cents', 'roe_insurable_earnings_cents', 'qpip_insurable_cents',
     'cpp_employee_computed_cents', 'cpp_employee_override_cents',
     'cpp_employer_computed_cents', 'cpp_employer_override_cents',
     'cpp2_employee_computed_cents', 'cpp2_employee_override_cents',
@@ -315,7 +315,7 @@ class PayRunLine extends Model
 
         foreach ([
             'hourly_rate_cents', 'annual_salary_cents', 'regular_earnings_cents', 'gross_cents',
-            'cpp_pensionable_cents', 'ei_insurable_cents', 'qpip_insurable_cents',
+            'cpp_pensionable_cents', 'ei_insurable_cents', 'roe_insurable_earnings_cents', 'qpip_insurable_cents',
             'qhsf_employer_computed_cents', 'cnesst_employer_computed_cents', 'wc_employer_computed_cents',
             'vacation_accrued_cents', 'vacation_paid_cents',
             'total_deductions_cents', 'net_cents', 'ytd_pensionable_cents', 'ytd_insurable_cents',

@@ -109,6 +109,8 @@ use Illuminate\Support\Facades\Storage;
     'payroll_rp_account',
     'payroll_dental_benefits_code',
     'payroll_cra_rep_id',
+    'payroll_rq_identification_number',
+    'payroll_rq_file_number',
     'payroll_contact_name',
     'payroll_contact_email',
     'payroll_contact_phone',

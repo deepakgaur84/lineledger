@@ -544,6 +544,10 @@ class CalculatePayRun
             'regular_earnings_cents' => $regular,
             'cpp_pensionable_cents' => $result->taxablePensionableUsedCents,
             'ei_insurable_cents' => $result->insurableUsedCents,
+            // Every insurable dollar, before the EI maximum: the ROE reports all
+            // of it (Blocks 15B/15C); ei_insurable_cents stays capped for the
+            // premium and T4 box 24. Nothing is insurable when EI doesn't apply.
+            'roe_insurable_earnings_cents' => $context->eiExempt ? 0 : max(0, $breakdown->insurableCents),
             'qpip_insurable_cents' => $result->qpipInsurableUsedCents,
             'insurable_hours' => $insurableHours,
             'cpp_employee_computed_cents' => $result->cppEmployeeCents,

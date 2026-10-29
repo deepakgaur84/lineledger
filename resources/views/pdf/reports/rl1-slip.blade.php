@@ -18,24 +18,47 @@
 </head>
 <body>
     @php($fmt = fn ($c) => number_format($c / 100, 2))
+    {{-- RL-1.G-V: leave B.A, B.B, C, E and H blank when nothing was withheld. --}}
+    @php($blankIfNone = fn ($c) => (int) $c === 0 ? '' : $fmt($c))
     <h1>RL-1 — Revenus d'emploi et revenus divers</h1>
     <div class="subtitle">{{ $company->name }} · Année d'imposition {{ $year }}</div>
     <div class="meta">
         Employé : {{ $slip['name'] }}@if ($slip['sin_last4']) · NAS •••• {{ $slip['sin_last4'] }}@endif
     </div>
 
-    <table class="boxes">
-        <tr>
-            <td><div class="box-label">Case A — Revenus d'emploi</div><div class="box-value">{{ $fmt($slip['boxA']) }}</div></td>
-            <td><div class="box-label">Case B — Cotisation au RRQ</div><div class="box-value">{{ $fmt($slip['boxB']) }}</div></td>
-            <td><div class="box-label">Case E — Impôt du Québec retenu</div><div class="box-value">{{ $fmt($slip['boxE']) }}</div></td>
-        </tr>
-        <tr>
-            <td><div class="box-label">Case G — Salaire admissible au RRQ</div><div class="box-value">{{ $fmt($slip['boxG']) }}</div></td>
-            <td><div class="box-label">Case H — Cotisation au RQAP</div><div class="box-value">{{ $fmt($slip['boxH']) }}</div></td>
-            <td><div class="box-label">Case I — Salaire admissible au RQAP</div><div class="box-value">{{ $fmt($slip['boxI']) }}</div></td>
-        </tr>
-    </table>
+    @if (array_key_exists('boxBA', $slip))
+        <table class="boxes">
+            <tr>
+                <td><div class="box-label">Case A — Revenus d'emploi</div><div class="box-value">{{ $fmt($slip['boxA']) }}</div></td>
+                <td><div class="box-label">Case B.A — Cotisation au RRQ</div><div class="box-value">{{ $blankIfNone($slip['boxBA']) }}</div></td>
+                <td><div class="box-label">Case B.B — Cotisation supplémentaire au RRQ</div><div class="box-value">{{ $blankIfNone($slip['boxBB']) }}</div></td>
+            </tr>
+            <tr>
+                <td><div class="box-label">Case C — Cotisation à l'assurance emploi</div><div class="box-value">{{ $blankIfNone($slip['boxC']) }}</div></td>
+                <td><div class="box-label">Case E — Impôt du Québec retenu</div><div class="box-value">{{ $blankIfNone($slip['boxE']) }}</div></td>
+                <td><div class="box-label">Case G — Salaire admissible au RRQ</div><div class="box-value">{{ $fmt($slip['boxG']) }}</div></td>
+            </tr>
+            <tr>
+                <td><div class="box-label">Case H — Cotisation au RQAP</div><div class="box-value">{{ $blankIfNone($slip['boxH']) }}</div></td>
+                <td><div class="box-label">Case I — Salaire admissible au RQAP</div><div class="box-value">{{ $fmt($slip['boxI']) }}</div></td>
+                <td></td>
+            </tr>
+        </table>
+    @else
+        {{-- A slip finalized before boxes B.A, B.B and C, shown as it was issued. --}}
+        <table class="boxes">
+            <tr>
+                <td><div class="box-label">Case A — Revenus d'emploi</div><div class="box-value">{{ $fmt($slip['boxA']) }}</div></td>
+                <td><div class="box-label">Case B — Cotisation au RRQ</div><div class="box-value">{{ $fmt($slip['boxB'] ?? 0) }}</div></td>
+                <td><div class="box-label">Case E — Impôt du Québec retenu</div><div class="box-value">{{ $fmt($slip['boxE']) }}</div></td>
+            </tr>
+            <tr>
+                <td><div class="box-label">Case G — Salaire admissible au RRQ</div><div class="box-value">{{ $fmt($slip['boxG']) }}</div></td>
+                <td><div class="box-label">Case H — Cotisation au RQAP</div><div class="box-value">{{ $fmt($slip['boxH']) }}</div></td>
+                <td><div class="box-label">Case I — Salaire admissible au RQAP</div><div class="box-value">{{ $fmt($slip['boxI']) }}</div></td>
+            </tr>
+        </table>
+    @endif
 
     @if (config('payroll.rl1.authorization_number'))
         <div class="footer">{{ config('payroll.rl1.authorization_number') }}</div>
