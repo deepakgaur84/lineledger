@@ -183,3 +183,89 @@ it('will not link one ledger account to two feeds', function () {
     expect($second->fresh()->account_id)->toBeNull()
         ->and($first->fresh()->account_id)->toBe($bank->id);
 });
+
+it('hides feed accounts that are not linked once one is linked', function () {
+    $user = User::factory()->create();
+    $this->company->members()->attach($user, ['role' => CompanyRole::Owner->value]);
+    $this->actingAs($user);
+
+    $bank = Account::query()->where('subtype', AccountSubtype::Bank->value)->orderBy('code')->firstOrFail();
+    $connection = connectActual($this->company);
+
+    BankFeedAccount::create([
+        'company_id' => $this->company->id,
+        'bank_feed_connection_id' => $connection->id,
+        'account_id' => $bank->id,
+        'external_id' => 'linked-1',
+        'name' => 'Linked Everyday',
+    ]);
+    BankFeedAccount::create([
+        'company_id' => $this->company->id,
+        'bank_feed_connection_id' => $connection->id,
+        'external_id' => 'loose-1',
+        'name' => 'Loose Savings',
+    ]);
+
+    Livewire::test('pages::banking.feeds', ['company' => $this->company])
+        ->assertSee('Linked Everyday')
+        ->assertDontSee('Loose Savings')
+        ->assertSee('Click Reload accounts to show them.');
+});
+
+it('shows every feed account while none is linked yet', function () {
+    $user = User::factory()->create();
+    $this->company->members()->attach($user, ['role' => CompanyRole::Owner->value]);
+    $this->actingAs($user);
+
+    $connection = connectActual($this->company);
+
+    BankFeedAccount::create([
+        'company_id' => $this->company->id,
+        'bank_feed_connection_id' => $connection->id,
+        'external_id' => 'new-1',
+        'name' => 'Fresh Account One',
+    ]);
+    BankFeedAccount::create([
+        'company_id' => $this->company->id,
+        'bank_feed_connection_id' => $connection->id,
+        'external_id' => 'new-2',
+        'name' => 'Fresh Account Two',
+    ]);
+
+    Livewire::test('pages::banking.feeds', ['company' => $this->company])
+        ->assertSee('Fresh Account One')
+        ->assertSee('Fresh Account Two')
+        ->assertDontSee('Click Reload accounts to show them.');
+});
+
+it('reveals the unlinked accounts again when accounts are reloaded', function () {
+    $user = User::factory()->create();
+    $this->company->members()->attach($user, ['role' => CompanyRole::Owner->value]);
+    $this->actingAs($user);
+
+    configureBridge();
+
+    $bank = Account::query()->where('subtype', AccountSubtype::Bank->value)->orderBy('code')->firstOrFail();
+    $connection = connectActual($this->company);
+
+    BankFeedAccount::create([
+        'company_id' => $this->company->id,
+        'bank_feed_connection_id' => $connection->id,
+        'account_id' => $bank->id,
+        'external_id' => 'linked-2',
+        'name' => 'Linked Current',
+    ]);
+
+    Http::fake([
+        'bridge.test:5007/v1/accounts' => Http::response(['accounts' => [
+            ['id' => 'linked-2', 'name' => 'Linked Current'],
+            ['id' => 'extra-9', 'name' => 'Brand New Card'],
+        ]]),
+    ]);
+
+    Livewire::test('pages::banking.feeds', ['company' => $this->company])
+        ->assertDontSee('Brand New Card')
+        ->call('reloadAccounts', 'actual')
+        ->assertSee('Brand New Card')
+        ->assertDontSee('Click Reload accounts to show them.');
+});
