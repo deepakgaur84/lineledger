@@ -4,9 +4,11 @@ namespace App\Services\Banking\Import;
 
 use App\Enums\BankStatementImportStatus;
 use App\Enums\StatementLineMatchStatus;
+use App\Models\Account;
 use App\Models\BankStatementImport;
 use App\Models\BankStatementLine;
 use App\Models\JournalLine;
+use App\Services\Banking\AccountCurrencyAmounts;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
@@ -16,8 +18,10 @@ use Illuminate\Support\Facades\DB;
  * but never touches the ledger itself. The user reviews on the reconcile screen and
  * the existing complete() path does the actual clearing.
  *
- * Sign convention: a statement line's amount_cents is a signed book-delta, compared
- * directly to a candidate's (debit_cents - credit_cents). Matching is greedy and
+ * Sign convention: a statement line's amount_cents is a signed book-delta in the
+ * account's currency, compared directly to a candidate's signed amount in that
+ * currency ({@see AccountCurrencyAmounts}): debit_cents - credit_cents on a
+ * home-currency account, the foreign memo on a foreign one. Matching is greedy and
  * one-to-one (a book line is claimed by at most one statement line), highest
  * confidence first: exact (amount + date) → amount + near date → amount only.
  */
@@ -30,13 +34,12 @@ class StatementMatcher
      */
     public function match(BankStatementImport $import): array
     {
-        $accountId = (int) $import->account_id;
         $tolerance = (int) config('banking.statement_import.match.date_tolerance_days', 4);
 
         $lines = $import->lines()->orderBy('txn_date')->orderBy('id')->get();
 
         $seenFingerprints = $this->committedFingerprints($import);
-        $available = $this->candidateBookLines($accountId);
+        $available = $this->candidateBookLines($import->account()->firstOrFail());
 
         $summary = ['matched' => 0, 'suggested' => 0, 'unmatched' => 0, 'duplicate' => 0];
 
@@ -119,25 +122,35 @@ class StatementMatcher
 
     /**
      * Uncleared, posted, non-voided journal lines on the bank account, grouped by
-     * their signed book-delta for O(1) amount lookups. The reversal a void posted
-     * is left out too: like the voided cheque, it never reaches the bank.
+     * their signed book-delta in the account's currency for O(1) amount lookups.
+     * The reversal a void posted is left out too: like the voided cheque, it never
+     * reaches the bank. So, on a foreign-currency account, is a line that is zero
+     * in that currency — a revaluation, which moves only the home value, or one
+     * recorded without its foreign amount — since no statement line is it.
      *
      * @return array<int, list<array{id: int, date: CarbonImmutable}>> keyed by signed cents
      */
-    private function candidateBookLines(int $accountId): array
+    private function candidateBookLines(Account $account): array
     {
-        $rows = JournalLine::query()
-            ->where('account_id', $accountId)
+        $amounts = AccountCurrencyAmounts::for($account);
+
+        $rows = $amounts->withAmounts(JournalLine::query()
+            ->where('account_id', $account->id)
             ->where('is_posted', true)
             ->whereNull('cleared_at')
             ->whereNull('bank_reconciliation_id')
             ->whereHas('journalEntry', fn ($q) => $q->where('is_posted', true)->whereNull('voided_at'))
-            ->withoutUnsettledVoids()
+            ->withoutUnsettledVoids())
             ->get(['id', 'entry_date', 'debit_cents', 'credit_cents']);
 
         $byAmount = [];
         foreach ($rows as $row) {
-            $signed = (int) $row->debit_cents - (int) $row->credit_cents;
+            $signed = $amounts->signedCents($row);
+
+            if ($amounts->foreign && $signed === 0) {
+                continue;
+            }
+
             $byAmount[$signed][] = [
                 'id' => (int) $row->id,
                 'date' => CarbonImmutable::parse($row->entry_date),

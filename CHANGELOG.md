@@ -94,6 +94,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refused until you enter one, and a line can't be categorized to an account
   in a third currency; record a transfer instead. Entries posted before this
   fix keep their amounts.
+- **Foreign-currency accounts reconcile in their own currency.** A bank or
+  credit-card account in a foreign currency could not be reconciled: the
+  reconcile screen added up each transaction's home value, so a USD statement
+  showing 1,000.00 never agreed with a 1,000 USD deposit booked at 1,400.00
+  CAD, and the Difference reached 0.00 only if you typed a made-up balance in
+  your home currency. Statement import compared the same home values, so it
+  never matched the account's existing transactions and offered them to be
+  added again. The reconcile screen, completed reconciliations and their CSV,
+  Excel and PDF downloads, statement matching and the bank register now all
+  work in the account's own currency, the one its statements are in. A
+  service charge or interest entered when you reconcile is posted at its home
+  value at that day's rate and keeps its foreign amount, instead of being
+  booked as if it were home currency. A customer payment deposited straight
+  into an account in the payment's own currency now raises that account's
+  foreign balance too, so it reconciles and the period-end revaluation no
+  longer counts it as a loss. A transaction recorded before its foreign amount
+  was kept counts at the amount it was booked at when that was the
+  statement's own figure (a line added from the statement feed, or a service
+  charge or interest from an earlier reconciliation); any other counts as zero
+  and is marked on the screen. If you reconciled a foreign account before by
+  entering home-currency figures, correct the beginning balance of its next
+  reconciliation with Edit details.
 
 ### Security
 

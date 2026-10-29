@@ -5,6 +5,7 @@ use App\Models\BankReconciliation;
 use App\Models\Company;
 use App\Models\JournalLine;
 use App\Services\AttachmentService;
+use App\Services\Reconciliation\BankReconciliationService;
 use App\Services\Reporting\CsvExporter;
 use App\Services\Reporting\PdfExporter;
 use App\Services\Reporting\XlsxExporter;
@@ -39,6 +40,10 @@ new #[Title('Reconciliation detail')] class extends Component {
     }
 
     /**
+     * The cleared lines by side. Each carries the amount it shows there in the
+     * account's currency (`reconcile_amount_cents`) and whether it counted as
+     * zero for want of one (`reconcile_amount_missing`); the totals add those up.
+     *
      * @return array{
      *   payments: \Illuminate\Support\Collection<int, JournalLine>,
      *   deposits: \Illuminate\Support\Collection<int, JournalLine>,
@@ -49,22 +54,44 @@ new #[Title('Reconciliation detail')] class extends Component {
     #[Computed]
     public function detail(): array
     {
-        $lines = JournalLine::query()
+        $amounts = app(BankReconciliationService::class)->amountsFor($this->reconciliation);
+
+        $lines = $amounts->withAmounts(JournalLine::query()
             ->with('journalEntry')
-            ->where('bank_reconciliation_id', $this->reconciliation->id)
+            ->where('bank_reconciliation_id', $this->reconciliation->id))
             ->get()
             ->sortBy(fn ($l) => [$l->journalEntry->entry_date->format('Y-m-d'), $l->id])
             ->values();
 
-        $payments = $lines->filter(fn ($l) => (int) $l->credit_cents > 0)->values();
-        $deposits = $lines->filter(fn ($l) => (int) $l->debit_cents > 0)->values();
+        $side = function (string $side) use ($lines, $amounts) {
+            return $lines->filter(fn (JournalLine $l) => $amounts->isOnSide($l, $side))
+                ->each(function (JournalLine $l) use ($amounts, $side): void {
+                    $l->setAttribute('reconcile_amount_cents', $amounts->sideCents($l, $side));
+                    $l->setAttribute('reconcile_amount_missing', $amounts->isMissing($l));
+                })
+                ->values();
+        };
+
+        $payments = $side('payments');
+        $deposits = $side('deposits');
 
         return [
             'payments' => $payments,
             'deposits' => $deposits,
-            'payments_total_cents' => (int) $payments->sum('credit_cents'),
-            'deposits_total_cents' => (int) $deposits->sum('debit_cents'),
+            'payments_total_cents' => (int) $payments->sum(fn (JournalLine $l) => $amounts->sideCents($l, 'payments')),
+            'deposits_total_cents' => (int) $deposits->sum(fn (JournalLine $l) => $amounts->sideCents($l, 'deposits')),
         ];
+    }
+
+    /**
+     * The account's currency when it isn't the home currency — every figure on
+     * the page is then in it — else null.
+     */
+    public function foreignCurrency(): ?string
+    {
+        $amounts = app(BankReconciliationService::class)->amountsFor($this->reconciliation);
+
+        return $amounts->foreign ? $amounts->currencyCode : null;
     }
 
     /**
@@ -119,6 +146,11 @@ new #[Title('Reconciliation detail')] class extends Component {
         $rows = collect();
 
         $rows->push(['Account', $rec->account->code.' — '.$rec->account->displayName()]);
+
+        if ($currency = $this->foreignCurrency()) {
+            $rows->push(['Currency', $currency]);
+        }
+
         $rows->push(['Statement date', $rec->statement_date->toDateString()]);
         $rows->push(['Status', $rec->status->label()]);
         $rows->push(['Completed at', $rec->completed_at?->toDateTimeString() ?? '']);
@@ -145,7 +177,7 @@ new #[Title('Reconciliation detail')] class extends Component {
                 $line->memo ?? $line->journalEntry->memo,
                 '',
                 '',
-                CsvExporter::cents((int) $line->debit_cents),
+                CsvExporter::cents((int) $line->reconcile_amount_cents),
             ]);
         }
         $rows->push(['Subtotal', '', '', '', '', CsvExporter::cents($d['deposits_total_cents'])]);
@@ -161,7 +193,7 @@ new #[Title('Reconciliation detail')] class extends Component {
                 $line->memo ?? $line->journalEntry->memo,
                 '',
                 '',
-                CsvExporter::cents((int) $line->credit_cents),
+                CsvExporter::cents((int) $line->reconcile_amount_cents),
             ]);
         }
         $rows->push(['Subtotal', '', '', '', '', CsvExporter::cents($d['payments_total_cents'])]);
@@ -182,6 +214,7 @@ new #[Title('Reconciliation detail')] class extends Component {
             $this->detail,
             $this->clearedBalanceCents(),
             $this->differenceCents(),
+            $this->foreignCurrency(),
         );
     }
 
@@ -193,6 +226,7 @@ new #[Title('Reconciliation detail')] class extends Component {
             'detail' => $this->detail,
             'clearedBalance' => $this->clearedBalanceCents(),
             'difference' => $this->differenceCents(),
+            'currency' => $this->foreignCurrency(),
         ], $this->baseFilename().'.pdf');
     }
 
@@ -210,6 +244,7 @@ new #[Title('Reconciliation detail')] class extends Component {
         $detail = $this->detail;
         $cleared = $this->clearedBalanceCents();
         $diff = $this->differenceCents();
+        $foreignCurrency = $this->foreignCurrency();
     @endphp
 
     <div class="mb-6 flex flex-wrap items-end justify-between gap-4">
@@ -224,6 +259,9 @@ new #[Title('Reconciliation detail')] class extends Component {
                 {{ $rec->account?->code }} — {{ $rec->account?->displayName() }}
                 · {{ __('Statement') }} {{ $rec->statement_date->toFormattedDateString() }}
             </flux:subheading>
+            @if ($foreignCurrency)
+                <flux:text class="mt-1 text-sm" data-test="account-currency-notice">{{ __('Amounts are in :currency, the currency of this account and its statements.', ['currency' => $foreignCurrency]) }}</flux:text>
+            @endif
         </div>
         <div class="flex items-center gap-2">
             <flux:badge :color="$rec->isCompleted() ? 'green' : 'amber'">{{ $rec->status->label() }}</flux:badge>
@@ -306,8 +344,8 @@ new #[Title('Reconciliation detail')] class extends Component {
 
     <div class="grid gap-4 lg:grid-cols-2">
         @foreach ([
-            ['key' => 'deposits', 'title' => __('Deposits and Other Credits'), 'lines' => $detail['deposits'], 'col' => 'debit_cents', 'total' => $detail['deposits_total_cents']],
-            ['key' => 'payments', 'title' => __('Cheques and Payments'), 'lines' => $detail['payments'], 'col' => 'credit_cents', 'total' => $detail['payments_total_cents']],
+            ['key' => 'deposits', 'title' => __('Deposits and Other Credits'), 'lines' => $detail['deposits'], 'total' => $detail['deposits_total_cents']],
+            ['key' => 'payments', 'title' => __('Cheques and Payments'), 'lines' => $detail['payments'], 'total' => $detail['payments_total_cents']],
         ] as $pane)
             <div class="overflow-x-auto rounded-lg border border-border">
                 <div class="border-b border-border bg-muted px-3 py-2">
@@ -330,7 +368,12 @@ new #[Title('Reconciliation detail')] class extends Component {
                                     <a href="{{ route('journal.show', ['company' => $company->slug, 'entry' => $line->journalEntry->id]) }}" wire:navigate class="underline">{{ $line->journalEntry->entry_no }}</a>
                                 </td>
                                 <td class="px-3 py-2 text-muted-foreground">{{ $line->memo ?? $line->journalEntry->memo }}</td>
-                                <td class="px-3 py-2 text-right font-mono">{{ number_format(((int) $line->{$pane['col']}) / 100, 2) }}</td>
+                                <td class="px-3 py-2 text-right font-mono whitespace-nowrap">
+                                    @if ($line->reconcile_amount_missing)
+                                        <flux:icon name="exclamation-triangle" variant="micro" class="inline size-4 text-amber-600" title="{{ __('No :currency amount was recorded for this transaction, so it counts as 0.00 here. Its home value is :amount.', ['currency' => $foreignCurrency, 'amount' => number_format(abs((int) $line->debit_cents - (int) $line->credit_cents) / 100, 2).' '.$company->currency_code]) }}" data-test="missing-account-amount" />
+                                    @endif
+                                    {{ number_format(((int) $line->reconcile_amount_cents) / 100, 2) }}
+                                </td>
                             </tr>
                         @empty
                             <tr><td colspan="4" class="px-3 py-8 text-center text-muted-foreground">{{ __('Nothing cleared on this side.') }}</td></tr>
