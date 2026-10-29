@@ -7,7 +7,6 @@ use App\Models\Contact;
 use App\Models\EmployeePayrollProfile;
 use DOMDocument;
 use DOMElement;
-use Illuminate\Contracts\Encryption\DecryptException;
 
 /**
  * Generates a CRA T4 electronic-filing XML document (Internet File Transfer
@@ -172,16 +171,11 @@ class T4XmlGenerator
 
     private function sin(?EmployeePayrollProfile $profile): string
     {
-        try {
-            // getAttribute runs the 'encrypted' cast, which throws when the
-            // ciphertext no longer decrypts (rotated APP_KEY / corrupt row).
-            $sin = $profile?->getAttribute('sin_encrypted');
-        } catch (DecryptException) {
-            // File the unknown-SIN placeholder rather than failing the export.
-            $sin = null;
-        }
+        // Null when unset or no longer decryptable (rotated APP_KEY, corrupt
+        // row): file the unknown-SIN placeholder rather than failing the export.
+        $sin = $profile?->sinOrNull();
 
-        return $sin !== null && $sin !== '' ? preg_replace('/\D/', '', $sin) : '000000000';
+        return $sin !== null ? preg_replace('/\D/', '', $sin) : '000000000';
     }
 
     private function bn(string $taxNumber): string

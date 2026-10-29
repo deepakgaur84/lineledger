@@ -102,7 +102,7 @@ it('dry run lists pending migrations, counts what the backfills would change, an
     expect(upgradeTestMemo($lineId))->toBe('Deposit');
 });
 
-it('migrates and runs both backfills, and a second run has nothing left to do', function () {
+it('migrates and runs every backfill, and a second run has nothing left to do', function () {
     $lineId = upgradeTestBareDeposit($this->company);
 
     $this->artisan('app:upgrade')
@@ -112,6 +112,8 @@ it('migrates and runs both backfills, and a second run has nothing left to do', 
         ->expectsOutputToContain('rewrote 1 bank line memo(s)')
         ->expectsOutputToContain('3. Reconciliation stamps')
         ->expectsOutputToContain('un-cleared 0 line(s)')
+        ->expectsOutputToContain('4. Encrypted columns')
+        ->expectsOutputToContain('Encrypted 0 unencrypted value(s); 0 value(s) do not decrypt with this APP_KEY.')
         ->doesntExpectOutputToContain('Integrity check')
         ->assertSuccessful();
 
@@ -131,7 +133,7 @@ it('runs integrity:check with --verify and never emails ops', function () {
     upgradeTestBareDeposit($this->company);
 
     $this->artisan('app:upgrade', ['--verify' => true])
-        ->expectsOutputToContain('4. Integrity check')
+        ->expectsOutputToContain('5. Integrity check')
         ->expectsOutputToContain('Ledger integrity OK.')
         ->expectsOutputToContain('Passed.')
         ->assertSuccessful();
@@ -168,7 +170,8 @@ it('stops at the first failing step, skips the rest, and returns its exit code',
         ->expectsOutputToContain('Simulated stamp backfill failure.')
         ->expectsOutputToContain('banking:backfill-reconciliation-stamps failed (exit 3).')
         ->expectsOutputToContain('Skipped')
-        ->doesntExpectOutputToContain('4. Integrity check')
+        ->doesntExpectOutputToContain('4. Encrypted columns')
+        ->doesntExpectOutputToContain('5. Integrity check')
         ->doesntExpectOutputToContain('Ledger integrity')
         ->assertExitCode(3);
 

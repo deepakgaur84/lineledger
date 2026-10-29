@@ -6,6 +6,7 @@ use App\Concerns\BelongsToCompany;
 use App\Enums\PayBasis;
 use App\Enums\VacationPolicy;
 use Carbon\CarbonInterface;
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -160,6 +161,29 @@ class EmployeePayrollProfile extends Model
 
         $this->sin_encrypted = $digits;
         $this->sin_last4 = mb_substr($digits, -4);
+    }
+
+    /**
+     * The decrypted SIN, or null when none is on file or the stored value does
+     * not decrypt. The slip exports (T4, RL-1 and ROE XML, the T4 PDF) read it
+     * here and file their unknown-SIN placeholder for null instead of failing.
+     *
+     * A value does not decrypt after a database restore under a different
+     * APP_KEY (unrecoverable: the SIN must be entered again), or in an
+     * organization restored before restores encrypted SINs, which
+     * `backup:repair-encrypted-columns` (part of `app:upgrade`) fixes.
+     */
+    public function sinOrNull(): ?string
+    {
+        try {
+            // getAttribute() runs the `encrypted` cast, which throws when the
+            // stored value does not decrypt.
+            $sin = $this->getAttribute('sin_encrypted');
+        } catch (DecryptException) {
+            return null;
+        }
+
+        return is_string($sin) && $sin !== '' ? $sin : null;
     }
 
     /**
