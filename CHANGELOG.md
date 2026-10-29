@@ -79,6 +79,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `backup:import`. The keys now come back revoked, still linked to the audit
   entries they made, and the owner creates new ones. A restore that fails
   partway also no longer leaves an empty organization behind. Reported in #158.
+- **Taking accrued vacation settles Vacation Payable.** Under Accrue to
+  liability, the default, vacation pay is expensed as Vacation Pay Expense as
+  it is earned. But when an employee then took that vacation, the pay was
+  expensed again as wages, Vacation Payable was never reduced, and the vacation
+  pay balance on their setup page and in the employee portal didn't go down.
+  Payroll expense was overstated by every dollar of vacation paid, and
+  Vacation Payable only ever grew. Posting a run now charges the part of the
+  vacation pay that the employee's accrued balance covers to Vacation Payable
+  (or a Dollars policy's own liability account) instead of wages, and lowers
+  the balance by the same amount. This applies to time off on a policy whose
+  code is `vacation`, or on a Dollars policy. A salaried employee's salary
+  keeps paying through vacation, so the hours they take count at their hourly
+  rate. Pay beyond what has accrued is still paid and stays wage expense, and a
+  Dollars policy no longer draws down an hours balance it doesn't have. Gross
+  pay, source deductions, remittances and T4s are unchanged, voiding a run
+  puts everything back, and runs posted earlier are left as they were (see
+  `UPGRADING.md` to correct them). New `pay_run_line_earnings.accrual_relief_cents`
+  column.
 
 ### Security
 

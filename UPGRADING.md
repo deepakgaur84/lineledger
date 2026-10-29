@@ -35,6 +35,77 @@ newest first.
   anchors every registered passkey. Both stay exactly as they were, and both are in
   every backup you take.
 
+## 1.3.1 → Unreleased
+
+Not released yet; the release fills in the rest of this section. So far: **one migration,
+no backfills, no config or env changes**. `app:upgrade` applies the migration.
+
+### What the migration does
+
+- **`pay_run_line_earnings.accrual_relief_cents`** (new nullable column): how much of each
+  posted earning was paid out of the employee's accrued vacation pay. Earnings posted
+  before the upgrade keep it empty, which tells a void to reverse them exactly as they
+  were posted.
+
+### Behaviour to know about
+
+**Taking accrued vacation settles Vacation Payable.** From the first pay run posted after
+the upgrade, vacation an employee takes is charged to Vacation Payable (or a Dollars
+policy's own liability account) instead of to Wages & Salaries Expense, up to the vacation
+pay they have accrued, and their vacation pay balance goes down by the same amount. This
+covers time off on a time-off policy whose Code is `vacation` (the built-in vacation pay
+under Accrue to liability) or on a Dollars policy. Time off on a vacation policy with any
+other code still pays exactly as before, without touching the accrued vacation pay.
+Balances are kept by code, so renaming the code of a policy in use leaves its existing
+balance behind. Pay beyond the accrued balance is still paid and expensed as wages. Gross
+pay, source deductions, remittances, T4s and ROEs are unchanged. Runs posted before the
+upgrade are not touched.
+
+### Correcting pay runs posted before the upgrade
+
+Only organizations that paid out accrued vacation before upgrading need this. Each dollar
+of it was expensed twice: as Vacation Pay Expense when it accrued, and again as wages when
+it was paid. So Wages & Salaries Expense and Vacation Payable are both overstated by it.
+Unless the vacation was entered as an amount rather than in hours, the employee's vacation
+pay balance was not lowered either. Do steps 2 and 3 together: correcting one without the
+other leaves Vacation Payable out of step with the balances, and the next vacation would
+be settled from pay the employee has already received.
+
+1. **Work out what was taken**, employee by employee. Take the vacation earnings on their
+   posted pay statements. For a salaried employee, whose salary paid the vacation, use the
+   vacation hours × annual salary ÷ the standard annual hours in Settings → Payroll. Never
+   count more than they had accrued at the time.
+2. **Fix the books** with a journal entry: debit Vacation Payable (or the policy's
+   liability account) and credit Wages & Salaries Expense (or the employee's wage
+   account), for the total. Date it in the period the vacation was paid if that period
+   is still open, otherwise in the current period. If the vacation fell in a fiscal year
+   you have closed, ask your accountant whether to adjust that year through retained
+   earnings instead.
+3. **Fix each employee's balance**, by the vacation they took in hours (a take entered as
+   an amount already lowered it). No screen edits a dollar balance yet. On a Dollars
+   policy that was given an opening balance, lowering the **Opening balance** on the
+   employee's setup page moves the balance down by the difference. Otherwise an operator
+   lowers it from the command line, once per employee. Set the organization's slug, the
+   employee's name and the amount in cents. For a Dollars policy, use its code instead of
+   `vacation` and leave out the last line, which keeps the built-in balance on the
+   profile in step:
+
+   ```bash
+   php artisan tinker --execute='
+   $profile = App\Models\EmployeePayrollProfile::withoutGlobalScopes()
+       ->whereHas("company", fn ($q) => $q->where("slug", "your-organization"))
+       ->whereHas("contact", fn ($q) => $q->where("display_name", "Jordan Avery"))
+       ->firstOrFail();
+   $balance = App\Models\EmployeeAccrualBalance::withoutGlobalScopes()
+       ->where("employee_payroll_profile_id", $profile->id)
+       ->where("code", "vacation")
+       ->firstOrFail();
+   $balance->decrement("balance_cents", 12345);
+   $profile->forceFill(["vacation_balance_cents" => $balance->balance_cents])->save();'
+   ```
+
+   Under Docker, prefix it with `docker compose exec app`.
+
 ## 1.3.0 → 1.3.1
 
 Released 2026-10-24. A patch release: a site admin without two-factor authentication

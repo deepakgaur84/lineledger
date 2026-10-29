@@ -8,8 +8,13 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+/**
+ * @property int|null $accrual_relief_cents The part of this earning paid out of the employee's accrued
+ *                                          dollar balance (vacation pay taken), set when the run posts.
+ *                                          Null before posting, and on runs posted before it was recorded.
+ */
 #[Fillable([
-    'company_id', 'pay_run_line_id', 'code', 'name', 'amount_cents', 'hours', 'is_override',
+    'company_id', 'pay_run_line_id', 'code', 'name', 'amount_cents', 'accrual_relief_cents', 'hours', 'is_override',
     'is_pensionable', 'is_insurable', 'is_taxable', 'is_bonus_method', 'add_to_net_pay_only', 'add_to_bases_only',
     'expense_account_id', 't4_box', 'class_id', 'location_id', 'line_order',
 ])]
@@ -32,6 +37,7 @@ class PayRunLineEarning extends Model
     {
         return [
             'amount_cents' => 'integer',
+            'accrual_relief_cents' => 'integer',
             'hours' => 'decimal:2',
             'is_override' => 'boolean',
             'is_pensionable' => 'boolean',
