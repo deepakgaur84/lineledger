@@ -1304,15 +1304,27 @@ already in LineLedger, so existing history is not imported twice.
 **Known limits.** The merchant name can be lost on the way through Actual (payee name is used). Actual's own Akahu sync is
 experimental upstream.
 
+**Which provider for which company.** Actual's bank-sync tokens (Akahu, GoCardless, SimpleFIN, Pluggy) are stored once per
+Actual *server*, not per budget file (the Akahu card shows a "global" tag and reads "Configured" in every budget). Every budget on
+one Actual server can therefore see every account those tokens can see, and Actual's multi-user/OpenID mode separates logins and
+budget access, not bank connections. So:
+- Entities that share your Akahu login: use the Actual connection and link only the accounts that belong to each entity.
+- An entity with its own Akahu login: use the direct **Akahu connection (fallback)** card in that company. Its tokens are stored
+  per company. (Alternative: a second Actual server for that entity; the one bridge can serve it, because each company sends its
+  own Actual address.)
+- Do not link the same bank account through two providers or in two companies.
+- One Actual connection per company: to try a different budget in the same company, use "Replace details and reload accounts"
+  (links to the old budget's accounts stop syncing until the old Sync ID is entered again).
+
 **Bridge retry.** Opening a budget (sign-in + download) is retried once, after 2 seconds, if Actual drops the connection
 (`network-failure`, "other side closed", reset socket). The first download of a large budget can hit this; the retry
 succeeds from the partly cached copy. Bank syncs are never retried.
 
-**OpenID / multi-user in Actual (observed, not fully verified).** With OpenID configured in Actual (Pocket ID as the provider),
-the bridge's server-password login still downloaded the budget (bridge log, 29 Oct 2026), and the web UI still accepted the
-server password. Actual's own dialog says the password "will be disabled", so re-test the bridge after finishing the OpenID
-sign-in and after Actual upgrades. Pocket ID runs as its own stack (`pocket-id`, one container) on `proxynet`, reached over
-HTTPS through Zoraxy; Actual's callback is `https://<actual host>/openid/callback`.
+**OpenID / multi-user in Actual: tried and dropped (29 Oct 2026).** Actual's OpenID mode (tried with Pocket ID as the provider) only
+separates sign-ins and budget access. The bank-sync tokens stay server-wide, so it does not give each entity its own bank
+connection, which was the reason for trying it. Actual stays on plain server-password login (which is what the bridge uses). Nothing in
+this repo depends on an identity provider. If it is ever revisited, note that Actual's own dialog says enabling OpenID disables the
+current password, and that turning it off again has had reported problems when a budget was created OpenID-only.
 
 **Data model**
 
