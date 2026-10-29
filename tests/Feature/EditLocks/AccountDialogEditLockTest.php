@@ -108,7 +108,7 @@ it('refuses toggling or merging an account someone is editing', function () {
 
     // Merging another account INTO the one being edited is refused too.
     Livewire::test('pages::accounts.index', ['company' => $this->company])
-        ->set('mergingId', $this->other->id)
+        ->call('openMerge', $this->other->id)
         ->set('mergeTargetId', $this->account->id)
         ->set('mergeConfirmed', true)
         ->call('merge');

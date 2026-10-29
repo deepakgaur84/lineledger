@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Computed;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
 use Livewire\Component;
@@ -106,6 +107,8 @@ new #[Title('Vendors')] class extends Component
 
     public array $newAttachments = [];
 
+    /** Locked: only openMerge() sets it, after checking the record is this organization's. */
+    #[Locked]
     public ?int $mergingId = null;
 
     public ?int $mergeTargetId = null;
@@ -388,7 +391,7 @@ new #[Title('Vendors')] class extends Component
     #[Computed]
     public function mergeTargets()
     {
-        $merging = $this->mergingId ? Contact::find($this->mergingId) : null;
+        $merging = $this->mergingContact();
 
         if (! $merging) {
             return collect();
@@ -413,17 +416,31 @@ new #[Title('Vendors')] class extends Component
     #[Computed]
     public function mergeSummary(): string
     {
-        if (! $this->mergingId) {
+        $merging = $this->mergingContact();
+
+        if (! $merging) {
             return '';
         }
 
-        $bills = DB::table('bills')->where('contact_id', $this->mergingId)->whereNull('deleted_at')->count();
-        $payments = DB::table('bill_payments')->where('contact_id', $this->mergingId)->whereNull('deleted_at')->count();
+        // Raw counts see every organization's rows: key them on the contact
+        // resolved through this one, and on its company.
+        $bills = DB::table('bills')->where('company_id', $this->company->id)->where('contact_id', $merging->id)->whereNull('deleted_at')->count();
+        $payments = DB::table('bill_payments')->where('company_id', $this->company->id)->where('contact_id', $merging->id)->whereNull('deleted_at')->count();
 
         return __(':bills bill(s) and :payments payment(s) will move to the vendor you choose.', [
             'bills' => number_format($bills),
             'payments' => number_format($payments),
         ]);
+    }
+
+    /**
+     * The contact the open merge dialog is for, when it is this organization's.
+     */
+    private function mergingContact(): ?Contact
+    {
+        return $this->mergingId === null
+            ? null
+            : Contact::query()->whereBelongsTo($this->company)->find($this->mergingId);
     }
 
     /**

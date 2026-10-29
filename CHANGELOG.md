@@ -127,6 +127,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a 422 from the API, naming the document. Overpayments still stay on account
   as credit, and card refunds still net out of a deposit. **Self-hosters with
   more than one organization should upgrade.**
+- **Pages stay within the organization you're working in.** The audit trail on
+  a journal entry, the bank register, and the summary in the account, customer
+  and vendor merge dialogs could be made to show another organization's audit
+  events, bank and card balances, or record counts. Each now reads only the
+  current organization's records, and the register answers another
+  organization's account with "not found". Likewise, creating a fixed asset
+  from a transaction line prefills only from your own organization's lines,
+  the restore page shows and cancels only restores you uploaded, and removing
+  a member acts only on a non-owner member of that organization. A new test
+  fails the build when a page lets an id sent by the browser reach a query the
+  organization filter doesn't cover.
 - **`symfony/mime` 8.1.10** (from 8.1.7) fixes an email header injection through
   MIME parameter names that contain non-token characters
   ([CVE-2026-45070](https://symfony.com/cve-2026-45070)). LineLedger never takes a

@@ -90,7 +90,7 @@ new #[Title('Journal entry')] class extends Component {
             return [];
         }
 
-        return TaxCode::withoutGlobalScopes()->whereIn('id', $ids)->pluck('code', 'id')->all();
+        return TaxCode::query()->whereIn('id', $ids)->pluck('code', 'id')->all();
     }
 
     #[GuardsEditLock]
