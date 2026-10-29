@@ -1304,6 +1304,16 @@ already in LineLedger, so existing history is not imported twice.
 **Known limits.** The merchant name can be lost on the way through Actual (payee name is used). Actual's own Akahu sync is
 experimental upstream.
 
+**Bridge retry.** Opening a budget (sign-in + download) is retried once, after 2 seconds, if Actual drops the connection
+(`network-failure`, "other side closed", reset socket). The first download of a large budget can hit this; the retry
+succeeds from the partly cached copy. Bank syncs are never retried.
+
+**OpenID / multi-user in Actual (observed, not fully verified).** With OpenID configured in Actual (Pocket ID as the provider),
+the bridge's server-password login still downloaded the budget (bridge log, 29 Oct 2026), and the web UI still accepted the
+server password. Actual's own dialog says the password "will be disabled", so re-test the bridge after finishing the OpenID
+sign-in and after Actual upgrades. Pocket ID runs as its own stack (`pocket-id`, one container) on `proxynet`, reached over
+HTTPS through Zoraxy; Actual's callback is `https://<actual host>/openid/callback`.
+
 **Data model**
 
 - `bank_feed_connections` keeps the legacy `app_token` / `user_token` columns (Akahu) and gains an encrypted `credentials` array
@@ -1381,8 +1391,7 @@ re-add the provider-based changes; the other files are fork-only.
   (QST/PST). The designed layouts share `pdf/invoices/sections/_footer.blade.php`, which now includes
   `pdf.invoices.partials.tax-numbers` (the same partial Classic and Airy use) instead of printing only `$company->tax_number`.
 - **Form styles page is a list, not a table.** Upstream's `InvoiceAiryLayoutTest` looks for `data-test="style-layout-cell"` in a
-  `<td>`; the fork's page renders a `<span>`, so the page carries that data-test on the span and the patched test expects `</span>`
-  (`tests/Feature/Invoices/InvoiceAiryLayoutTest.php`).
+  `<td>`; the fork's page renders a `<span>`, so the page wraps the layout label alone in `<span data-test="style-layout-cell">` and the patched test checks a freshly mounted page for `...>Airy</span>` after confirming the saved layout in the database (`tests/Feature/Invoices/InvoiceAiryLayoutTest.php`).
 - **New vendor on For Review.** A vendor name typed into a row but never ticked is now created when the row is confirmed
   (`createPendingLineContact()` in `ManagesStatementLineContacts.php`, called from accept, create-rule and save-split).
   The file-import wizard (`pages/banking/⚡import.blade.php`, now a patched file) does the same on confirm, confirm-all, create-rule and

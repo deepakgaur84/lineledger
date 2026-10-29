@@ -106,6 +106,18 @@ function describe(error) {
   return error?.message ? String(error.message) : 'Actual returned an error.';
 }
 
+// A dropped connection while opening the budget ("other side closed", a reset
+// socket, ...) is usually a one-off: the first download of a large budget can
+// hit it while the server is busy. Opening is safe to repeat, so it gets one
+// more try. Nothing that changes data (the bank sync) is ever retried.
+function isNetworkFailure(error) {
+  return /network-failure|ECONNRESET|ECONNREFUSED|UND_ERR_SOCKET|other side closed|fetch failed/i.test(
+    `${error?.reason || ''} ${error?.code || ''} ${error?.message || ''}`
+  );
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function withBudget(creds, work) {
   const key = crypto.createHash('sha256').update(`${creds.serverUrl}|${creds.syncId}`).digest('hex').slice(0, 24);
   const dataDir = path.join(DATA_DIR, key);
@@ -113,23 +125,49 @@ async function withBudget(creds, work) {
 
   let initialised = false;
 
-  try {
+  const open = async () => {
     await api.init({ dataDir, serverURL: creds.serverUrl, password: creds.password });
     initialised = true;
     await api.downloadBudget(creds.syncId, creds.filePassword ? { password: creds.filePassword } : undefined);
+  };
 
+  const close = async () => {
+    if (!initialised) return;
+    initialised = false;
+
+    try {
+      await api.shutdown();
+    } catch {
+      // Nothing useful to do; the next request starts fresh.
+    }
+  };
+
+  try {
+    try {
+      await open();
+    } catch (error) {
+      await close();
+
+      if (!isNetworkFailure(error)) throw error;
+
+      console.log('Opening the budget hit a network error; trying once more.');
+      await sleep(2000);
+      await open();
+    }
+  } catch (error) {
+    await close();
+
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(502, describe(error), error?.reason || error?.code || null);
+  }
+
+  try {
     return await work();
   } catch (error) {
     if (error instanceof HttpError) throw error;
     throw new HttpError(502, describe(error), error?.reason || error?.code || null);
   } finally {
-    if (initialised) {
-      try {
-        await api.shutdown();
-      } catch {
-        // Nothing useful to do; the next request starts fresh.
-      }
-    }
+    await close();
   }
 }
 
