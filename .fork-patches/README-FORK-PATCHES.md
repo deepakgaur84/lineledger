@@ -1321,6 +1321,12 @@ shows only linked ones, with a note saying how many are hidden. Only "Reload acc
 reloads too) reveals the rest, so new accounts can be linked; there is deliberately no show/hide toggle. With nothing linked yet,
 everything is shown. (Files: `⚡feeds.blade.php`, `BankFeedProvidersTest.php`.)
 
+**Automatic sync schedule.** The `scheduler` container runs `bank-feeds:sync` for every linked, active feed account of every
+company, whichever provider feeds it (Actual or Akahu). It runs once a day at `BANK_FEEDS_SYNC_AT` (default `16:30`, app time zone
+**UTC**, which is early the next morning in NZ). Unlinked feed accounts are skipped. Each run re-reads the last
+`BANK_FEEDS_OVERLAP_DAYS` (default 7) days, so late changes are picked up and duplicates are skipped. Changing a value in `.env`
+needs a stack redeploy (no image rebuild). Files: `app/Providers/BankFeedServiceProvider.php`, `config/bank_feeds.php`.
+
 **Bridge retry.** Opening a budget (sign-in + download) is retried once, after 2 seconds, if Actual drops the connection
 (`network-failure`, "other side closed", reset socket). The first download of a large budget can hit this; the retry
 succeeds from the partly cached copy. Bank syncs are never retried.
