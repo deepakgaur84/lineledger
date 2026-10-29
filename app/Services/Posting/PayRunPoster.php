@@ -21,6 +21,7 @@ use App\Models\TimeOffPolicy;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
 use App\Services\Payroll\CalculatePayRun;
+use App\Services\Payroll\PayrollYtdService;
 use App\Support\Payroll\Constants\PayrollConstantsRepository;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Auth;
@@ -67,6 +68,7 @@ class PayRunPoster
         protected PayrollAccountResolver $accounts,
         protected AccountingAuditRecorder $auditRecorder,
         protected PayrollConstantsRepository $constants,
+        protected PayrollYtdService $ytd,
     ) {}
 
     public function post(PayRun $payRun): JournalEntry
@@ -101,6 +103,13 @@ class PayRunPoster
             foreach ($payRun->lines->pluck('province_of_employment')->unique() as $province) {
                 $this->constants->resolve((string) $province, $payDate);
             }
+
+            // The amounts were calculated against the year-to-date of every run
+            // that counted at the time. Refuse while an earlier calculated run
+            // for the same employee is unposted, when that year-to-date has
+            // changed since, or when a line would take posted CPP/CPP2/EI/QPP/
+            // QPP2/QPIP past an annual maximum (audit D6Payroll-12).
+            $this->ytd->assertPostable($payRun);
 
             $entry = JournalEntry::create([
                 'entry_no' => $this->entryNumbers->next($payRun->company),

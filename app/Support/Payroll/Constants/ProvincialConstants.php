@@ -888,6 +888,35 @@ final class ProvincialConstants
     }
 
     /**
+     * The province's basic personal amount (bpa_cents, plus bpa_max_cents where
+     * the amount is income-tested) in every table effective on or before the
+     * given date: the current one and each earlier one, including the prorated
+     * mid-year amounts. A TD1 (or Quebec TP-1015.3-V) claim equal to one of
+     * them claims the basic amount only. See
+     * {@see PayrollConstantSet::isProvincialBasicClaim()}.
+     *
+     * @return list<int>
+     */
+    public static function basicPersonalAmountsOnOrBefore(string $province, string $date): array
+    {
+        $amounts = [];
+
+        foreach (self::PERIODS[$province] ?? [] as $effective => $values) {
+            if ($effective > $date) {
+                continue;
+            }
+
+            $amounts[] = (int) $values['bpa_cents'];
+
+            if (isset($values['bpa_max_cents'])) {
+                $amounts[] = (int) $values['bpa_max_cents'];
+            }
+        }
+
+        return array_values(array_unique($amounts));
+    }
+
+    /**
      * @return array<int, string> Provinces with at least one loaded table.
      */
     public static function loadedProvinces(): array

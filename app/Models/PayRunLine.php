@@ -38,6 +38,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'ytd_cpp2_employee_cents', 'ytd_ei_employee_cents', 'ytd_gross_cents', 'ytd_tax_cents',
     'ytd_qpp_employee_cents', 'ytd_qpp2_employee_cents',
     'ytd_qpip_employee_cents', 'ytd_qpip_insurable_cents',
+    'ytd_basis_hash', 'indian_act_exempt',
 ])]
 class PayRunLine extends Model
 {
@@ -309,6 +310,7 @@ class PayRunLine extends Model
             'pay_basis' => PayBasis::class,
             'hours_worked' => 'decimal:2',
             'insurable_hours' => 'decimal:2',
+            'indian_act_exempt' => 'boolean',
         ];
 
         foreach ([

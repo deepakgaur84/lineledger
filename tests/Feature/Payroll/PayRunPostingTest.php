@@ -128,6 +128,11 @@ it('renders a printable pay stub for a payroll cheque', function () {
 it('posts ONE balanced JE for a mixed QC + ON run, moving both CRA and Revenu Québec payables', function () {
     $this->company->update(['qhsf_rate_bp' => 192, 'cnesst_rate_bp' => 200]);
 
+    // This test never posts the June run from beforeEach. Back to draft, as the
+    // pay-run form does on save: a calculated run counts toward the July run's
+    // year-to-date and must be posted first.
+    $this->run->forceFill(['status' => PayRunStatus::Draft])->save();
+
     // Add a Quebec employee alongside the Alberta one from beforeEach.
     $quebecer = Contact::create(['display_name' => 'Quincy Québec', 'is_employee' => true]);
     EmployeePayrollProfile::factory()->create([

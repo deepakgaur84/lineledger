@@ -133,6 +133,71 @@ class PayrollVerificationDataset
             ...self::grid2026(),
             ...self::quebecGrid2026(),
             ...self::taxAnchors2026(),
+            ...self::td1Claims2026(),
+        ];
+    }
+
+    /**
+     * 2026 TD1 claim anchors: the basic claim, claim code 0 and a partial claim
+     * for the same Ontario biweekly $1,500 pay. Income tax is hand-derived from
+     * the T4127 122nd edition Option 1 formulas (Chapter 2: TC is "the total
+     * claim amount on Form TD1"; Tables 8.9 and 8.18: claim code 0 → TC/TCP
+     * 0.00). Every step is worked in tests/Unit/Payroll/Td1TotalClaimTest.php:
+     * A = $38,645.00, K2 = $335.01, K4 = $210.14, K2P = $120.84, Ontario Health
+     * Premium $450, no surtax and no factor S. The Jul 2026 federal and Ontario
+     * tables are unchanged from Jan 2026.
+     *
+     * @return list<PayrollCheck>
+     */
+    private static function td1Claims2026(): array
+    {
+        $case = fn (string $id, string $label, int $federalClaim, int $provincialClaim, int $federalTax, int $provincialTax, string $notes) => new PayrollCheck(
+            id: $id,
+            label: $label,
+            province: 'ON',
+            frequency: PayFrequency::Biweekly,
+            grossPerPeriodCents: 150000,
+            federalClaimCents: $federalClaim,
+            provincialClaimCents: $provincialClaim,
+            ytd: YtdTotals::none(),
+            expectedCppEmployeeCents: 8124,      // (150000 − 350000/26) × 5.95%
+            expectedCpp2EmployeeCents: 0,
+            expectedEiEmployeeCents: 2445,       // 150000 × 1.63%
+            expectedFederalTaxCents: $federalTax,
+            expectedProvincialTaxCents: $provincialTax,
+            source: 'formula',
+            payDate: '2026-07-15',
+            notes: $notes,
+        );
+
+        return [
+            $case(
+                'on-biweekly-1500-tax-2026',
+                'Ontario · biweekly · $1,500 gross (2026 basic TD1 claims)',
+                self::FED_BPA_2026,
+                self::PROVINCE_BPA_2026['ON'],
+                9853,   // T3 = $2,561.87 → $98.53 a pay
+                6249,   // T2 = $1,174.78 + $450 OHP → $62.49 a pay
+                'Claim code 1: K1 = 0.14 × $16,452 = $2,303.28; K1P = 0.0505 × $12,989 = $655.94.',
+            ),
+            $case(
+                'on-biweekly-1500-claim-code-0-2026',
+                'Ontario · biweekly · $1,500 gross (2026 TD1 claims of $0, second job)',
+                0,
+                0,
+                18712,  // T3 = $4,865.15 → $187.12 a pay
+                8772,   // T2 = $1,830.73 + $450 OHP → $87.72 a pay
+                'Claim code 0 on both TD1s: K1 = K1P = 0 (T4127 Tables 8.9 and 8.18).',
+            ),
+            $case(
+                'on-biweekly-1500-partial-claim-2026',
+                'Ontario · biweekly · $1,500 gross (2026 partial federal TD1 claim of $8,000)',
+                800000,
+                self::PROVINCE_BPA_2026['ON'],
+                14404,  // T3 = $3,745.15 → $144.04 a pay
+                6249,
+                'A newcomer\'s prorated federal claim: TC = $8,000, so K1 = 0.14 × $8,000 = $1,120.00.',
+            ),
         ];
     }
 

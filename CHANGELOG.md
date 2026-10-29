@@ -245,6 +245,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   amounts on the employee form no longer fills in last year's amounts. A run
   calculated on the old tables before this release can't be posted either. Pay
   dates through December 31, 2026 are unchanged.
+- **Payroll withholds the right tax for TD1 claims of $0 and partial claims.**
+  A TD1 total claim of $0 (claim code 0, for an employee with a second job) and
+  a partial claim below the basic personal amount (a newcomer's prorated
+  claim) were both credited the full basic amount, so too little tax was
+  withheld: about $2,960 a year for an Ontario second job paid $1,500 every two
+  weeks. The federal and provincial credits now use the claim as entered, as
+  CRA's T4127 says, and a Quebec TP-1015.3-V line 10 of $0 gets no Quebec
+  credit (deduction code O). A claim of an earlier year's basic amount still
+  counts as this year's. Three hand-worked T4127 cases join
+  `payroll:verify-calculations`.
+- **Two pay runs can no longer both take the last of the CPP and EI room.** A
+  regular run and a bonus run on the same pay date, or a run calculated before
+  an earlier one was posted, each took the full room left under the annual
+  CPP, CPP2, EI, QPP, QPP2 and QPIP maximums, so the employee and the employer
+  paid too much. The year-to-date now counts every posted pay run and every
+  calculated one that comes before it (by pay date, then the order the runs
+  were created). Posting stops while an earlier calculated run for the same
+  employee is unposted (post it, or save it back as a draft), asks for a
+  recalculation when another run was calculated, posted or voided after this
+  one was calculated, and refuses an adjustment that would go past a maximum.
+  A run calculated before this release is recalculated before it posts. New
+  `pay_run_lines.ytd_basis_hash` column.
+- **Indian Act exempt income goes in T4 code 71, not box 14.** A new **Indian
+  Act exempt income** switch on the Tax credits (TD1) card withholds no income
+  tax and reports the pay under code 71 with box 14 at zero, and RPP
+  contributions and union dues on it under codes 94 and 95; the T4 XML files
+  them as `indn_empe_amt`, `indn_xmpt_rpp_amt` and `indn_xmpt_unn_amt`. EI
+  still applies, and CPP or QPP only where you elected coverage on form CPT124
+  (RR-2-V in Quebec), so without that election also turn on CPP exempt.
+  **Income tax exempt** is unchanged: no tax withheld, but the pay is still
+  taxable in box 14. If you used it for a status Indian employee, turn on the
+  new switch for them: pay runs calculated before this release follow it, so
+  their 2026 T4 moves to code 71. New `employee_payroll_profiles` and
+  `pay_run_lines` `indian_act_exempt` columns.
 
 ### Security
 

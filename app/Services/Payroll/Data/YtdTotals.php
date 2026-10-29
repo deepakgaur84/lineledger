@@ -30,4 +30,25 @@ final readonly class YtdTotals
     {
         return new self;
     }
+
+    /**
+     * A stable digest of every accumulator, stored on a pay-run line when it is
+     * calculated so posting can tell whether the year-to-date it was calculated
+     * against has changed since.
+     */
+    public function fingerprint(): string
+    {
+        return hash('sha256', implode('|', [
+            $this->pensionableCents,
+            $this->insurableCents,
+            $this->cppEmployeeCents,
+            $this->cpp2EmployeeCents,
+            $this->eiEmployeeCents,
+            $this->qppEmployeeCents,
+            $this->qpp2EmployeeCents,
+            $this->qpipEmployeeCents,
+            $this->qpipInsurableCents,
+            $this->bonusTaxableCents,
+        ]));
+    }
 }
