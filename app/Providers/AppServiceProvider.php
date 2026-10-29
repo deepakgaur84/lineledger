@@ -2,6 +2,12 @@
 
 namespace App\Providers;
 
+use App\Http\Middleware\EnforceTwoFactor;
+use App\Http\Middleware\EnsureCompanyMembership;
+use App\Http\Middleware\EnsurePortalAudience;
+use App\Http\Middleware\EnsureSectionAccess;
+use App\Http\Middleware\EnsureSectionEnabled;
+use App\Http\Middleware\EnsureSiteAdmin;
 use App\Http\Middleware\ResolvePortalCompany;
 use App\Listeners\Security\NotifyNewDeviceLogin;
 use App\Listeners\Security\SecurityLogListener;
@@ -71,11 +77,27 @@ class AppServiceProvider extends ServiceProvider
         $this->configureRouteBindings();
         $this->configurePassport();
 
-        // Livewire re-runs only "persistent" route middleware on /livewire/update.
-        // The customer guard (Authenticate) is persistent by default, so the
-        // portal company must be too, or a portal component's updates resolve the
-        // session's Contact before the company is bound (see bootstrap/app.php).
-        Livewire::addPersistentMiddleware([ResolvePortalCompany::class]);
+        // Livewire's update endpoint does not run a page's route middleware: it
+        // re-runs only the "persistent" ones, against the page route recorded in
+        // each component's checksummed snapshot. So every gate that authorizes a
+        // page must be listed, or updates skip it, including a snapshot replayed
+        // after the user lost access:
+        //  - the tenant gates: membership and minimum role, the section kill
+        //    switch, section access and the company's 2FA policy;
+        //  - the portals: the portal company must be bound before the customer
+        //    guard (persistent by default) resolves the session's Contact (see
+        //    bootstrap/app.php), then the audience is checked;
+        //  - the site-admin portal.
+        // BindCurrentCompanyHook then checks the company each component carries.
+        Livewire::addPersistentMiddleware([
+            ResolvePortalCompany::class,
+            EnsurePortalAudience::class,
+            EnsureCompanyMembership::class,
+            EnsureSectionEnabled::class,
+            EnsureSectionAccess::class,
+            EnforceTwoFactor::class,
+            EnsureSiteAdmin::class,
+        ]);
 
         Company::observe(CompanyObserver::class);
 
