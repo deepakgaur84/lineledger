@@ -23,7 +23,8 @@ newest first.
 - **`php artisan app:upgrade` is the post-deploy step, everywhere.** It runs the pending
   migrations, then every backfill the release needs (since 1.1.0:
   `banking:backfill-line-memos` and `banking:backfill-reconciliation-stamps`; 1.2.0 through
-  1.3.1 add none; the next release adds `currency:backfill-reversal-memos`). Each
+  1.3.1 add none; the next release adds `backup:repair-encrypted-columns` and
+  `currency:backfill-reversal-memos`). Each
   backfill is idempotent, so a second run changes nothing. `--dry-run` runs the same
   steps without writing anything; `--verify` ends with an `integrity:check` that reports
   but never emails; `--company=<id-or-slug>` limits the backfills to one organization.
@@ -143,7 +144,8 @@ Nothing in the database changed. Deploy the previous release again; it ignores
 
 ### Void reversals carry the foreign-currency memo
 
-Upgrade as usual: back up first, then let `app:upgrade` run. It now has a fourth step.
+Upgrade as usual: back up first, then let `app:upgrade` run. This backfill is its fifth
+step; the fourth, `backup:repair-encrypted-columns`, is also new in this release.
 
 #### The backfill: reversal currency memos
 
@@ -151,7 +153,7 @@ Until this release a void reversed each journal line in the home currency but dr
 foreign-currency amount and rate, so every voided foreign-currency document (invoice, bill,
 credit memo, vendor credit, receipt, bill payment, deposit, cheque, transfer) left its
 foreign amount on its accounts. `app:upgrade` now runs `currency:backfill-reversal-memos`
-after the two banking backfills:
+after the two banking backfills and `backup:repair-encrypted-columns`:
 
 - It copies the currency, rate and foreign amount of each original line onto the reversal
   line that mirrors it, foreign debit and credit swapped. Home amounts are not touched, so
