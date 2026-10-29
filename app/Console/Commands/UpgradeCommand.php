@@ -39,7 +39,7 @@ class UpgradeCommand extends Command
         {--verify : Run integrity:check afterwards}
         {--company= : Limit the backfills to one company ID or slug}';
 
-    protected $description = 'Run every post-release step in order: migrate, backfill bank line memos and reconciliation stamps, encrypt SINs that restores stored unencrypted, and optionally verify ledger integrity.';
+    protected $description = 'Run every post-release step in order: migrate, backfill bank line memos and reconciliation stamps, encrypt SINs that restores stored unencrypted, backfill reversal currency memos, and optionally verify ledger integrity.';
 
     /** The company --company resolved to, when given. */
     private ?Company $company = null;
@@ -118,6 +118,7 @@ class UpgradeCommand extends Command
             // Organizations restored before restores encrypted SINs hold them
             // unencrypted; this encrypts them in place (see EncryptedColumnRepairer).
             ['Encrypted columns', fn (): array => $this->afterMigrating($dryRun) ?? $this->backfill('backup:repair-encrypted-columns', $dryRun)],
+            ['Reversal currency memos', fn (): array => $this->afterMigrating($dryRun) ?? $this->backfill('currency:backfill-reversal-memos', $dryRun)],
         ];
 
         if ($this->option('verify')) {

@@ -23,7 +23,7 @@ newest first.
 - **`php artisan app:upgrade` is the post-deploy step, everywhere.** It runs the pending
   migrations, then every backfill the release needs (since 1.1.0:
   `banking:backfill-line-memos` and `banking:backfill-reconciliation-stamps`; 1.2.0 through
-  1.3.1 add none). Each
+  1.3.1 add none; the next release adds `currency:backfill-reversal-memos`). Each
   backfill is idempotent, so a second run changes nothing. `--dry-run` runs the same
   steps without writing anything; `--verify` ends with an `integrity:check` that reports
   but never emails; `--company=<id-or-slug>` limits the backfills to one organization.
@@ -35,21 +35,26 @@ newest first.
   anchors every registered passkey. Both stay exactly as they were, and both are in
   every backup you take.
 
-## 1.3.1 → next release (unreleased)
+## 1.3.1 → Unreleased
 
-Not yet released; the release gives this section its number. Two security fixes
-change what the app accepts from the network, and both can need a setting before
-you upgrade. Links in email (password reset, email verification, invitations, portal
-sign-in, and every other notification) are now always built on `APP_URL`; outside
-local development the app answers only on `APP_URL`'s host and the new
-`TRUSTED_HOSTS`, and refuses any other with **400 Bad Request**. Forwarded client
+Not released yet; the release gives this section its number and fills in the rest. Until
+then, notes for the next release collect here as changes land, one subsection for each
+change that asks something of an operator.
+
+### Trusted hosts and proxies
+
+Two security fixes change what the app accepts from the network, and both can need a
+setting before you upgrade. Links in email (password reset, email verification,
+invitations, portal sign-in, and every other notification) are now always built on
+`APP_URL`; outside local development the app answers only on `APP_URL`'s host and the
+new `TRUSTED_HOSTS`, and refuses any other with **400 Bad Request**. Forwarded client
 addresses (`X-Forwarded-For`, `-Proto`, `-Port`) now count only from the proxies in
 the new `TRUSTED_PROXIES`, which is empty by default; until now every peer was trusted.
 `X-Forwarded-Host` is no longer honoured at all. **No migrations, no backfills.**
 `docker/digitalocean/app.yaml` gains `TRUSTED_PROXIES`, and `docker-compose.yml`
 changes only in a comment.
 
-### Before you start
+#### Before you start
 
 Take a backup as usual. Then answer two questions for your installation:
 
@@ -63,7 +68,7 @@ Take a backup as usual. Then answer two questions for your installation:
    proxy's IP, can't tell the request was HTTPS, and rejects signed links (email
    verification, file uploads). If nothing sits in front, leave it empty.
 
-### Docker
+#### Docker
 
 Reached directly (`SERVER_NAME` with ports 80/443, or plain HTTP on a LAN): nothing
 to set, provided `APP_URL` is the address you use. Behind your own reverse proxy, add
@@ -80,13 +85,13 @@ docker compose pull && docker compose up -d
 docker compose exec app php artisan app:upgrade --verify
 ```
 
-### DigitalOcean Droplet
+#### DigitalOcean Droplet
 
 Run `lineledger upgrade`. The Droplet serves the app itself, so `TRUSTED_PROXIES`
 stays empty. It answers on its domain (or its IP, before `lineledger domain`); to
 reach it by another name too, `lineledger config TRUSTED_HOSTS other.example.com`.
 
-### DigitalOcean App Platform
+#### DigitalOcean App Platform
 
 **This release changes `app.yaml`, and `./deploy.sh` doesn't update an existing
 app's spec.** Before you redeploy, open the app in the control panel → **Settings →
@@ -98,7 +103,7 @@ run `./deploy.sh` again as usual. If your own domain is the primary one, the
 `.ondigitalocean.app` address now answers 400; add it to `TRUSTED_HOSTS` if anyone
 still uses it.
 
-### Forge / bare metal
+#### Forge / bare metal
 
 If the site's own nginx faces the internet, nothing to set. If the domain is proxied
 by Cloudflare (the orange cloud) or the server sits behind a load balancer, set
@@ -114,7 +119,7 @@ A site serving more than one domain lists the others in `TRUSTED_HOSTS`. Then de
 with the unchanged deploy script (its `config:cache` picks the settings up), run
 `php artisan app:upgrade --verify` and `php artisan queue:restart`.
 
-### Behaviour to know about
+#### Behaviour to know about
 
 - **400 Bad Request for any host the app isn't configured for**, on every page and
   the API. Local development (`APP_ENV=local`) is exempt, and so is the `/up` health
@@ -131,10 +136,51 @@ with the unchanged deploy script (its `config:cache` picks the settings up), run
 - **Check it worked:** sign in, then look at Admin → Security. Your own sign-in should
   show your IP address, not your proxy's.
 
-### Rolling back
+#### Rolling back
 
 Nothing in the database changed. Deploy the previous release again; it ignores
 `TRUSTED_HOSTS` and `TRUSTED_PROXIES` and goes back to trusting every peer.
+
+### Void reversals carry the foreign-currency memo
+
+Upgrade as usual: back up first, then let `app:upgrade` run. It now has a fourth step.
+
+#### The backfill: reversal currency memos
+
+Until this release a void reversed each journal line in the home currency but dropped its
+foreign-currency amount and rate, so every voided foreign-currency document (invoice, bill,
+credit memo, vendor credit, receipt, bill payment, deposit, cheque, transfer) left its
+foreign amount on its accounts. `app:upgrade` now runs `currency:backfill-reversal-memos`
+after the two banking backfills:
+
+- It copies the currency, rate and foreign amount of each original line onto the reversal
+  line that mirrors it, foreign debit and credit swapped. Home amounts are not touched, so
+  no balance, report or audit-chain entry changes.
+- It then re-checks each customer and vendor whose AR or AP lines it filled, and re-opens
+  any invoice or bill that Close settled balance had closed against a credit memo, vendor
+  credit or receipt that was later voided. Those documents show as owing again, which is
+  what the ledger said all along. Each re-open is recorded in the audit trail.
+- A reversal it cannot match to its original line for line (edited after it was posted,
+  or two lines it cannot tell apart) is left as it is and listed as `Skipped reversal …`.
+  It is listed on every run until fixed. When it is a void, `integrity:check` reports it
+  too, so `app:upgrade --verify` fails until then.
+
+It is idempotent: a second run fills nothing. To see what it would do first, per
+organization, run `php artisan app:upgrade --dry-run` (or
+`php artisan currency:backfill-reversal-memos --dry-run`).
+
+#### Behaviour to know about
+
+- **Revaluations already posted are not changed.** A Home Currency Adjustment run after a
+  foreign-currency void revalued the voided amount as if it were still open. Each
+  adjustment reverses itself the next day, so balances after it are right, but the
+  unrealized gain or loss it posted at that period end counted the voided documents. The
+  backfill says how many adjustments that affects and from which date. Review the
+  period-end figures they produced. Where it matters and the period is still open, correct
+  the Unrealized Gain or Loss account with a journal entry.
+- **`integrity:check` has a sixth check:** a voided entry and its reversal must cancel in
+  foreign units on every account. It is report-only, with no `--fix`; the backfill above
+  is the repair.
 
 ## 1.3.0 → 1.3.1
 

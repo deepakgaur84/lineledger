@@ -43,18 +43,6 @@ parameters:
 			path: app/Actions/Accounting/RecognizeDeferredContribution.php
 
 		-
-			message: '#^Access to an undefined property App\\Models\\JournalLine\:\:\$class_id\.$#'
-			identifier: property.notFound
-			count: 1
-			path: app/Actions/Accounting/ReverseJournalEntry.php
-
-		-
-			message: '#^Access to an undefined property App\\Models\\JournalLine\:\:\$location_id\.$#'
-			identifier: property.notFound
-			count: 1
-			path: app/Actions/Accounting/ReverseJournalEntry.php
-
-		-
 			message: '#^Strict comparison using \!\=\= between mixed and null will always evaluate to true\.$#'
 			identifier: notIdentical.alwaysTrue
 			count: 1
@@ -2231,18 +2219,6 @@ parameters:
 			identifier: identical.alwaysFalse
 			count: 1
 			path: app/Services/Posting/InvoiceReconciler.php
-
-		-
-			message: '#^Access to an undefined property App\\Models\\JournalLine\:\:\$class_id\.$#'
-			identifier: property.notFound
-			count: 1
-			path: app/Services/Posting/JournalPoster.php
-
-		-
-			message: '#^Access to an undefined property App\\Models\\JournalLine\:\:\$location_id\.$#'
-			identifier: property.notFound
-			count: 1
-			path: app/Services/Posting/JournalPoster.php
 
 		-
 			message: '#^Cannot access property \$value on string\.$#'

@@ -102,7 +102,9 @@ class JournalPoster
 
     /**
      * Void a posted entry by writing a reversing entry dated today (or
-     * the given date) that flips every line's debit/credit.
+     * the given date) that flips every line's debit/credit — and its foreign-
+     * currency memo, so a voided foreign document leaves no foreign units
+     * behind for the period-end revaluation or the AR/AP reconcilers to find.
      */
     public function void(JournalEntry $entry, ?CarbonImmutable $voidDate = null, ?string $memo = null): JournalEntry
     {
@@ -139,18 +141,7 @@ class JournalPoster
 
             AuditMute::silence(function () use ($entry, $reversal): void {
                 foreach ($entry->lines as $i => $line) {
-                    $reversal->lines()->create([
-                        'account_id' => $line->account_id,
-                        'debit_cents' => $line->credit_cents,
-                        'credit_cents' => $line->debit_cents,
-                        'memo' => $line->memo,
-                        'contact_id' => $line->contact_id,
-                        'tax_code_id' => $line->tax_code_id,
-                        'line_order' => $i,
-                        'class_id' => $line->class_id,
-                        'location_id' => $line->location_id,
-                        'fund_id' => $line->fund_id,
-                    ]);
+                    $reversal->lines()->create($line->reversingAttributes($i));
                 }
             });
 

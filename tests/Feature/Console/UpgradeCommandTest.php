@@ -1,10 +1,14 @@
 <?php
 
+use App\Actions\Accounting\EnableCompanyCurrency;
 use App\Enums\AccountSubtype;
 use App\Models\Account;
 use App\Models\Company;
+use App\Models\Contact;
 use App\Models\Deposit;
+use App\Models\Invoice;
 use App\Services\Posting\DepositPoster;
+use App\Services\Posting\InvoicePoster;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Facades\DB;
@@ -68,6 +72,42 @@ function upgradeTestMemo(int $lineId): ?string
 }
 
 /**
+ * A voided USD invoice whose reversal is rewound to what the old void wrote:
+ * home cents swapped, no foreign-currency memo. Returns the reversal's id.
+ * Leaves no company bound.
+ */
+function upgradeTestOldForeignVoid(Company $company): int
+{
+    app()->instance('current_company', $company);
+    app(EnableCompanyCurrency::class)->handle($company, 'USD');
+
+    $customer = Contact::create(['display_name' => 'US Co', 'is_customer' => true, 'currency_code' => 'USD']);
+    $income = Account::query()->where('subtype', AccountSubtype::Income->value)->orderBy('code')->first();
+
+    $invoice = Invoice::create([
+        'contact_id' => $customer->id, 'invoice_no' => 'INV-UP-USD',
+        'invoice_date' => now()->toDateString(), 'due_date' => now()->addDays(30)->toDateString(),
+        'currency_code' => 'USD', 'fx_rate' => '1.35',
+    ]);
+    $invoice->lines()->create([
+        'account_id' => $income->id, 'description' => 'Export', 'quantity' => '1',
+        'unit_price_cents' => 100000, 'line_subtotal_cents' => 100000,
+        'line_tax_cents' => 0, 'line_total_cents' => 100000, 'line_order' => 0,
+    ]);
+    app(InvoicePoster::class)->post($invoice);
+    app(InvoicePoster::class)->void($invoice->fresh());
+
+    $reversalId = (int) $invoice->fresh()->journalEntry->reversed_by_entry_id;
+    DB::table('journal_lines')->where('journal_entry_id', $reversalId)->update([
+        'currency_code' => null, 'fx_rate' => null, 'foreign_debit_cents' => 0, 'foreign_credit_cents' => 0,
+    ]);
+
+    app()->forgetInstance('current_company');
+
+    return $reversalId;
+}
+
+/**
  * Swap a step's command for a stand-in on this test's console kernel only.
  */
 function upgradeTestFakeCommand(Command $command): void
@@ -96,6 +136,7 @@ it('dry run lists pending migrations, counts what the backfills would change, an
         ->expectsOutputToContain('No pending migrations')
         ->expectsOutputToContain('would rewrite 1 bank line memo(s)')
         ->expectsOutputToContain('would un-clear 0 line(s)')
+        ->expectsOutputToContain('would copy the foreign-currency memo onto 0 line(s) of 0 reversal(s)')
         ->expectsOutputToContain('Counted above; nothing written.')
         ->assertSuccessful();
 
@@ -114,6 +155,8 @@ it('migrates and runs every backfill, and a second run has nothing left to do', 
         ->expectsOutputToContain('un-cleared 0 line(s)')
         ->expectsOutputToContain('4. Encrypted columns')
         ->expectsOutputToContain('Encrypted 0 unencrypted value(s); 0 value(s) do not decrypt with this APP_KEY.')
+        ->expectsOutputToContain('5. Reversal currency memos')
+        ->expectsOutputToContain('copied the foreign-currency memo onto 0 line(s) of 0 reversal(s)')
         ->doesntExpectOutputToContain('Integrity check')
         ->assertSuccessful();
 
@@ -123,9 +166,36 @@ it('migrates and runs every backfill, and a second run has nothing left to do', 
     $this->artisan('app:upgrade')
         ->expectsOutputToContain('rewrote 0 bank line memo(s)')
         ->expectsOutputToContain('un-cleared 0 line(s)')
+        ->expectsOutputToContain('copied the foreign-currency memo onto 0 line(s) of 0 reversal(s)')
         ->assertSuccessful();
 
     expect(upgradeTestMemo($lineId))->toBe('Deposit: August 2026 Interac Deposits');
+});
+
+it('copies the foreign-currency memo onto old void reversals, after which --verify passes', function () {
+    Notification::fake();
+    $reversalId = upgradeTestOldForeignVoid($this->company);
+    $memo = fn (): array => DB::table('journal_lines')->where('journal_entry_id', $reversalId)
+        ->orderBy('line_order')->pluck('currency_code')->all();
+
+    // The phantom USD units the old void left trip the integrity check.
+    $this->artisan('integrity:check', ['--no-alert' => true])
+        ->expectsOutputToContain('do not cancel in foreign units')
+        ->assertFailed();
+
+    $this->artisan('app:upgrade', ['--dry-run' => true])
+        ->expectsOutputToContain("Company {$this->company->slug} — would copy the foreign-currency memo onto 2 line(s) of 1 reversal(s).")
+        ->assertSuccessful();
+
+    expect($memo())->toBe([null, null]);
+
+    $this->artisan('app:upgrade', ['--verify' => true])
+        ->expectsOutputToContain("Company {$this->company->slug} — copied the foreign-currency memo onto 2 line(s) of 1 reversal(s).")
+        ->expectsOutputToContain('Ledger integrity OK.')
+        ->assertSuccessful();
+
+    expect($memo())->toBe(['USD', 'USD']);
+    Notification::assertNothingSent();
 });
 
 it('runs integrity:check with --verify and never emails ops', function () {
@@ -133,7 +203,7 @@ it('runs integrity:check with --verify and never emails ops', function () {
     upgradeTestBareDeposit($this->company);
 
     $this->artisan('app:upgrade', ['--verify' => true])
-        ->expectsOutputToContain('5. Integrity check')
+        ->expectsOutputToContain('6. Integrity check')
         ->expectsOutputToContain('Ledger integrity OK.')
         ->expectsOutputToContain('Passed.')
         ->assertSuccessful();
@@ -171,7 +241,9 @@ it('stops at the first failing step, skips the rest, and returns its exit code',
         ->expectsOutputToContain('banking:backfill-reconciliation-stamps failed (exit 3).')
         ->expectsOutputToContain('Skipped')
         ->doesntExpectOutputToContain('4. Encrypted columns')
-        ->doesntExpectOutputToContain('5. Integrity check')
+        ->doesntExpectOutputToContain('5. Reversal currency memos')
+        ->doesntExpectOutputToContain('foreign-currency memo onto')
+        ->doesntExpectOutputToContain('6. Integrity check')
         ->doesntExpectOutputToContain('Ledger integrity')
         ->assertExitCode(3);
 
