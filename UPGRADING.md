@@ -35,6 +35,70 @@ newest first.
   anchors every registered passkey. Both stay exactly as they were, and both are in
   every backup you take.
 
+## Unreleased
+
+Changes on `main` since 1.3.1 that ask something of an operator. They move into the next
+release's section when it ships.
+
+### Journal entries on foreign-currency accounts
+
+A journal line on a foreign-currency account (a foreign bank or credit-card account, or a
+currency's receivable or payable account) now records its amount in that currency and
+the rate, and the period-end revaluation reads that amount. **Lines saved before the
+upgrade are not changed.** A line saved without its foreign amount still stands for no
+foreign units, so each revaluation keeps writing its home amount off as an unrealized
+loss (or gain), and a write-off posted that way still doesn't reduce what the customer or
+vendor owes in their currency.
+
+`app:upgrade` deliberately has no backfill for this. The foreign amount was never stored,
+so it can't be recovered: working it out from the home amount at the day's rate would
+write a guessed balance into posted entries, one that would then disagree with the bank
+statement. And some of these lines are meant to carry no foreign units at all — a
+hand-made revaluation, or an adjustment that clears a leftover home balance on a foreign
+receivable — so converting every one would break those. Each one needs a person who
+knows the real foreign amount.
+
+**Find them.** Read-only, on MySQL or SQLite — manual entries with a posted line on a
+foreign-currency account and no foreign amount:
+
+```sql
+SELECT je.company_id, je.id AS entry_id, je.entry_no, je.entry_date,
+       a.code AS account_code, a.currency_code, jl.debit_cents, jl.credit_cents
+FROM journal_lines jl
+JOIN journal_entries je ON je.id = jl.journal_entry_id
+JOIN accounts a ON a.id = jl.account_id
+WHERE jl.is_posted = 1
+  AND jl.currency_code IS NULL
+  AND a.currency_code IS NOT NULL
+  AND je.source_type IS NULL
+  AND je.voided_at IS NULL
+  AND je.reverses_entry_id IS NULL
+ORDER BY je.company_id, je.entry_date;
+```
+
+**Fix each one** in the web app: open the entry under Accounting → Journal and select
+Edit. The line on the foreign account now shows an amount in the account's currency,
+worked out from its home amount at the rate on file for the entry date, with the home
+amount unchanged. Type the real foreign amount (from the bank statement or the invoice)
+and the rate the home amount was booked at — home ÷ foreign, so the entry still balances
+— then Save changes. To fix many entries at once, `PATCH /api/v1/journal-entries/{id}`
+with each line's home and foreign cents and no `fx_rate` sets the rate the two imply (see
+`docs/api-v1.md` §2.3). Leave alone a line that is meant to carry no foreign units, such
+as a hand-made revaluation: the journal now gives every line on a foreign account a
+foreign amount, so editing that entry there would add one.
+
+**Opening Balances workspace.** The draft trial balance no longer posts a target on a
+foreign-currency account; that balance is a journal entry in the account's currency. In
+a workspace that isn't finalized, the next save on any tab drops the old home-only line
+from the opening entry, and the account's target shows in the Unexplained balance until
+you post that journal entry. A finalized workspace keeps its entry as it is: un-finalize
+it, re-save the account's row on the Trial balance tab, post the journal entry, and
+finalize again.
+
+Revaluations already posted reversed themselves the next day, so only the reports for
+those period ends carry the extra loss. Whether to restate a closed period is your
+accountant's call; the first revaluation after the lines are fixed is correct.
+
 ## 1.3.0 → 1.3.1
 
 Released 2026-10-24. A patch release: a site admin without two-factor authentication

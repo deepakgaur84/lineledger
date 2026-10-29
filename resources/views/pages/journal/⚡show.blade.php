@@ -302,7 +302,15 @@ new #[Title('Journal entry')] class extends Component {
             <tbody class="divide-y divide-border">
                 @foreach ($entry->lines as $line)
                     <tr data-test="entry-show-line">
-                        <td class="px-4 py-2">{{ $line->account->code }} — {{ $line->account->displayName() }}</td>
+                        <td class="px-4 py-2">
+                            {{ $line->account->code }} — {{ $line->account->displayName() }}
+                            @if ($line->currency_code !== null)
+                                {{-- The foreign memo: what the line moved in its currency, at its rate. --}}
+                                @php($foreignCents = abs((int) $line->foreign_debit_cents - (int) $line->foreign_credit_cents))
+                                @php($foreignRate = $line->fx_rate !== null ? \App\Support\Currency::normalizeRate($line->fx_rate) : null)
+                                <div class="text-xs text-muted-foreground font-mono" data-test="entry-show-line-foreign">{{ $line->currency_code.' '.number_format($foreignCents / 100, 2).($foreignRate !== null ? ' @ '.$foreignRate : '') }}</div>
+                            @endif
+                        </td>
                         <td class="px-4 py-2 text-muted-foreground">{{ $line->memo }}</td>
                         @if ($showTaxCodes)
                             <td class="px-4 py-2 text-muted-foreground" data-test="line-tax-code">{{ $this->lineTaxCodes[$line->tax_code_id] ?? '' }}</td>

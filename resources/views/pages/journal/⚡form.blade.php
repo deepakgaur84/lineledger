@@ -21,11 +21,15 @@ use App\Models\Location;
 use App\Models\TaxCode;
 use App\Rules\MoneyString;
 use App\Services\Audit\AccountingAuditRecorder;
+use App\Services\Currency\ExchangeRateService;
+use App\Services\Currency\MissingExchangeRateException;
 use App\Services\Posting\BackdatedEntryWarnings;
 use App\Services\Posting\EntryNumberGenerator;
 use App\Services\Posting\JournalPoster;
 use App\Services\Posting\PeriodLockOverride;
 use App\Services\Reconciliation\BankReconciliationLockGuard;
+use App\Support\Accounting\ForeignJournalLines;
+use App\Support\Currency;
 use App\Support\Reporting\SourceLinkResolver;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
@@ -108,9 +112,30 @@ new #[Title('Journal entry')] class extends Component
     public string $template_name = '';
 
     /**
-     * @var array<int, array{account_id: ?int, contact_id: ?int, contact_query: string, contact_creating: bool, new_contact_name: string, debit: string, credit: string, memo: ?string, tax_code_id: ?int, class_id: ?int, location_id: ?int}>
+     * The entry's lines. debit / credit are always home-currency amounts and
+     * are what has to balance. A line on a foreign-currency account is typed
+     * in that account's currency instead — foreign_debit / foreign_credit at
+     * fx_rate (home units per 1 foreign unit) — and its debit / credit show
+     * the home equivalent, read-only:
+     *
+     *   fx_currency    the currency the foreign fields are in
+     *   fx_rate_auto   the rate was filled in from the rates on file, so a new
+     *                  entry date fetches the new date's rate; typing one stops that
+     *   fx_home_fixed  the home amount is the line's own (a saved line, a
+     *                  template's or one carried over from another account) and
+     *                  the foreign amount follows it; typing a foreign amount or
+     *                  a new rate makes the home amount follow the foreign one
+     *
+     * @var array<int, array{account_id: ?int, contact_id: ?int, contact_query: string, contact_creating: bool, new_contact_name: string, debit: string, credit: string, memo: ?string, tax_code_id: ?int, class_id: ?int, location_id: ?int, fund_id: ?int, foreign_debit: string, foreign_credit: string, fx_rate: string, fx_currency: ?string, fx_rate_auto: bool, fx_home_fixed: bool}>
      */
     public array $lines = [];
+
+    /**
+     * Rates looked up during this request, by "CUR|date" ('' when none is on file).
+     *
+     * @var array<string, string>
+     */
+    private array $rateLookups = [];
 
     protected function editLockRecord(): ?Model
     {
@@ -153,6 +178,10 @@ new #[Title('Journal entry')] class extends Component
             $this->memo = $entry->memo ?? '';
             $this->lines = $this->mapEntryLines($entry);
 
+            if (! $this->linesLocked) {
+                $this->hydrateForeignLines();
+            }
+
             return;
         }
 
@@ -183,10 +212,15 @@ new #[Title('Journal entry')] class extends Component
 
         $this->memo = $source->memo ?? '';
         $this->lines = $this->mapEntryLines($source);
+        $this->hydrateForeignLines();
     }
 
     /**
-     * @return array<int, array{account_id: ?int, contact_id: ?int, contact_query: string, contact_creating: bool, new_contact_name: string, debit: string, credit: string, memo: ?string, tax_code_id: ?int, class_id: ?int, location_id: ?int}>
+     * The entry's lines in the form's shape. A line carrying a foreign memo
+     * keeps its saved foreign amount, rate and home amount exactly; see
+     * {@see hydrateForeignLines()} for one without.
+     *
+     * @return array<int, array<string, mixed>>
      */
     protected function mapEntryLines(JournalEntry $entry): array
     {
@@ -201,11 +235,21 @@ new #[Title('Journal entry')] class extends Component
             'class_id' => $l->class_id,
             'location_id' => $l->location_id,
             'fund_id' => $l->fund_id,
+            ...($l->currency_code !== null ? [
+                'foreign_debit' => (int) $l->foreign_debit_cents !== 0 ? Money::fromCents((int) $l->foreign_debit_cents)->toDecimalString() : '',
+                'foreign_credit' => (int) $l->foreign_credit_cents !== 0 ? Money::fromCents((int) $l->foreign_credit_cents)->toDecimalString() : '',
+                // A memo saved without its rate gets the one its amounts imply.
+                'fx_rate' => Currency::normalizeRate($l->fx_rate)
+                    ?? Currency::impliedRate((int) $l->debit_cents + (int) $l->credit_cents, (int) $l->foreign_debit_cents + (int) $l->foreign_credit_cents)
+                    ?? '',
+                'fx_currency' => mb_strtoupper((string) $l->currency_code),
+                'fx_home_fixed' => true,
+            ] : []),
         ])->all();
     }
 
     /**
-     * @return array{account_id: ?int, contact_id: ?int, contact_query: string, contact_creating: bool, new_contact_name: string, debit: string, credit: string, memo: ?string, tax_code_id: ?int, class_id: ?int, location_id: ?int}
+     * @return array<string, mixed>
      */
     protected function emptyLine(): array
     {
@@ -219,7 +263,313 @@ new #[Title('Journal entry')] class extends Component
             'class_id' => null,
             'location_id' => null,
             'fund_id' => null,
+            ...$this->emptyForeignState(),
         ];
+    }
+
+    /**
+     * The foreign-amount fields of a line, cleared.
+     *
+     * @return array{foreign_debit: string, foreign_credit: string, fx_rate: string, fx_currency: ?string, fx_rate_auto: bool, fx_home_fixed: bool}
+     */
+    protected function emptyForeignState(): array
+    {
+        return [
+            'foreign_debit' => '',
+            'foreign_credit' => '',
+            'fx_rate' => '',
+            'fx_currency' => null,
+            'fx_rate_auto' => false,
+            'fx_home_fixed' => false,
+        ];
+    }
+
+    /**
+     * account_id => currency for the company's foreign-currency accounts (foreign
+     * bank and credit-card accounts, and the per-currency receivable and
+     * payable controls). A line on one of them is entered in that currency.
+     *
+     * @return array<int, string>
+     */
+    #[Computed]
+    public function foreignAccountCurrencies(): array
+    {
+        return Account::query()
+            ->where('company_id', $this->company->id)
+            ->whereNotNull('currency_code')
+            ->pluck('currency_code', 'id')
+            ->reject(fn ($code): bool => $this->company->isHomeCurrency((string) $code))
+            ->map(fn ($code): string => mb_strtoupper((string) $code))
+            ->all();
+    }
+
+    /**
+     * The currency a line is entered in: its account's, or null for a
+     * home-currency account.
+     */
+    public function lineCurrency(int $index): ?string
+    {
+        return $this->foreignAccountCurrencies[(int) ($this->lines[$index]['account_id'] ?? 0)] ?? null;
+    }
+
+    /**
+     * Bring every line's foreign fields in step with its account after the
+     * lines were loaded wholesale (an entry being edited or duplicated, a
+     * template). A foreign-account line that came without its foreign amount
+     * — a template line, or one saved before journal lines recorded them —
+     * takes the rate in force on the entry date and works its foreign amount
+     * out from its home amount, which it keeps. A home-account line keeps
+     * whatever memo it was saved with (see {@see lineAmounts()}).
+     */
+    protected function hydrateForeignLines(): void
+    {
+        foreach (array_keys($this->lines) as $i) {
+            $currency = $this->lineCurrency($i);
+            $line = $this->lines[$i];
+
+            if ($currency === null) {
+                continue;
+            }
+
+            // A saved line with its memo — or one already being worked on in
+            // the form — keeps its amounts and rate exactly.
+            if (($line['fx_currency'] ?? null) === $currency) {
+                continue;
+            }
+
+            $this->lines[$i] = [
+                ...$line,
+                ...$this->emptyForeignState(),
+                'fx_currency' => $currency,
+                'fx_rate' => $this->rateOnFile($currency),
+                'fx_rate_auto' => true,
+                'fx_home_fixed' => true,
+            ];
+
+            $this->adoptHomeAmount($i);
+        }
+    }
+
+    /**
+     * Work a foreign-account line's foreign amount out from its home amount
+     * at its rate, keeping the home amount as it is. Does nothing until the
+     * line has both a rate and a home amount.
+     */
+    protected function adoptHomeAmount(int $i): void
+    {
+        $line = $this->lines[$i];
+        $rate = Currency::normalizeRate($line['fx_rate'] ?? '');
+        $debit = $this->centsOf($line['debit'] ?? '');
+        $credit = $this->centsOf($line['credit'] ?? '');
+
+        if ($rate === null || ($debit === 0 && $credit === 0)) {
+            return;
+        }
+
+        $foreignDebit = Currency::toForeignCents($debit, $rate);
+        $foreignCredit = Currency::toForeignCents($credit, $rate);
+
+        $this->lines[$i]['foreign_debit'] = $foreignDebit !== 0 ? Money::fromCents($foreignDebit)->toDecimalString() : '';
+        $this->lines[$i]['foreign_credit'] = $foreignCredit !== 0 ? Money::fromCents($foreignCredit)->toDecimalString() : '';
+        $this->lines[$i]['fx_home_fixed'] = true;
+    }
+
+    /**
+     * The rate in force for a currency on the entry date — the one a foreign
+     * document dated that day would lock — as the rate field shows it, or ''
+     * when none is on file (the user then types one).
+     */
+    protected function rateOnFile(string $currency): string
+    {
+        try {
+            $date = CarbonImmutable::parse($this->entryDate);
+        } catch (InvalidFormatException) {
+            return '';
+        }
+
+        $key = $currency.'|'.$date->toDateString();
+
+        if (! array_key_exists($key, $this->rateLookups)) {
+            try {
+                $rate = app(ExchangeRateService::class)->rateFor($this->company, $currency, $date);
+                $this->rateLookups[$key] = Currency::normalizeRate($rate) ?? '';
+            } catch (MissingExchangeRateException) {
+                $this->rateLookups[$key] = '';
+            } catch (\Throwable $e) {
+                report($e);
+                $this->rateLookups[$key] = '';
+            }
+        }
+
+        return $this->rateLookups[$key];
+    }
+
+    /**
+     * A line's amounts the way {@see SaveJournalEntry} takes them. A
+     * home-account line sends its debit / credit. A foreign-account line sends
+     * its foreign amounts and rate, plus its home amounts only while those are
+     * its own (fx_home_fixed); otherwise the action works them out.
+     *
+     * @return array<string, mixed>
+     */
+    protected function lineAmounts(int $i): array
+    {
+        $line = $this->lines[$i];
+        $currency = $this->lineCurrency($i);
+
+        if ($currency === null) {
+            $amounts = [
+                'debit_cents' => $this->centsOf($line['debit'] ?? ''),
+                'credit_cents' => $this->centsOf($line['credit'] ?? ''),
+            ];
+
+            // A memo saved with a home-account line — a foreign document's leg,
+            // copied by its reversal — goes back exactly as it came. Changing
+            // the line's amount or account drops it.
+            if (($line['fx_currency'] ?? null) !== null) {
+                $amounts += [
+                    'currency_code' => $line['fx_currency'],
+                    'fx_rate' => trim((string) ($line['fx_rate'] ?? '')) ?: null,
+                    'foreign_debit_cents' => $this->centsOf($line['foreign_debit'] ?? ''),
+                    'foreign_credit_cents' => $this->centsOf($line['foreign_credit'] ?? ''),
+                ];
+            }
+
+            return $amounts;
+        }
+
+        $fixed = (bool) ($line['fx_home_fixed'] ?? false);
+        $rate = trim((string) ($line['fx_rate'] ?? ''));
+
+        return [
+            'debit_cents' => $fixed ? $this->centsOf($line['debit'] ?? '') : 0,
+            'credit_cents' => $fixed ? $this->centsOf($line['credit'] ?? '') : 0,
+            'foreign_debit_cents' => $this->centsOf($line['foreign_debit'] ?? ''),
+            'foreign_credit_cents' => $this->centsOf($line['foreign_credit'] ?? ''),
+            'fx_rate' => $rate !== '' ? $rate : null,
+            'currency_code' => $currency,
+        ];
+    }
+
+    /**
+     * Show each foreign-account line's home amount as the action will work it
+     * out (rounding plug included), on the lines whose home amount follows
+     * their foreign one. Needs no rate lookup: the form always has the rate.
+     */
+    protected function syncForeignLines(): void
+    {
+        $foreign = array_filter(array_keys($this->lines), fn (int $i): bool => $this->lineCurrency($i) !== null);
+
+        if ($foreign === []) {
+            return;
+        }
+
+        $indexes = array_keys($this->lines);
+        $result = ForeignJournalLines::resolve(
+            array_map(fn (int $i): array => [...$this->lineAmounts($i), 'currency' => $this->lineCurrency($i)], $indexes),
+            fn (string $currency): ?string => null,
+        );
+
+        foreach ($indexes as $position => $i) {
+            if (! in_array($i, $foreign, true) || ($this->lines[$i]['fx_home_fixed'] ?? false)) {
+                continue;
+            }
+
+            $resolved = $result['lines'][$position];
+            $this->lines[$i]['debit'] = $resolved['debit_cents'] !== 0 ? Money::fromCents($resolved['debit_cents'])->toDecimalString() : '';
+            $this->lines[$i]['credit'] = $resolved['credit_cents'] !== 0 ? Money::fromCents($resolved['credit_cents'])->toDecimalString() : '';
+        }
+    }
+
+    /**
+     * A line's account changed. To a home-currency account: drop the foreign
+     * fields and keep the home amount the line showed. To a foreign account in
+     * another currency: take that currency's rate on the entry date and work
+     * the foreign amount out from the home amount. Same currency as before:
+     * keep the foreign amount and rate.
+     */
+    protected function accountChanged(int $i): void
+    {
+        $currency = $this->lineCurrency($i);
+        $line = $this->lines[$i];
+
+        if ($currency === null) {
+            $this->lines[$i] = [...$line, ...$this->emptyForeignState()];
+
+            return;
+        }
+
+        if (($line['fx_currency'] ?? null) === $currency) {
+            return;
+        }
+
+        $this->lines[$i] = [
+            ...$line,
+            ...$this->emptyForeignState(),
+            'fx_currency' => $currency,
+            'fx_rate' => $this->rateOnFile($currency),
+            'fx_rate_auto' => true,
+            'fx_home_fixed' => true,
+        ];
+
+        $this->adoptHomeAmount($i);
+    }
+
+    /**
+     * Refresh the rates that were filled in from the rates on file when the
+     * entry date moves; a rate the user typed stays. A line whose home amount
+     * is its own re-works its foreign amount at the new rate.
+     */
+    public function updatedEntryDate(): void
+    {
+        $this->rateLookups = [];
+
+        foreach (array_keys($this->lines) as $i) {
+            $currency = $this->lineCurrency($i);
+
+            if ($currency === null || ! ($this->lines[$i]['fx_rate_auto'] ?? false)) {
+                continue;
+            }
+
+            $rate = $this->rateOnFile($currency);
+
+            if ($rate === '' || $rate === $this->lines[$i]['fx_rate']) {
+                continue;
+            }
+
+            $this->lines[$i]['fx_rate'] = $rate;
+
+            if ($this->lines[$i]['fx_home_fixed'] ?? false) {
+                $this->lines[$i]['foreign_debit'] = '';
+                $this->lines[$i]['foreign_credit'] = '';
+                $this->adoptHomeAmount($i);
+            }
+        }
+
+        $this->syncForeignLines();
+    }
+
+    /**
+     * A foreign-account line's home amount as its read-only cell shows it.
+     */
+    public function homeAmountLabel(mixed $value): string
+    {
+        $cents = $this->centsOf($value);
+
+        return $cents !== 0 ? number_format($cents / 100, 2) : '';
+    }
+
+    /**
+     * An amount field's value in cents, 0 while it doesn't parse.
+     */
+    public function homeAmountCents(mixed $value): int
+    {
+        return $this->centsOf($value);
+    }
+
+    private function centsOf(mixed $value): int
+    {
+        return Money::tryFromString((string) $value)?->cents ?? 0;
     }
 
     public function addLine(): void
@@ -235,6 +585,9 @@ new #[Title('Journal entry')] class extends Component
 
         unset($this->lines[$index]);
         $this->lines = array_values($this->lines);
+
+        // A rounding cent on the remaining foreign lines may move.
+        $this->syncForeignLines();
     }
 
     /**
@@ -257,18 +610,43 @@ new #[Title('Journal entry')] class extends Component
 
     /**
      * Reset the contact picker when a line's account changes to one that no longer
-     * requires it, and fill a blank tax code from the account's default.
+     * requires it, and fill a blank tax code from the account's default. Keep the
+     * home amounts of foreign-currency lines in step with what was typed.
      */
     public function updatedLines(mixed $value, ?string $key = null): void
     {
         // Livewire passes a null key when the whole `lines` array is updated
         // (a top-level, dot-less path) rather than a single nested field.
-        if ($key === null || ! str_ends_with($key, '.account_id')) {
+        if ($key === null || ! str_contains($key, '.')) {
             return;
         }
 
-        $index = (int) explode('.', $key)[0];
+        [$index, $field] = explode('.', $key, 2);
+        $index = (int) $index;
 
+        if (! isset($this->lines[$index])) {
+            return;
+        }
+
+        match ($field) {
+            'account_id' => $this->lineAccountChanged($index, $value),
+            // Typing a foreign amount makes the home amount follow it.
+            'foreign_debit', 'foreign_credit' => $this->lines[$index]['fx_home_fixed'] = false,
+            'fx_rate' => $this->lineRateChanged($index),
+            // A home-account line's saved memo no longer describes a new amount.
+            'debit', 'credit' => $this->lineCurrency($index) === null
+                ? $this->lines[$index] = [...$this->lines[$index], ...$this->emptyForeignState()]
+                : null,
+            default => null,
+        };
+
+        if (in_array($field, ['account_id', 'debit', 'credit', 'foreign_debit', 'foreign_credit', 'fx_rate'], true)) {
+            $this->syncForeignLines();
+        }
+    }
+
+    protected function lineAccountChanged(int $index, mixed $value): void
+    {
         // Picking an account fills a blank tax code from the account's default —
         // never overwriting one already on the line. The tag carries no amounts,
         // so nothing is recalculated.
@@ -279,6 +657,30 @@ new #[Title('Journal entry')] class extends Component
         if (! isset($this->contactRequiringAccounts[(int) $value])) {
             $this->resetLineContactState($index);
         }
+
+        $this->accountChanged($index);
+    }
+
+    /**
+     * A rate typed by hand stays put when the date moves. On a line that has
+     * a home amount but no foreign amount yet, it works the foreign amount
+     * out; otherwise the home amount follows the foreign one at the new rate.
+     */
+    protected function lineRateChanged(int $index): void
+    {
+        $this->lines[$index]['fx_rate_auto'] = false;
+        $line = $this->lines[$index];
+
+        $hasForeign = $this->centsOf($line['foreign_debit'] ?? '') !== 0 || $this->centsOf($line['foreign_credit'] ?? '') !== 0;
+        $hasHome = $this->centsOf($line['debit'] ?? '') !== 0 || $this->centsOf($line['credit'] ?? '') !== 0;
+
+        if (! $hasForeign && $hasHome) {
+            $this->adoptHomeAmount($index);
+
+            return;
+        }
+
+        $this->lines[$index]['fx_home_fixed'] = false;
     }
 
     #[Computed]
@@ -320,6 +722,11 @@ new #[Title('Journal entry')] class extends Component
         }
 
         $this->lines = array_values($this->lines);
+
+        // Templates hold home amounts; a foreign-account line works out its
+        // foreign amount at the entry date's rate.
+        $this->hydrateForeignLines();
+        $this->syncForeignLines();
     }
 
     /**
@@ -355,6 +762,8 @@ new #[Title('Journal entry')] class extends Component
         return empty($line['account_id'])
             && (Money::tryFromString((string) ($line['debit'] ?? ''))?->cents ?? 0) === 0
             && (Money::tryFromString((string) ($line['credit'] ?? ''))?->cents ?? 0) === 0
+            && $this->centsOf($line['foreign_debit'] ?? '') === 0
+            && $this->centsOf($line['foreign_credit'] ?? '') === 0
             && trim((string) ($line['memo'] ?? '')) === '';
     }
 
@@ -711,20 +1120,26 @@ new #[Title('Journal entry')] class extends Component
             'lines.*.class_id' => ['nullable', 'integer', Rule::exists('classifications', 'id')->where('company_id', $companyId)],
             'lines.*.location_id' => ['nullable', 'integer', Rule::exists('locations', 'id')->where('company_id', $companyId)],
             'lines.*.fund_id' => ['nullable', 'integer', Rule::exists('funds', 'id')->where('company_id', $companyId)],
-        ], $this->entryNoMessages());
+            ...$this->foreignLineRules(),
+        ], [...$this->entryNoMessages(), ...$this->foreignLineMessages()]);
 
         $this->resolveNewLineContacts();
         $this->validateLineContacts();
 
+        // The validator lists explicitly-keyed rules (a foreign line's
+        // lines.N.fx_rate) before wildcard ones, so its lines can come back
+        // out of order; save them in the order the form shows them.
+        $validatedLines = $validated['lines'];
+        ksort($validatedLines, SORT_NUMERIC);
+
         $lines = [];
-        foreach ($validated['lines'] as $i => $line) {
+        foreach ($validatedLines as $i => $line) {
             $requiresContact = isset($this->contactRequiringAccounts[(int) $line['account_id']]);
 
             $lines[] = [
                 'account_id' => $line['account_id'],
                 'contact_id' => $requiresContact ? ($this->lines[$i]['contact_id'] ?: null) : null,
-                'debit_cents' => $line['debit'] !== '' ? Money::fromString($line['debit'])->cents : 0,
-                'credit_cents' => $line['credit'] !== '' ? Money::fromString($line['credit'])->cents : 0,
+                ...$this->lineAmounts($i),
                 'memo' => $line['memo'] ?: null,
                 'tax_code_id' => ($this->lines[$i]['tax_code_id'] ?? null) ?: null,
                 'class_id' => $this->lines[$i]['class_id'] ?? null,
@@ -740,6 +1155,8 @@ new #[Title('Journal entry')] class extends Component
                 'memo' => $validated['memo'] ?: null,
                 'lines' => $lines,
             ], $this->entry);
+        } catch (ValidationException $e) {
+            throw ValidationException::withMessages($this->formLineErrors($e->errors(), array_keys($validatedLines)));
         } catch (UniqueConstraintViolationException $e) {
             // A typed number taken between validation and the insert. The
             // save rolled back, so nothing was written.
@@ -751,6 +1168,82 @@ new #[Title('Journal entry')] class extends Component
         }
 
         $this->entryNo = $this->entry->entry_no;
+    }
+
+    /**
+     * A foreign-account line with an amount on it needs its rate; its foreign
+     * amounts must parse like any other.
+     *
+     * @return array<string, list<mixed>>
+     */
+    private function foreignLineRules(): array
+    {
+        $rules = [];
+
+        foreach (array_keys($this->lines) as $i) {
+            if ($this->lineCurrency($i) === null) {
+                continue;
+            }
+
+            $rules["lines.{$i}.foreign_debit"] = ['nullable', 'string', new MoneyString];
+            $rules["lines.{$i}.foreign_credit"] = ['nullable', 'string', new MoneyString];
+
+            $amounts = $this->lineAmounts($i);
+
+            if ($amounts['debit_cents'] !== 0 || $amounts['credit_cents'] !== 0
+                || $amounts['foreign_debit_cents'] !== 0 || $amounts['foreign_credit_cents'] !== 0) {
+                $rules["lines.{$i}.fx_rate"] = ['required', 'numeric', 'decimal:0,8', 'gt:0', 'max:9999999999'];
+            }
+        }
+
+        return $rules;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function foreignLineMessages(): array
+    {
+        $invalid = __('Enter an exchange rate above zero, with at most 8 decimal places.');
+
+        return [
+            'lines.*.fx_rate.required' => __('Enter the exchange rate for this line.'),
+            'lines.*.fx_rate.numeric' => $invalid,
+            'lines.*.fx_rate.decimal' => $invalid,
+            'lines.*.fx_rate.gt' => $invalid,
+            'lines.*.fx_rate.max' => $invalid,
+        ];
+    }
+
+    /**
+     * Point the action's line errors (lines.N.fx_rate, lines.N.foreign_debit_cents,
+     * …, numbered over the lines it was sent) at the form's own fields.
+     *
+     * @param  array<string, array<int, string>>  $errors
+     * @param  list<int|string>  $formIndexes  the form index of each line sent, in order
+     * @return array<string, array<int, string>>
+     */
+    private function formLineErrors(array $errors, array $formIndexes): array
+    {
+        $fields = [
+            'debit_cents' => 'debit',
+            'credit_cents' => 'credit',
+            'foreign_debit_cents' => 'foreign_debit',
+            'foreign_credit_cents' => 'foreign_credit',
+            'currency_code' => 'account_id',
+        ];
+
+        $mapped = [];
+
+        foreach ($errors as $key => $messages) {
+            if (preg_match('/^lines\.(\d+)\.(\w+)$/', $key, $m) === 1 && isset($formIndexes[(int) $m[1]])) {
+                $key = 'lines.'.$formIndexes[(int) $m[1]].'.'.($fields[$m[2]] ?? $m[2]);
+            }
+
+            $mapped[$key] = $messages;
+        }
+
+        return $mapped;
     }
 
     /**
@@ -780,7 +1273,9 @@ new #[Title('Journal entry')] class extends Component
         $debit = Money::tryFromString((string) $line['debit'])?->cents ?? 0;
         $credit = Money::tryFromString((string) $line['credit'])?->cents ?? 0;
 
-        return $debit !== 0 || $credit !== 0;
+        return $debit !== 0 || $credit !== 0
+            || $this->centsOf($line['foreign_debit'] ?? '') !== 0
+            || $this->centsOf($line['foreign_credit'] ?? '') !== 0;
     }
 }; ?>
 
@@ -822,7 +1317,8 @@ new #[Title('Journal entry')] class extends Component
 
         <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
             <flux:input wire:model="entryNo" :label="__('Entry #')" required data-test="entry-no-input" />
-            <flux:input type="date" wire:model="entryDate" :label="__('Date')" required data-test="entry-date-input" />
+            {{-- Live: a foreign-currency line's rate follows the date. --}}
+            <flux:input type="date" wire:model.live="entryDate" :label="__('Date')" required data-test="entry-date-input" />
             <flux:input wire:model="memo" :label="__('Memo')" data-test="entry-memo-input" />
         </div>
 
@@ -880,12 +1376,19 @@ new #[Title('Journal entry')] class extends Component
             <div class="divide-y divide-border">
                 <x-account-combo.options key="accounts" :options="$this->accountOptions" />
                 @foreach ($lines as $i => $line)
+                    @php($lineCurrency = $this->foreignAccountCurrencies[(int) ($line['account_id'] ?? 0)] ?? null)
                     <div wire:key="line-{{ $i }}" data-test="entry-line-row" class="space-y-3 p-3">
                         {{-- Tier 1: account, debit, credit, memo, remove --}}
                         <div class="{{ $lineGrid }} grid grid-cols-1 gap-3">
                             <div>
                                 <span class="mb-1 block text-xs font-medium text-muted-foreground lg:hidden">{{ __('Account') }}</span>
                                 <x-account-combo model="lines.{{ $i }}.account_id" options="accounts" :placeholder="__('— Select —')" data-test="line-account" />
+
+                                @if (! $lineCurrency && ($line['fx_currency'] ?? null))
+                                    {{-- The memo a foreign document's leg carries; it goes back unchanged unless the amount changes. --}}
+                                    @php($memoCents = abs($this->homeAmountCents($line['foreign_debit'] ?? '') - $this->homeAmountCents($line['foreign_credit'] ?? '')))
+                                    <div class="mt-1 font-mono text-xs text-muted-foreground" data-test="line-foreign-memo">{{ $line['fx_currency'].' '.number_format($memoCents / 100, 2).(($line['fx_rate'] ?? '') !== '' ? ' @ '.$line['fx_rate'] : '') }}</div>
+                                @endif
 
                                 @php($contactRole = $this->contactRequiringAccounts[(int) ($line['account_id'] ?? 0)] ?? null)
                                 @if ($contactRole === 'customer')
@@ -926,11 +1429,20 @@ new #[Title('Journal entry')] class extends Component
                             </div>
                             <div>
                                 <span class="mb-1 block text-xs font-medium text-muted-foreground lg:hidden">{{ __('Debit') }}</span>
-                                <x-amount-input model="lines.{{ $i }}.debit" class="lg:text-right" placeholder="0.00" data-test="line-debit" />
+                                @if ($lineCurrency)
+                                    {{-- The home equivalent of the foreign amount below; it is what balances. --}}
+                                    <div class="flex min-h-10 items-center justify-end rounded-lg bg-muted px-3 font-mono text-muted-foreground" data-test="line-home-debit">{{ $this->homeAmountLabel($line['debit']) }}</div>
+                                @else
+                                    <x-amount-input model="lines.{{ $i }}.debit" class="lg:text-right" placeholder="0.00" data-test="line-debit" />
+                                @endif
                             </div>
                             <div>
                                 <span class="mb-1 block text-xs font-medium text-muted-foreground lg:hidden">{{ __('Credit') }}</span>
-                                <x-amount-input model="lines.{{ $i }}.credit" class="lg:text-right" placeholder="0.00" data-test="line-credit" />
+                                @if ($lineCurrency)
+                                    <div class="flex min-h-10 items-center justify-end rounded-lg bg-muted px-3 font-mono text-muted-foreground" data-test="line-home-credit">{{ $this->homeAmountLabel($line['credit']) }}</div>
+                                @else
+                                    <x-amount-input model="lines.{{ $i }}.credit" class="lg:text-right" placeholder="0.00" data-test="line-credit" />
+                                @endif
                             </div>
                             <div>
                                 <span class="mb-1 block text-xs font-medium text-muted-foreground lg:hidden">{{ __('Line memo') }}</span>
@@ -942,6 +1454,30 @@ new #[Title('Journal entry')] class extends Component
                                 </flux:button>
                             </div>
                         </div>
+
+                        {{-- A line on a foreign-currency account is typed in that currency at a
+                             rate; the Debit / Credit above show its home equivalent. --}}
+                        @if ($lineCurrency)
+                            @php($lineRate = \App\Support\Currency::normalizeRate($line['fx_rate'] ?? ''))
+                            <div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start" data-test="line-foreign">
+                                <div class="sm:w-40">
+                                    <x-amount-input model="lines.{{ $i }}.foreign_debit" :label="__('Debit').' ('.$lineCurrency.')'" class="text-right" placeholder="0.00" data-test="line-foreign-debit" />
+                                </div>
+                                <div class="sm:w-40">
+                                    <x-amount-input model="lines.{{ $i }}.foreign_credit" :label="__('Credit').' ('.$lineCurrency.')'" class="text-right" placeholder="0.00" data-test="line-foreign-credit" />
+                                </div>
+                                <div class="sm:w-48">
+                                    <flux:input
+                                        wire:model.live.blur="lines.{{ $i }}.fx_rate"
+                                        :label="__('Exchange rate')"
+                                        :description:trailing="$lineRate !== null ? '1 '.$lineCurrency.' = '.$lineRate.' '.$company->currency_code : __('No rate on file for this date. Enter one.')"
+                                        inputmode="decimal"
+                                        autocomplete="off"
+                                        data-test="line-fx-rate"
+                                    />
+                                </div>
+                            </div>
+                        @endif
 
                         {{-- Tier 2: class, location & fund dimensions (only when tracked) --}}
                         @if ($this->tracksClasses || $this->tracksLocations || $this->tracksFunds)

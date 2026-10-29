@@ -253,6 +253,48 @@ as a retry guard: create with your own number, and a retried request that would
 duplicate it gets a `422` instead of a second document (see
 [§5.4](#54-reconcile-what-youve-sent)).
 
+### 2.3 Journal lines on foreign-currency accounts
+
+A journal entry balances in **home** cents (`debit_cents` / `credit_cents`). A line on
+a foreign-currency account — a foreign bank or credit card, or a per-currency Accounts
+Receivable / Payable control — also records what it moved in that account's currency,
+so the period-end revaluation restates real foreign balances and the AR/AP
+reconcilers see the line. Send what you know and the server works out the rest:
+
+| You send | The server works out |
+|---|---|
+| home cents + `foreign_debit_cents`/`foreign_credit_cents` + `fx_rate` | nothing; the three must agree: home within `max(1, round(fx_rate ÷ 2))` cents of foreign × rate, per side |
+| home cents + foreign cents | `fx_rate`, from the two amounts |
+| home cents (+ `fx_rate`) | the foreign amount |
+| `debit_cents: 0, credit_cents: 0` + foreign cents (+ `fx_rate`) | the home amount, rounded half-up |
+
+A missing `fx_rate` is the rate on file for `entry_date` — the one a foreign document
+dated that day would lock (manual rate first, then the daily fetched rate). With none
+on file the line fails with a `422` on `lines.N.fx_rate`. Rates are home units per 1
+foreign unit (`"1.35"`: one USD is 1.35 CAD), above zero, at most 8 decimal places.
+`currency_code` is optional and must be the account's own currency. Home amounts
+worked out from foreign ones are rounded line by line; when the entry balances exactly
+before that rounding but not after, the difference goes a cent at a time onto the
+largest of those lines. Nothing is worked out for a line on a home-currency account: it
+keeps a foreign memo only when the memo comes complete — `currency_code`, `fx_rate` and
+a foreign amount on the same side as the home amount, the way a foreign document's legs
+carry one — and anything less is a `422`. Responses carry `currency_code`, `fx_rate`, `foreign_debit_cents` and
+`foreign_credit_cents` on every line — `null`/`0` on a line without a memo.
+
+Opening a USD bank account (id 42) with 10,000.00 USD at 1.35 against Opening Balance
+Equity (id 17); the bank line comes back with `debit_cents: 1350000`:
+
+```json
+{
+  "entry_date": "2026-03-01",
+  "memo": "Opening balance — USD Chequing",
+  "lines": [
+    { "account_id": 42, "debit_cents": 0, "credit_cents": 0, "foreign_debit_cents": 1000000, "fx_rate": "1.35" },
+    { "account_id": 17, "debit_cents": 0, "credit_cents": 1350000 }
+  ]
+}
+```
+
 ---
 
 ## 3. The resource map

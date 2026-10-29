@@ -136,8 +136,11 @@ class JournalEntryController extends ApiController
      */
     protected function updatePosted(array $data, JournalEntry $journalEntry): JournalEntry
     {
-        $debits = collect($data['lines'])->sum(fn (array $l): int => (int) ($l['debit_cents'] ?? 0));
-        $credits = collect($data['lines'])->sum(fn (array $l): int => (int) ($l['credit_cents'] ?? 0));
+        // Balance on the home amounts the lines will actually carry: a line on
+        // a foreign-currency account may send only its foreign amount.
+        $lines = app(SaveJournalEntry::class)->resolveLines($data['lines'], $data['entry_date']);
+        $debits = array_sum(array_column($lines, 'debit_cents'));
+        $credits = array_sum(array_column($lines, 'credit_cents'));
 
         if ($debits !== $credits || $debits === 0) {
             throw UnbalancedJournalException::from($debits, $credits);

@@ -3,6 +3,7 @@
 namespace App\Http\Resources\Api\V1;
 
 use App\Models\JournalEntry;
+use App\Support\Currency;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -37,6 +38,12 @@ class JournalEntryResource extends JsonResource
                 'debit_cents' => (int) $line->debit_cents,
                 'credit_cents' => (int) $line->credit_cents,
                 'memo' => $line->memo,
+                // The foreign memo: what the line moved in its currency, and the
+                // rate (home units per 1 foreign unit). Null / 0 when it has none.
+                'currency_code' => $line->currency_code,
+                'fx_rate' => $line->fx_rate !== null ? Currency::normalizeRate($line->fx_rate) : null,
+                'foreign_debit_cents' => (int) $line->foreign_debit_cents,
+                'foreign_credit_cents' => (int) $line->foreign_credit_cents,
             ])->all(),
         ];
     }

@@ -120,10 +120,68 @@ final class Currency
      */
     public static function toHomeCents(int $foreignCents, string $rate): int
     {
-        $product = bcmul((string) $foreignCents, $rate, 8);
-        $halfUp = bcadd($product, str_starts_with($product, '-') ? '-0.5' : '0.5', 0);
+        return self::roundHalfUp(bcmul((string) $foreignCents, $rate, 8));
+    }
 
-        return (int) $halfUp;
+    /**
+     * The inverse of {@see toHomeCents()}: an integer home amount (in home minor
+     * units) expressed in foreign minor units at the given rate (home units per
+     * 1 foreign unit), rounded half-up. Used where only the home side of a
+     * foreign-account line is known and its foreign amount has to be worked out.
+     */
+    public static function toForeignCents(int $homeCents, string $rate): int
+    {
+        return self::roundHalfUp(bcdiv((string) $homeCents, $rate, 8));
+    }
+
+    /**
+     * The rate (home units per 1 foreign unit) that a home amount and a foreign
+     * amount imply, to eight decimal places — the precision rates are stored
+     * at. Null when the foreign amount is zero or the two have opposite signs.
+     */
+    public static function impliedRate(int $homeCents, int $foreignCents): ?string
+    {
+        if ($foreignCents === 0 || ($homeCents < 0) !== ($foreignCents < 0)) {
+            return null;
+        }
+
+        $quotient = bcdiv((string) abs($homeCents), (string) abs($foreignCents), 9);
+
+        return self::normalizeRate(bcadd($quotient, '0.000000005', 8));
+    }
+
+    /**
+     * A rate written the way the app stores and shows it: a plain positive
+     * decimal with at most eight decimal places and no trailing zeros ("1.35",
+     * not "1.35000000"). Null for anything else — empty, zero, negative, an
+     * exponent, more than eight decimals or more than ten whole digits (the
+     * `decimal(18, 8)` columns rates live in).
+     */
+    public static function normalizeRate(mixed $rate): ?string
+    {
+        if (! is_string($rate) && ! is_int($rate) && ! is_float($rate)) {
+            return null;
+        }
+
+        $rate = ltrim(trim((string) $rate), '+');
+
+        if (preg_match('/^(\d{0,10})(?:\.(\d{0,8}))?$/', $rate, $parts) !== 1) {
+            return null;
+        }
+
+        $whole = ltrim($parts[1], '0');
+        $fraction = rtrim($parts[2] ?? '', '0');
+        $normalized = ($whole === '' ? '0' : $whole).($fraction === '' ? '' : '.'.$fraction);
+
+        return bccomp($normalized, '0', 8) === 1 ? $normalized : null;
+    }
+
+    /**
+     * Round a bcmath decimal string to the nearest integer, halves away from zero.
+     */
+    private static function roundHalfUp(string $value): int
+    {
+        return (int) bcadd($value, str_starts_with($value, '-') ? '-0.5' : '0.5', 0);
     }
 
     /**
