@@ -1928,6 +1928,7 @@ components:
         id: { type: integer }
         name: { type: string }
         is_cheque: { type: boolean }
+        is_card: { type: boolean }
         is_active: { type: boolean }
         created_at: { type: [string, "null"], format: date-time }
     PaymentMethodInput:
@@ -1936,6 +1937,7 @@ components:
       properties:
         name: { type: string, maxLength: 255 }
         is_cheque: { type: boolean, description: "Marks the method as a cheque so receipts using it feed the deposit workflow." }
+        is_card: { type: boolean, description: "Marks the method as a card (credit, debit or prepaid) or a payment app such as PayPal. The card company or app reports these payments on Form 1099-K, so the US 1099 Summary leaves them out." }
         is_active: { type: boolean }
 
   requestBodies:

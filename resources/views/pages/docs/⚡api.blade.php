@@ -253,7 +253,7 @@ X-Api-Key: YOUR_API_KEY</code></pre>
                 <tr>
                     <td>{{ __('Form 1099 Vendor Totals (US)') }}<br><code>form1099-tool</code></td>
                     <td>{{ __('1099-NEC vendor payment totals for a calendar year.') }}</td>
-                    <td>{{ __('US organizations only; notes the $600 reporting threshold.') }}</td>
+                    <td>{{ __('US organizations only; notes the year’s reporting threshold ($600 before 2026, $2,000 for 2026) and leaves out card payments.') }}</td>
                 </tr>
                 <tr>
                     <td>{{ __('Company profile') }}<br><code>company-profile-tool</code></td>

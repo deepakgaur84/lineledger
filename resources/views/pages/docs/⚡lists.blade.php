@@ -168,6 +168,7 @@ new #[Title('Documentation — Lists')] class extends Component {}; ?>
             <li>{{ __('Open Settings → Lists → Payment methods, then select New method.') }}</li>
             <li>{{ __('Enter a Name.') }}</li>
             <li>{{ __('Turn on Cheque method if this method should enable cheque printing. (In a US organization the label reads Check throughout.)') }}</li>
+            <li>{{ __('In a US organization, turn on Card or payment app for a credit, debit or prepaid card, or for an app such as PayPal or Venmo. The 1099 Summary leaves out payments made with it, since the card company or app reports them on Form 1099-K. Credit card starts with it turned on.') }}</li>
             <li>{{ __('Select Save.') }}</li>
         </ol>
 

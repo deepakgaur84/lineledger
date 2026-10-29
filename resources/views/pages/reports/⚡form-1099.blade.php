@@ -6,6 +6,8 @@ use App\Services\Reporting\CsvExporter;
 use App\Services\Reporting\Form1099Calculator;
 use App\Services\Reporting\PdfExporter;
 use App\Services\Reporting\XlsxExporter;
+use App\Support\Money;
+use App\Support\Tax\Form1099Threshold;
 use Carbon\CarbonImmutable;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
@@ -52,6 +54,16 @@ new #[Title('1099 Summary')] class extends Component {
         return $rows;
     }
 
+    /**
+     * The year's IRS reporting threshold, formatted. The threshold is a US-dollar
+     * amount set by statute, so it is shown in dollars whatever the locale.
+     */
+    #[Computed]
+    public function thresholdLabel(): string
+    {
+        return Money::fromCents(Form1099Threshold::centsFor($this->year), 'USD')->format();
+    }
+
     public function totals(): array
     {
         return ['total' => array_sum(array_column($this->rows, 'total_cents')), 'count' => count($this->rows)];
@@ -89,6 +101,8 @@ new #[Title('1099 Summary')] class extends Component {
             'rows' => $this->rows,
             'totals' => $this->totals(),
             'year' => $this->year,
+            // The PDF is printed in English, so the amount is too.
+            'threshold' => Money::fromCents(Form1099Threshold::centsFor($this->year), 'USD')->format('en'),
         ], "1099-summary-{$this->year}.pdf");
     }
 }; ?>
@@ -101,7 +115,7 @@ new #[Title('1099 Summary')] class extends Component {
         </div>
         <div class="flex flex-wrap items-end gap-2">
             <flux:input type="number" wire:model.live="year" :label="__('Year')" class="max-w-[120px]" />
-            <flux:switch wire:model.live="showAll" :label="__('Show below $600')" />
+            <flux:switch wire:model.live="showAll" :label="__('Show below :amount', ['amount' => $this->thresholdLabel])" />
             <flux:dropdown align="end">
                 <flux:button variant="primary" icon="arrow-down-tray" icon:trailing="chevron-down" :disabled="empty($this->rows)">{{ __('Download') }}</flux:button>
                 <flux:menu>
@@ -112,6 +126,12 @@ new #[Title('1099 Summary')] class extends Component {
             </flux:dropdown>
         </div>
     </div>
+
+    @unless (Form1099Threshold::isPublished($this->year))
+        <flux:callout variant="warning" icon="exclamation-triangle" class="mb-6" data-test="form-1099-threshold-pending">
+            <flux:callout.text>{{ __('The IRS has not published the :year reporting threshold yet, so this report uses the :latest threshold of :amount.', ['year' => $this->year, 'latest' => Form1099Threshold::latestPublishedYear(), 'amount' => $this->thresholdLabel]) }}</flux:callout.text>
+        </flux:callout>
+    @endunless
 
     <div class="overflow-x-auto rounded-lg border border-border">
         <table class="w-full text-sm">
@@ -128,7 +148,7 @@ new #[Title('1099 Summary')] class extends Component {
                         <td class="px-4 py-2">
                             <a href="{{ route('reports.contact-statement', ['company' => $company->slug, 'contact' => $row['contact_id'], 'kind' => 'ap']) }}" class="underline">{{ $row['name'] }}</a>
                             @unless ($row['meets_threshold'])
-                                <flux:badge size="sm" color="zinc" class="ml-1">{{ __('below $600') }}</flux:badge>
+                                <flux:badge size="sm" color="zinc" class="ml-1">{{ __('below :amount', ['amount' => $this->thresholdLabel]) }}</flux:badge>
                             @endunless
                         </td>
                         <td class="px-4 py-2 font-mono text-muted-foreground">{{ $row['tax_number'] ?: '—' }}</td>
@@ -149,7 +169,9 @@ new #[Title('1099 Summary')] class extends Component {
         </table>
     </div>
 
-    <div class="mt-4 text-sm text-muted-foreground">
-        <p>{{ __('Includes posted bill payments, posted cheques, and posted pay-now expenses (card, EFT, debit, or lines recorded from a bank import) to a 1099-tracked vendor in the year. Mark a vendor for 1099 on its profile.') }}</p>
+    <div class="mt-4 space-y-2 text-sm text-muted-foreground">
+        <p>{{ __('Includes posted bill payments, posted cheques, and posted pay-now expenses (EFT, ACH, or lines recorded from a bank import) to a 1099-tracked vendor in the year. Mark a vendor for 1099 on its profile.') }}</p>
+        <p>{{ __('Leaves out payments charged to a credit card account or made with a payment method marked Card or payment app, such as a debit card or PayPal: the card company or app reports those on Form 1099-K, not 1099-NEC.') }}</p>
+        <p>{{ __('The reporting threshold follows the year the payments were made in: $600 before 2026, $2,000 for 2026, and an amount the IRS adjusts for inflation from 2027.') }}</p>
     </div>
 </section>

@@ -8,6 +8,8 @@ use App\Enums\JurisdictionCapability;
 use App\Enums\Section;
 use App\Mcp\Concerns\AnswersBusinessQuestions;
 use App\Services\Reporting\Form1099Calculator;
+use App\Support\Money;
+use App\Support\Tax\Form1099Threshold;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Laravel\Mcp\Request;
@@ -20,7 +22,7 @@ class Form1099Tool extends Tool
 
     protected string $title = 'Form 1099 Vendor Totals (US)';
 
-    protected string $description = 'Summarize US Form 1099-NEC (Box 1) vendor payment totals for a calendar year: vendors flagged for 1099 tracking and their yearly payment totals, noting the $600 reporting threshold. All figures are in the company\'s home currency. This tool is read-only and never modifies data.';
+    protected string $description = 'Summarize US Form 1099-NEC (Box 1) vendor payment totals for a calendar year: vendors flagged for 1099 tracking and their yearly payment totals, noting the year\'s IRS reporting threshold ($600 for payments made before 2026, $2,000 for 2026). Card and payment-app payments are left out, since the card company or app reports them on Form 1099-K. All figures are in the company\'s home currency. This tool is read-only and never modifies data.';
 
     public function handle(Request $request): Response
     {
@@ -49,11 +51,19 @@ class Form1099Tool extends Tool
             return Response::text("No vendors are flagged for 1099 tracking, so there are no Form 1099 totals to report for {$year}.");
         }
 
-        $threshold = $this->money(Form1099Calculator::THRESHOLD_CENTS);
+        // A statutory US-dollar amount, so it is shown in dollars.
+        $threshold = Money::fromCents(Form1099Threshold::centsFor($year), 'USD')->format();
 
         $lines = [
             "Form 1099-NEC (Box 1) vendor totals for {$year} (reporting threshold {$threshold}):",
         ];
+
+        if (! Form1099Threshold::isPublished($year)) {
+            $latest = Form1099Threshold::latestPublishedYear();
+            $lines[] = "Note: the IRS has not published the {$year} threshold yet, so this uses the {$latest} figure.";
+        }
+
+        $lines[] = 'Card and payment-app payments are left out: the card company or app reports them on Form 1099-K.';
 
         foreach ($rows as $row) {
             $name = $row['name'] !== '' ? $row['name'] : 'Unnamed vendor';
