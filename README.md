@@ -429,7 +429,9 @@ unlock specific subsystems. Set the same keys in production via Forge → Site �
 | Key | Purpose | Local | Production |
 | --- | --- | --- | --- |
 | `APP_NAME` | App name shown in UI & emails | `LineLedger` | `LineLedger` |
-| `APP_URL` | Absolute base URL (links, passkey RP ID, Stripe redirects) | `http://localhost:8000` | `https://books.lineledger.ca` |
+| `APP_URL` | Absolute base URL (links, passkey RP ID, Stripe redirects). Every link in an email is built on it, and its host is the one the app answers on: outside local development, a request for any other host gets **400 Bad Request** unless it's in `TRUSTED_HOSTS` | `http://localhost:8000` | `https://books.lineledger.ca` |
+| `TRUSTED_HOSTS` | Other host names this installation answers on, comma-separated (a second domain, App Platform's `.ondigitalocean.app` address once a custom domain is primary). Subdomains of `APP_URL` aren't included. The project's sibling sites in `APP_URL_CA` / `_US` / `_GB` are separate installations, so they don't belong here | empty | empty, or your extra host names |
+| `TRUSTED_PROXIES` | The load balancers or reverse proxies whose `X-Forwarded-For` / `-Proto` / `-Port` headers count, as comma-separated IPs or CIDR ranges, or `*` where the app can only be reached through the platform's balancer. From anyone else those headers are ignored and the connecting peer is the client, so nobody can pick the IP the sign-in throttle and the security log see. `X-Forwarded-Host` is never honoured, so a proxy must pass the `Host` header through. **Behind a balancer, CDN or proxy, set it**, or every visitor looks like the proxy and HTTPS goes undetected | empty | empty when nginx serves the site itself; the balancer's address, [Cloudflare's ranges](https://www.cloudflare.com/ips/) behind its proxy, `*` on App Platform |
 | `APP_KEY` | Encryption key | `php artisan key:generate` | generated once, kept secret |
 | `APP_LOCALE` | Language (`en` / `fr`) of signed-out pages, and of documents when neither the customer nor the organization has one. Each user, organization and customer can choose their own in the app | `en` | `en` |
 | `APP_REGION` | Country this deployment serves (`CA` / `US` / `GB`). Picks which marketing site the footer's legal links point at. Leave **unset in production** to derive it from the request host (`.ca` → CA, `.uk` → GB, anything else → US); set it explicitly on host-agnostic environments like local dev | `CA` (`.env.example` ships it blank) | unset (derived from host) |
@@ -500,7 +502,7 @@ you need the full set of knobs; the keys below are the ones that turn the featur
 | **Bot challenge on auth forms** | `TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET_KEY` (see the [Environment](#environment) table); `TURNSTILE_ENABLED=false` kills it regardless of keys | `config/turnstile.php` |
 | **Content-Security-Policy** | Always emitted by `SecurityHeaders`; `CSP_MODE` picks `report-only` (default — observe, don't block), `enforce`, or `off` (the escape hatch for a self-host with customized assets). `CSP_REPORTING` / `CSP_REPORT_SAMPLE` control the `POST /csp-report` violation log in `storage/logs/csp.log` | `config/security.php` |
 | **Cheque print alignment** | No env vars. `config/cheque.php` holds the Intuit voucher-stock grid — every field's `[x, y]` baseline, font sizes, the `Ymd` date comb, the payee address block and the voucher columns — plus `offset_x` / `offset_y` to nudge the whole page for a printer. It is a config file, so a change needs `php artisan config:cache` (or a redeploy) to take | `config/cheque.php` |
-| **Security-alert thresholds** | `SECURITY_ALERT_WINDOW_MINUTES`, `SECURITY_ALERT_FAILED_LOGIN_THRESHOLD`, `SECURITY_ALERT_API_KEY_REVOCATION_THRESHOLD` (defaults 60 / 10 / 5) | `config/services.php` |
+| **Security-alert thresholds** | `SECURITY_ALERT_WINDOW_MINUTES`, `SECURITY_ALERT_FAILED_LOGIN_THRESHOLD` (counted per IP and, separately, per email address tried), `SECURITY_ALERT_API_KEY_REVOCATION_THRESHOLD` (defaults 60 / 10 / 5) | `config/services.php` |
 
 > **Filing payroll slips needs your transmitter identity.** The T4 / T4A XML carries a
 > CRA transmitter number and the RL-1 XML carries Revenu Québec preparer numbers. The
@@ -838,10 +840,16 @@ off-host too.
 
 Three ways to serve it, from most to least common:
 
-1. **Behind your reverse proxy** (Traefik, nginx, Caddy, …): keep the default
-   `HTTP_PORT=8080`, terminate TLS at the proxy, and make sure it forwards
-   `X-Forwarded-Proto` (proxies are already trusted). Without that header,
-   secure cookies break under HTTPS and logins fail.
+1. **Behind your reverse proxy** (Traefik, nginx, Caddy, …): terminate TLS at
+   the proxy and set `TRUSTED_PROXIES` in `.env` to the address it connects
+   from. A proxy on the same Docker host arrives from a Docker network, which
+   `172.16.0.0/12` covers; publish the app on loopback only
+   (`HTTP_PORT=127.0.0.1:8080`) so nothing else reaches that port. The proxy
+   must send `X-Forwarded-Proto` and pass the original `Host` header through
+   (nginx: `proxy_set_header Host $host;`, Apache: `ProxyPreserveHost On`);
+   `X-Forwarded-Host` is ignored. Without the proxy trusted, the app can't tell
+   the request was HTTPS: signed links (email verification, file uploads) fail
+   and every visitor shows up with the proxy's IP.
 2. **Direct exposure with automatic HTTPS**: set `SERVER_NAME=books.example.com`
    in `.env` and uncomment the 80/443 ports on the `app` service — FrankenPHP's
    built-in Caddy obtains and renews certificates automatically (persisted in
@@ -850,7 +858,10 @@ Three ways to serve it, from most to least common:
    HTTPS (or localhost).
 
 In every case `APP_URL` must match the URL users actually visit, scheme
-included.
+included. The app answers only on its host (any other gets 400 Bad Request),
+so list any other names it's reached by in `TRUSTED_HOSTS`. Leave
+`TRUSTED_PROXIES` empty in cases 2 and 3: with the app reached directly, a
+forwarding header from a client is just client input.
 
 ### Optional services
 
@@ -920,7 +931,9 @@ There is nothing to configure before the first visit.
 4. **Use your own domain** for HTTPS: point an `A` record at the Droplet's IP,
    then over SSH run `lineledger domain books.example.com`. The certificate
    is issued and renewed automatically. Until you do this, traffic isn't
-   encrypted, and passkeys (which need HTTPS) aren't available.
+   encrypted, and passkeys (which need HTTPS) aren't available. LineLedger
+   answers only on that address (the IP until then); to reach it by another
+   name as well, run `lineledger config TRUSTED_HOSTS other.example.com`.
 
 Everything lives in `/opt/lineledger` (the compose bundle, its `.env` holding
 `APP_KEY`, and `backups/`). Over SSH:
@@ -982,7 +995,11 @@ containers. Resize any of them in the control panel. App Platform has no
 persistent disk, so nothing is kept in `storage/`: files live in Spaces, logs go
 to the platform (`doctl apps logs <app-id> web`), and the OAuth signing keys are
 env vars rather than files. Add your own domain under the app's Settings →
-Domains; `APP_URL` follows it on the next deploy.
+Domains; `APP_URL` follows it on the next deploy, and from then on the
+`.ondigitalocean.app` address answers 400 Bad Request unless you add it to
+`TRUSTED_HOSTS`. The spec sets `TRUSTED_PROXIES=*`: App Platform's load
+balancer is the only way to reach the containers, and it is what tells the
+app the visitor's IP and that the request was HTTPS.
 
 **Upgrading.** Back up first (each organization's Settings → Backup & Export,
 or a database backup in the control panel), then run `./deploy.sh` again. With the app already
@@ -1032,6 +1049,11 @@ enforced, so mail must send before the first user can create an organization),
 `PASSKEYS_USER_HANDLE_SECRET`, the three alert addresses, and `DB_QUEUE_RETRY_AFTER`
 (step 6). Add the `STRIPE_*` keys for portal card payments and the `TURNSTILE_*`
 keys if the signup form is public. Set `APP_ENV=production` and `APP_DEBUG=false`.
+Leave `TRUSTED_PROXIES` empty while the site's own nginx faces the internet. If
+the domain is proxied by Cloudflare or sits behind a load balancer, set it to
+[Cloudflare's IP ranges](https://www.cloudflare.com/ips/) or the balancer's
+address, or every visitor shows up with the proxy's IP. A site that answers on
+more than one domain lists the others in `TRUSTED_HOSTS`.
 
 **5. Set the deploy script (Forge → Site → Deployment → Deploy Script).**
 
@@ -1269,6 +1291,15 @@ release branch), so a deploy always lands on a version you chose. After the depl
   until `config:cache` is re-run.
 - **Stripe payments fail silently** — the webhook secret is wrong or the endpoint
   URL doesn't match `APP_URL`; check Stripe → **Developers → Webhooks → Logs**.
+- **Every page is "400 Bad Request"** — the address in the browser isn't
+  `APP_URL`'s host. Correct `APP_URL`, or add the other name to `TRUSTED_HOSTS`,
+  then `php artisan config:cache`. Behind a proxy, also check that it passes the
+  original `Host` header through rather than its own upstream name.
+- **Every visitor has the same IP in Admin → Security, HSTS is missing, or email
+  verification links and file uploads fail behind a proxy** — the app doesn't
+  trust the proxy, so it sees the proxy's address and plain HTTP. Set
+  `TRUSTED_PROXIES` to the proxy's address (Cloudflare's ranges for a
+  Cloudflare-proxied domain).
 - **MCP OAuth connect fails with a 500 on the authorize or token step** and the log
   shows `Key path ".../storage/oauth-private.key" does not exist or is not
   readable` — Passport keys weren't generated. Run `php artisan passport:keys` once

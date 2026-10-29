@@ -4,6 +4,7 @@ namespace App\Notifications;
 
 use App\Console\Commands\CheckExchangeRateHealth;
 use App\Services\Currency\ExchangeRateHealthReport;
+use App\Support\Http\CanonicalUrl;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
@@ -50,6 +51,6 @@ class ExchangeRateHealthAlert extends Notification
 
         return $mail
             ->line('Check that the `rates:fetch` scheduled job is running and that the Frankfurter provider is reachable.')
-            ->action('View FX health endpoint', url('/health/fx'));
+            ->action('View FX health endpoint', CanonicalUrl::to('/health/fx'));
     }
 }

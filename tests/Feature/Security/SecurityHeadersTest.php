@@ -25,12 +25,23 @@ test('HSTS is not advertised over plain HTTP', function () {
 
 test('HSTS is advertised when a trusted proxy forwards the request as HTTPS', function () {
     // Behind a TLS-terminating balancer the connection to the app is plain HTTP
-    // but X-Forwarded-Proto is https. With trusted proxies configured (bootstrap
-    // /app.php), $request->isSecure() honours it and HSTS is emitted. Without the
-    // proxy trust this header would be silently missing in production.
+    // but X-Forwarded-Proto is https. With the balancer in TRUSTED_PROXIES
+    // (config/trustedproxy.php; the test client connects from 127.0.0.1),
+    // $request->isSecure() honours it and HSTS is emitted. Without the proxy
+    // trust this header would be silently missing in production.
+    config(['trustedproxy.proxies' => ['127.0.0.1']]);
+
     $response = $this->get('/login', ['X-Forwarded-Proto' => 'https']);
 
     $response->assertHeader('Strict-Transport-Security');
+});
+
+test('HSTS is not advertised when a peer that is not a trusted proxy claims HTTPS', function () {
+    config(['trustedproxy.proxies' => []]);
+
+    $response = $this->get('/login', ['X-Forwarded-Proto' => 'https']);
+
+    expect($response->headers->has('Strict-Transport-Security'))->toBeFalse();
 });
 
 test('CSP advertises the report endpoint when reporting is on', function () {

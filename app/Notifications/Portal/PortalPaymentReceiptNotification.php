@@ -4,6 +4,7 @@ namespace App\Notifications\Portal;
 
 use App\Models\Company;
 use App\Models\CustomerReceipt;
+use App\Support\Http\CanonicalUrl;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -36,6 +37,6 @@ class PortalPaymentReceiptNotification extends Notification implements ShouldQue
             ->greeting(__('Thank you for your payment'))
             ->line(__('We have received your payment of :amount.', ['amount' => $amount]))
             ->line(__('Receipt number: :no', ['no' => $this->receipt->receipt_no]))
-            ->action(__('View your account'), route('portal.dashboard', ['company' => $this->company->slug]));
+            ->action(__('View your account'), CanonicalUrl::route('portal.dashboard', ['company' => $this->company->slug]));
     }
 }

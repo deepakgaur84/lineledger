@@ -14,10 +14,14 @@ use App\Observers\CompanyObserver;
 use App\Services\Currency\ExchangeRateProvider;
 use App\Services\Currency\Providers\FrankfurterProvider;
 use App\Services\Currency\Providers\NullExchangeRateProvider;
+use App\Support\Http\CanonicalUrl;
 use App\Support\MailSettings;
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Events\Login;
+use Illuminate\Auth\Notifications\ResetPassword;
+use Illuminate\Auth\Notifications\VerifyEmail;
 use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Contracts\Auth\CanResetPassword;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
@@ -67,6 +71,7 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->configureDefaults();
+        $this->configureEmailLinks();
         $this->configureRateLimiting();
         $this->configureRouteBindings();
         $this->configurePassport();
@@ -168,6 +173,26 @@ class AppServiceProvider extends ServiceProvider
                 ->uncompromised()
             : null,
         );
+    }
+
+    /**
+     * Build the password-reset and email-verification links on APP_URL. Both
+     * notifications are sent inline, and Laravel's defaults build their links on
+     * the request's host, so a forged Host would carry the reset token or the
+     * signed verification link to another site.
+     */
+    protected function configureEmailLinks(): void
+    {
+        ResetPassword::createUrlUsing(fn (CanResetPassword $user, string $token): string => CanonicalUrl::route('password.reset', [
+            'token' => $token,
+            'email' => $user->getEmailForPasswordReset(),
+        ]));
+
+        VerifyEmail::createUrlUsing(fn (User $user): string => CanonicalUrl::temporarySignedRoute(
+            'verification.verify',
+            now()->addMinutes((int) config('auth.verification.expire', 60)),
+            ['id' => $user->getKey(), 'hash' => sha1($user->getEmailForVerification())],
+        ));
     }
 
     /**
