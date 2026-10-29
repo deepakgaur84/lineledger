@@ -55,30 +55,6 @@ parameters:
 			path: app/Actions/Accounting/ReverseJournalEntry.php
 
 		-
-			message: '#^Using nullsafe property access "\?\-\>amount_cents" on left side of \?\? is unnecessary\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Actions/Banking/SaveDeposit.php
-
-		-
-			message: '#^Using nullsafe property access "\?\-\>receipt_no" on left side of \?\? is unnecessary\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Actions/Banking/SaveDeposit.php
-
-		-
-			message: '#^Using nullsafe property access "\?\-\>sales_receipt_no" on left side of \?\? is unnecessary\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Actions/Banking/SaveDeposit.php
-
-		-
-			message: '#^Using nullsafe property access "\?\-\>total_cents" on left side of \?\? is unnecessary\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Actions/Banking/SaveDeposit.php
-
-		-
 			message: '#^Strict comparison using \!\=\= between mixed and null will always evaluate to true\.$#'
 			identifier: notIdentical.alwaysTrue
 			count: 1

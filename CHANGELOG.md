@@ -82,6 +82,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Payments and deposits are checked on the server before they are saved.**
+  Receive payment, Pay bills (one payee or the batch page), Make deposit and
+  the API now check every invoice or bill a payment is applied to, and every
+  receipt on a deposit, against the database instead of trusting the copy the
+  page or the request carried. A payment applies only to posted invoices (or
+  bills) of the same organization and the same customer (or payee, and the
+  same kind: vendor bill or reimbursement), for no more than each still owes.
+  A deposit takes only posted receipts of the same organization that were
+  received into Undeposited Funds, each once, not already on another deposit
+  that hasn't been voided, and for the receipt's own amount. On the forms only
+  the amounts you type and the receipts you tick come from the browser; which
+  document a row names, and its open balance, stay with the server. Posting a
+  draft payment or deposit later checks it again, in case the invoice was paid
+  or the receipt deposited meanwhile. A refused line shows as a form error, or
+  a 422 from the API, naming the document. Overpayments still stay on account
+  as credit, and card refunds still net out of a deposit. **Self-hosters with
+  more than one organization should upgrade.**
 - **`symfony/mime` 8.1.10** (from 8.1.7) fixes an email header injection through
   MIME parameter names that contain non-token characters
   ([CVE-2026-45070](https://symfony.com/cve-2026-45070)). LineLedger never takes a

@@ -5,20 +5,28 @@ namespace App\Services\Posting;
 use App\Enums\AccountSubtype;
 use App\Enums\AuditAction;
 use App\Enums\DepositStatus;
+use App\Enums\ReceiptStatus;
+use App\Enums\SalesReceiptStatus;
 use App\Exceptions\Posting\AlreadyPostedException;
 use App\Exceptions\Posting\PeriodLockedException;
 use App\Exceptions\Posting\PostingValidationException;
 use App\Exceptions\Posting\UnbalancedJournalException;
 use App\Models\Account;
+use App\Models\CustomerReceipt;
 use App\Models\Deposit;
+use App\Models\DepositLine;
 use App\Models\JournalEntry;
+use App\Models\SalesReceipt;
+use App\Scopes\CompanyScope;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
 use App\Services\Currency\ExchangeRateService;
 use App\Services\Reconciliation\BankReconciliationLockGuard;
 use App\Support\Banking\BankLineMemo;
 use App\Support\Currency;
+use App\Support\Money;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -67,6 +75,8 @@ class DepositPoster
                     CarbonImmutable::parse($deposit->company->lock_date),
                 );
             }
+
+            $this->ensureReceiptLinesDepositable((int) $deposit->company_id, $deposit->lines, $deposit);
 
             $deposit->recalculateAmount();
 
@@ -207,6 +217,146 @@ class DepositPoster
 
             return $entry;
         }));
+    }
+
+    /**
+     * Refuse receipt lines that would take out of Undeposited Funds money it
+     * never held. Each must name a posted receipt (or pay-now sales receipt) of
+     * this organization that was received into Undeposited Funds, appears once,
+     * isn't on another deposit that hasn't been voided, and is deposited for
+     * exactly its own amount — so a receipt can't be banked twice, by a retried
+     * request or by two people at the deposit screen, nor for an edited figure.
+     * The receipts are row-locked first, so a second deposit of the same one
+     * waits for this one and then finds it taken. Used by SaveDeposit before
+     * anything is written, and by post() for a draft saved earlier. Returns the
+     * receipts the lines name.
+     *
+     * @param  iterable<array<string, mixed>|DepositLine>  $lines
+     * @return array{customer: Collection<int, CustomerReceipt>, sales: Collection<int, SalesReceipt>}
+     *
+     * @throws PostingValidationException
+     */
+    public function ensureReceiptLinesDepositable(int $companyId, iterable $lines, ?Deposit $deposit = null): array
+    {
+        $sources = [];
+
+        foreach ($lines as $line) {
+            if (! empty($line['customer_receipt_id'])) {
+                $sources[] = ['customer', (int) $line['customer_receipt_id'], $line['amount_cents'] ?? null];
+            } elseif (! empty($line['sales_receipt_id'])) {
+                $sources[] = ['sales', (int) $line['sales_receipt_id'], $line['amount_cents'] ?? null];
+            }
+        }
+
+        if ($sources === []) {
+            return ['customer' => new Collection, 'sales' => new Collection];
+        }
+
+        $ids = fn (string $kind): array => array_values(array_unique(array_map(
+            fn (array $source): int => $source[1],
+            array_filter($sources, fn (array $source): bool => $source[0] === $kind),
+        )));
+
+        // Row locks first: a second deposit of the same receipt, from a retried
+        // request or someone else at the deposit screen, waits here for this one
+        // and then finds the receipt taken.
+        $receipts = [
+            'customer' => CustomerReceipt::withoutGlobalScope(CompanyScope::class)
+                ->where('company_id', $companyId)
+                ->whereKey($ids('customer'))
+                ->lockForUpdate()
+                ->get(),
+            'sales' => SalesReceipt::withoutGlobalScope(CompanyScope::class)
+                ->where('company_id', $companyId)
+                ->whereKey($ids('sales'))
+                ->lockForUpdate()
+                ->get(),
+        ];
+
+        $undepositedIds = Account::withoutGlobalScope(CompanyScope::class)
+            ->where('company_id', $companyId)
+            ->where('subtype', AccountSubtype::UndepositedFunds->value)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $held = [
+            'customer' => $this->depositsHolding('customer_receipt_id', $companyId, $ids('customer'), $deposit),
+            'sales' => $this->depositsHolding('sales_receipt_id', $companyId, $ids('sales'), $deposit),
+        ];
+
+        $seen = [];
+
+        foreach ($sources as [$kind, $id, $amountCents]) {
+            $receipt = $receipts[$kind]->find($id);
+
+            if ($receipt === null) {
+                throw new PostingValidationException(__('That receipt could not be found.'));
+            }
+
+            $isPayment = $receipt instanceof CustomerReceipt;
+            $no = ['no' => $isPayment ? $receipt->receipt_no : $receipt->sales_receipt_no];
+
+            if (isset($seen[$kind][$id])) {
+                throw new PostingValidationException(__('Receipt :no appears on this deposit more than once.', $no));
+            }
+
+            $seen[$kind][$id] = true;
+
+            $posted = $isPayment
+                ? $receipt->status === ReceiptStatus::Posted
+                : $receipt->status === SalesReceiptStatus::Posted;
+
+            if (! $posted) {
+                throw new PostingValidationException(__('Receipt :no is not posted, so it can\'t be deposited.', $no));
+            }
+
+            if (! in_array((int) $receipt->deposit_to_account_id, $undepositedIds, true)) {
+                throw new PostingValidationException(__('Receipt :no was not received into Undeposited Funds, so it can\'t be deposited from there.', $no));
+            }
+
+            if (isset($held[$kind][$id])) {
+                throw new PostingValidationException(__('Receipt :no is already on deposit :deposit.', [...$no, 'deposit' => $held[$kind][$id]]));
+            }
+
+            $receiptCents = (int) ($isPayment ? $receipt->amount_cents : $receipt->total_cents);
+
+            if ($amountCents !== null && (int) $amountCents !== $receiptCents) {
+                throw new PostingValidationException(__('Receipt :no is for :amount, so it must be deposited for that amount.', [
+                    ...$no,
+                    'amount' => Money::fromCents($receiptCents)->toDecimalString(),
+                ]));
+            }
+        }
+
+        return $receipts;
+    }
+
+    /**
+     * The number of the deposit (other than $deposit, and not voided) each of
+     * these receipts is already on, keyed by receipt id.
+     *
+     * @param  list<int>  $ids
+     * @return array<int, string>
+     */
+    private function depositsHolding(string $column, int $companyId, array $ids, ?Deposit $deposit): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+
+        $ownId = $deposit?->exists ? (int) $deposit->id : null;
+
+        return DB::table('deposit_lines as dl')
+            ->join('deposits as d', 'd.id', '=', 'dl.deposit_id')
+            ->where('d.company_id', $companyId)
+            ->where('d.status', '!=', DepositStatus::Void->value)
+            ->whereNull('d.deleted_at')
+            ->when($ownId !== null, fn ($query) => $query->where('d.id', '!=', $ownId))
+            ->whereIn('dl.'.$column, $ids)
+            ->pluck('d.deposit_no', 'dl.'.$column)
+            ->mapWithKeys(fn ($no, $id) => [(int) $id => (string) $no])
+            ->all();
     }
 
     public function void(Deposit $deposit, ?CarbonImmutable $voidDate = null): void

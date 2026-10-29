@@ -9,18 +9,22 @@ use App\Enums\BillStatus;
 use App\Enums\BillType;
 use App\Exceptions\Posting\AlreadyPostedException;
 use App\Exceptions\Posting\PeriodLockedException;
+use App\Exceptions\Posting\PostingValidationException;
 use App\Exceptions\Posting\UnbalancedJournalException;
 use App\Models\Account;
 use App\Models\Bill;
 use App\Models\BillPayment;
+use App\Models\BillPaymentApplication;
 use App\Models\Contact;
 use App\Models\JournalEntry;
+use App\Scopes\CompanyScope;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
 use App\Services\Currency\ExchangeRateService;
 use App\Services\Reconciliation\BankReconciliationLockGuard;
 use App\Support\Banking\BankLineMemo;
 use App\Support\Currency;
+use App\Support\Money;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
@@ -70,6 +74,8 @@ class BillPaymentPoster
             if ($totalApplied > (int) $payment->amount_cents) {
                 throw new RuntimeException('Applied amount exceeds payment total.');
             }
+
+            $this->ensureApplicationsPayable((int) $payment->company_id, (int) $payment->contact_id, $payment->getAttribute('payment_type'), $payment->applications, $payment);
 
             $control = $this->controlAccount($payment);
 
@@ -240,6 +246,141 @@ class BillPaymentPoster
     }
 
     /**
+     * Refuse applications this payment can't make. Each must name a posted bill
+     * of the payment's own organization and payee, never another
+     * organization's or another payee's, of the kind the payment pays (a vendor
+     * bill, or an employee's reimbursement), for a positive amount no larger
+     * than the bill still has open for this payment ({@see openBalancesFor()});
+     * a bill named twice is held to the two amounts together. Used by
+     * SaveBillPayment before anything is written, and by post() for a draft
+     * saved earlier, whose bill may have been paid since.
+     *
+     * @param  iterable<array<string, mixed>|BillPaymentApplication>  $applications
+     *
+     * @throws PostingValidationException
+     */
+    public function ensureApplicationsPayable(int $companyId, int $contactId, BillType $type, iterable $applications, ?BillPayment $payment = null): void
+    {
+        $amounts = [];
+
+        foreach ($applications as $application) {
+            $cents = (int) ($application['amount_cents'] ?? 0);
+
+            if ($cents <= 0) {
+                throw new PostingValidationException(__('Apply a positive amount to each bill.'));
+            }
+
+            $billId = (int) ($application['bill_id'] ?? 0);
+            $amounts[$billId] = ($amounts[$billId] ?? 0) + $cents;
+        }
+
+        if ($amounts === []) {
+            return;
+        }
+
+        // Row locks first: a payment posting against one of these bills at the
+        // same moment waits for this one, and the paid amounts read below are
+        // the latest committed ones.
+        $bills = Bill::withoutGlobalScope(CompanyScope::class)
+            ->where('company_id', $companyId)
+            ->whereKey(array_keys($amounts))
+            ->lockForUpdate()
+            ->get()
+            ->keyBy('id');
+
+        $open = $this->openBalancesFor($bills, $payment);
+
+        foreach ($amounts as $billId => $cents) {
+            $bill = $bills->get($billId);
+
+            if (! $bill instanceof Bill) {
+                throw new PostingValidationException(__('That bill could not be found.'));
+            }
+
+            $no = ['no' => $bill->bill_no];
+
+            if ((int) $bill->contact_id !== $contactId) {
+                throw new PostingValidationException(__('Bill :no belongs to a different payee.', $no));
+            }
+
+            if ($bill->getAttribute('bill_type') !== $type) {
+                throw new PostingValidationException(__('Bill :no can\'t be paid by this type of payment.', $no));
+            }
+
+            if (! in_array($bill->getAttribute('status'), [BillStatus::Posted, BillStatus::Partial, BillStatus::Paid], true)) {
+                throw new PostingValidationException(__('Bill :no is not open for payment.', $no));
+            }
+
+            $available = $open[$billId] ?? 0;
+
+            if ($available <= 0) {
+                throw new PostingValidationException(__('Bill :no has nothing left to pay.', $no));
+            }
+
+            if ($cents > $available) {
+                throw new PostingValidationException(__("Cannot apply more than bill :no's open balance of :amount.", [
+                    ...$no,
+                    'amount' => Money::fromCents($available)->toDecimalString(),
+                ]));
+            }
+        }
+    }
+
+    /**
+     * What each bill still has open for $payment to apply, keyed by bill id:
+     * its total, less any balance reconciled away, less what OTHER posted
+     * payments already pay — the larger of the ledger's figure and the cached
+     * paid amount's, as {@see ReceiptPoster::openBalancesFor()} explains. The
+     * payment's own live application counts as open: it is what an edit may
+     * re-apply.
+     *
+     * @param  iterable<Bill>  $bills
+     * @return array<int, int>
+     */
+    public function openBalancesFor(iterable $bills, ?BillPayment $payment = null): array
+    {
+        $bills = collect($bills)->keyBy('id');
+        $ids = $bills->keys()->map(fn ($id) => (int) $id)->all();
+
+        $live = $this->liveAppliedCentsByBill($ids);
+        $own = $payment?->exists ? $this->liveAppliedCentsByBill($ids, (int) $payment->id) : [];
+
+        $open = [];
+
+        foreach ($bills as $id => $bill) {
+            $ownCents = $own[$id] ?? 0;
+            $paidByOthers = max(($live[$id] ?? 0) - $ownCents, (int) $bill->amount_paid_cents - $ownCents);
+
+            $open[(int) $id] = max(0, (int) $bill->total_cents - (int) $bill->reconciled_cents - $paidByOthers);
+        }
+
+        return $open;
+    }
+
+    /**
+     * Live applications per bill, uncapped, in one grouped query — or only
+     * those of one payment. Keyed by bill id; a bill with none is absent.
+     *
+     * @param  list<int>  $billIds
+     * @return array<int, int>
+     */
+    public function liveAppliedCentsByBill(array $billIds, ?int $paymentId = null): array
+    {
+        if ($billIds === []) {
+            return [];
+        }
+
+        return $this->liveApplications()
+            ->whereIn('a.bill_id', $billIds)
+            ->when($paymentId !== null, fn (Builder $query) => $query->where('a.bill_payment_id', $paymentId))
+            ->groupBy('a.bill_id')
+            ->selectRaw('a.bill_id, SUM(a.amount_cents) as applied_cents')
+            ->pluck('applied_cents', 'bill_id')
+            ->map(fn ($cents) => (int) $cents)
+            ->all();
+    }
+
+    /**
      * Public so integrity:check --fix can repair a drifted cache.
      */
     public function recomputeBillPaidFromAllPayments(Bill $bill): void
@@ -259,14 +400,23 @@ class BillPaymentPoster
      */
     public function expectedPaidCents(Bill $bill): int
     {
-        $paid = (int) DB::table('bill_payment_applications as a')
-            ->join('bill_payments as p', 'p.id', '=', 'a.bill_payment_id')
+        $paid = (int) $this->liveApplications()
             ->where('a.bill_id', $bill->id)
-            ->where('p.status', BillPaymentStatus::Posted->value)
-            ->whereNull('p.deleted_at')
             ->sum('a.amount_cents');
 
         return min($paid, (int) $bill->total_cents);
+    }
+
+    /**
+     * Bill-payment applications that count against a bill: those of posted,
+     * non-deleted payments. The one definition every paid-amount figure uses.
+     */
+    private function liveApplications(): Builder
+    {
+        return DB::table('bill_payment_applications as a')
+            ->join('bill_payments as p', 'p.id', '=', 'a.bill_payment_id')
+            ->where('p.status', BillPaymentStatus::Posted->value)
+            ->whereNull('p.deleted_at');
     }
 
     /**
@@ -327,10 +477,7 @@ class BillPaymentPoster
      */
     private function billPaidCacheQuery(int $companyId, ?array $contactIds = null): Builder
     {
-        $live = DB::table('bill_payment_applications as a')
-            ->join('bill_payments as p', 'p.id', '=', 'a.bill_payment_id')
-            ->where('p.status', BillPaymentStatus::Posted->value)
-            ->whereNull('p.deleted_at')
+        $live = $this->liveApplications()
             ->groupBy('a.bill_id')
             ->selectRaw('a.bill_id, SUM(a.amount_cents) as live_cents');
 
@@ -532,6 +679,7 @@ class BillPaymentPoster
             // serializes them so each adds to the latest committed value. (It is
             // a no-op on SQLite, which runs serially in tests anyway.)
             $bill = Bill::withoutGlobalScopes()
+                ->where('company_id', $payment->company_id)
                 ->whereKey($app->bill_id)
                 ->lockForUpdate()
                 ->first();

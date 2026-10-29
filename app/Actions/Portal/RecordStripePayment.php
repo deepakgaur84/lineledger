@@ -82,7 +82,8 @@ final class RecordStripePayment
 
     /**
      * Tile the received amount across the customer's named open invoices, oldest
-     * first, capping each at its current balance.
+     * first, capping each at its open balance — the figure SaveReceipt holds
+     * every application to. Anything left over stays on account as credit.
      *
      * @param  array<int, int>  $invoiceIds
      * @return array<int, array{invoice_id: int, amount_cents: int}>
@@ -97,6 +98,7 @@ final class RecordStripePayment
             ->orderBy('invoice_date')
             ->get();
 
+        $open = $this->receiptPoster->openBalancesFor($invoices);
         $remaining = $amountCents;
         $applications = [];
 
@@ -105,7 +107,7 @@ final class RecordStripePayment
                 break;
             }
 
-            $apply = min($remaining, $invoice->balanceCents());
+            $apply = min($remaining, $open[$invoice->id] ?? 0);
 
             if ($apply <= 0) {
                 continue;

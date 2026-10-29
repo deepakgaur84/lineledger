@@ -5,6 +5,7 @@ use App\Enums\AccountSubtype;
 use App\Enums\BillStatus;
 use App\Enums\BillType;
 use App\Exceptions\Posting\PeriodLockedException;
+use App\Livewire\Attributes\LockedRows;
 use App\Models\Account;
 use App\Models\Bill;
 use App\Models\Company;
@@ -31,10 +32,14 @@ new #[Title('Pay bills')] class extends Component
     public string $memo = '';
 
     /**
-     * One row per open vendor bill across all suppliers.
+     * One row per open vendor bill across all suppliers, built on the server.
+     * Only each row's Apply cell is the browser's to change: which bill a row
+     * pays, its vendor, and what it still owes are refused like a #[Locked]
+     * property.
      *
      * @var array<int, array{bill_id: int, contact_id: int, vendor_name: string, bill_no: string, due_date: string, balance: int, apply: string}>
      */
+    #[LockedRows(except: 'apply')]
     public array $rows = [];
 
     public function mount(Company $company): void
@@ -60,6 +65,9 @@ new #[Title('Pay bills')] class extends Component
             ->orderBy('due_date')
             ->get();
 
+        // The same open balance SaveBillPayment holds each application to.
+        $balances = app(BillPaymentPoster::class)->openBalancesFor($bills);
+
         foreach ($bills as $b) {
             $this->rows[] = [
                 'bill_id' => $b->id,
@@ -67,7 +75,7 @@ new #[Title('Pay bills')] class extends Component
                 'vendor_name' => $b->contact?->display_name ?? '—',
                 'bill_no' => $b->bill_no,
                 'due_date' => $b->due_date->toDateString(),
-                'balance' => $b->balanceCents(),
+                'balance' => $balances[$b->id] ?? 0,
                 'apply' => '',
             ];
         }
@@ -75,6 +83,10 @@ new #[Title('Pay bills')] class extends Component
 
     public function payInFull(int $i): void
     {
+        if (! isset($this->rows[$i])) {
+            return;
+        }
+
         $this->rows[$i]['apply'] = number_format($this->rows[$i]['balance'] / 100, 2, '.', '');
     }
 
@@ -99,22 +111,32 @@ new #[Title('Pay bills')] class extends Component
             'memo' => ['nullable', 'string'],
         ]);
 
-        // Group valid applications by vendor — one BillPayment is created per vendor.
-        $byVendor = [];
+        $amounts = [];
         foreach ($this->rows as $row) {
             $applyCents = Money::tryFromString((string) $row['apply'])?->cents ?? 0;
 
-            if ($applyCents <= 0) {
-                continue;
+            if ($applyCents > 0) {
+                $amounts[] = [(int) $row['bill_id'], $applyCents];
             }
+        }
 
-            if ($applyCents > $row['balance']) {
-                $this->addError('rows', __('Cannot apply more than the bill balance for :no.', ['no' => $row['bill_no']]));
+        // Group by each bill's own vendor, read from the database — one
+        // BillPayment is created per vendor. SaveBillPayment then checks every
+        // bill is still open and owes at least the amount, against its balance
+        // now rather than the one the page showed when it loaded.
+        $bills = Bill::query()->whereKey(array_column($amounts, 0))->get(['id', 'contact_id'])->keyBy('id');
+
+        $byVendor = [];
+        foreach ($amounts as [$billId, $applyCents]) {
+            $bill = $bills->get($billId);
+
+            if ($bill === null) {
+                $this->addError('rows', __('That bill could not be found.'));
 
                 return;
             }
 
-            $byVendor[$row['contact_id']][] = ['bill_id' => $row['bill_id'], 'amount_cents' => $applyCents];
+            $byVendor[(int) $bill->contact_id][] = ['bill_id' => $billId, 'amount_cents' => $applyCents];
         }
 
         if ($byVendor === []) {
