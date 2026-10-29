@@ -159,6 +159,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and is marked on the screen. If you reconciled a foreign account before by
   entering home-currency figures, correct the beginning balance of its next
   reconciliation with Edit details.
+- **Journal entries on foreign-currency accounts record the foreign amount.** A
+  journal line on a foreign bank or credit-card account, or a currency's
+  receivable or payable account, kept only its home amount. So the documented
+  way to open a USD bank account — a journal entry at the right exchange rate —
+  left no US dollars behind its balance, and the next period-end revaluation
+  wrote the whole balance off as an unrealized loss, even at an unchanged rate.
+  A journal entry writing off part of a foreign invoice didn't reduce what the
+  customer owed in their currency either, so Close settled balance couldn't
+  close it. The journal form now takes such a line in the account's currency at
+  an exchange rate filled in for the entry date (the rate a document would
+  lock), shows its home equivalent read-only, and the entry's page shows the
+  foreign amount and rate. The API takes and returns `currency_code`, `fx_rate`,
+  `foreign_debit_cents` and `foreign_credit_cents` on journal lines and works out
+  whichever is missing; a line that sends only home cents, like a recurring or
+  template line, gets its foreign amount at the entry date's rate. The Opening
+  Balances workspace no longer posts a draft trial balance target on a
+  foreign-currency account: record that balance with a journal entry in the
+  account's currency. Lines saved before the upgrade keep no foreign amount;
+  `UPGRADING.md` says how to find and correct them.
 
 ### Security
 

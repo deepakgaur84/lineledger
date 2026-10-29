@@ -1535,6 +1535,10 @@ components:
               debit_cents: { type: integer }
               credit_cents: { type: integer }
               memo: { type: [string, "null"] }
+              currency_code: { type: [string, "null"], description: "The currency of the line's foreign amount: its account's, on a foreign-currency account. Null on a home-currency line without a memo." }
+              fx_rate: { type: [string, "null"], description: "Home units per 1 foreign unit, e.g. \"1.35\". Null on a home-currency line without a memo." }
+              foreign_debit_cents: { type: integer, description: "What the line moved in that currency, in its cents. 0 on a home-currency line without a memo." }
+              foreign_credit_cents: { type: integer }
     JournalEntryInput:
       type: object
       required: [entry_date, lines]
@@ -1547,17 +1551,21 @@ components:
           type: array
           minItems: 2
           maxItems: 1000
-          description: "Debits must equal credits (422 otherwise). A line on the Accounts Receivable control account must name a customer in contact_id, and a line on Accounts Payable a vendor."
+          description: "Debits must equal credits in home cents (422 otherwise). A line on the Accounts Receivable control account must name a customer in contact_id, and a line on Accounts Payable a vendor. A line on a foreign-currency account (a foreign bank or credit card, or a per-currency AR/AP control) also records its amount in that currency: send what you know of the home amount (debit_cents/credit_cents), the foreign amount (foreign_debit_cents/foreign_credit_cents) and fx_rate, and the rest is worked out — a missing rate is the one on file for entry_date (422 on lines.N.fx_rate if there is none), and home cents of 0 beside a foreign amount are converted from it. When all three are sent they must agree. Nothing is worked out for a line on a home-currency account: it keeps a foreign memo only when currency_code, fx_rate and a foreign amount on the home amount's side all come (as a foreign document's legs carry one). See docs/api-v1.md §2.3."
           items:
             type: object
             required: [account_id, debit_cents, credit_cents]
             properties:
               account_id: { type: integer }
-              debit_cents: { type: integer, minimum: 0, maximum: 999999999999 }
-              credit_cents: { type: integer, minimum: 0, maximum: 999999999999 }
+              debit_cents: { type: integer, minimum: 0, maximum: 999999999999, description: "Home cents." }
+              credit_cents: { type: integer, minimum: 0, maximum: 999999999999, description: "Home cents." }
               memo: { type: [string, "null"], maxLength: 1000 }
               contact_id: { type: [integer, "null"] }
               tax_code_id: { type: [integer, "null"], description: "Tags the line for the sales-tax return." }
+              currency_code: { type: [string, "null"], minLength: 3, maxLength: 3, description: "Optional. Must be the line account's own currency (or the home currency on a home-currency line)." }
+              fx_rate: { type: [string, number, "null"], description: "Home units per 1 foreign unit, above zero, at most 8 decimal places." }
+              foreign_debit_cents: { type: [integer, "null"], minimum: 0, maximum: 999999999999, description: "The debit in the account's currency, in that currency's cents." }
+              foreign_credit_cents: { type: [integer, "null"], minimum: 0, maximum: 999999999999, description: "The credit in the account's currency." }
 
     # ---- Fixed assets ---------------------------------------------------
     Asset:

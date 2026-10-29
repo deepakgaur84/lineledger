@@ -46,3 +46,35 @@ it('selects only known two-decimal currencies', function () {
         expect(Currency::isSelectable($code))->toBeTrue();
     }
 });
+
+it('converts home cents back to foreign cents at a rate, rounding half up', function () {
+    expect(Currency::toForeignCents(135_000, '1.35'))->toBe(100_000)
+        // 13,500.00 / 1.3487 = 10,009.639...
+        ->and(Currency::toForeignCents(1_350_000, '1.3487'))->toBe(1_000_964)
+        // 1.5 rounds away from zero both ways.
+        ->and(Currency::toForeignCents(3, '2'))->toBe(2)
+        ->and(Currency::toForeignCents(-3, '2'))->toBe(-2)
+        ->and(Currency::toForeignCents(0, '1.35'))->toBe(0);
+});
+
+it('works out the rate two amounts imply, to eight decimals', function () {
+    expect(Currency::impliedRate(1_351_234, 1_000_000))->toBe('1.351234')
+        ->and(Currency::impliedRate(135_000, 100_000))->toBe('1.35')
+        // 2 / 3 = 0.666666666… rounds up in the eighth place.
+        ->and(Currency::impliedRate(2, 3))->toBe('0.66666667')
+        ->and(Currency::impliedRate(100, 0))->toBeNull()
+        ->and(Currency::impliedRate(-100, 74))->toBeNull();
+});
+
+it('normalizes a rate to the plain form it is stored and shown in', function () {
+    expect(Currency::normalizeRate('1.35000000'))->toBe('1.35')
+        ->and(Currency::normalizeRate(' 1.40 '))->toBe('1.4')
+        ->and(Currency::normalizeRate('+2'))->toBe('2')
+        ->and(Currency::normalizeRate('.5'))->toBe('0.5')
+        ->and(Currency::normalizeRate(1.35))->toBe('1.35')
+        ->and(Currency::normalizeRate('0012.50'))->toBe('12.5');
+
+    foreach (['', '0', '0.00', '-1.35', '1e3', '1.123456789', '12345678901', 'abc', null] as $invalid) {
+        expect(Currency::normalizeRate($invalid))->toBeNull();
+    }
+});

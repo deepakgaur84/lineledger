@@ -78,6 +78,19 @@ new #[Title('Opening trial balance')] class extends Component {
             ->get(['id', 'code', 'name']);
     }
 
+    /**
+     * Targets on foreign-currency accounts, which the workspace does not post:
+     * each is met by a journal entry in the account's own currency (see
+     * OpeningBalanceJournalSynchronizer).
+     */
+    #[Computed]
+    public function foreignTargetCount(): int
+    {
+        return $this->rows
+            ->filter(fn (OpeningBalanceRow $row): bool => $row->account !== null && ! $this->company->isHomeCurrency($row->account->currency_code))
+            ->count();
+    }
+
     #[Computed]
     public function totals(): array
     {
@@ -249,6 +262,9 @@ new #[Title('Opening trial balance')] class extends Component {
                                 {{ $row->account?->code }} — {{ $row->account?->displayName() }}
                                 @if ($row->account && in_array($row->account->subtype->value, ['accounts_receivable', 'accounts_payable', 'inventory'], true))
                                     <flux:badge size="sm" color="amber" class="ms-1">{{ __('sub-ledger target') }}</flux:badge>
+                                @elseif ($row->account && ! $company->isHomeCurrency($row->account->currency_code))
+                                    {{-- Its balance needs a foreign amount too; see foreignTargetCount(). --}}
+                                    <flux:badge size="sm" color="amber" class="ms-1" data-test="ob-tb-foreign-badge">{{ __('target for a :currency journal entry', ['currency' => mb_strtoupper((string) $row->account->currency_code)]) }}</flux:badge>
                                 @endif
                             </td>
                             <td class="py-1.5 pr-3">
@@ -288,6 +304,12 @@ new #[Title('Opening trial balance')] class extends Component {
                 </tfoot>
             </table>
         </div>
+
+        @if ($this->foreignTargetCount > 0)
+            <flux:text class="mt-3 text-sm" data-test="ob-tb-foreign-hint">
+                {{ __('A foreign-currency account’s target is not posted from here: the trial balance holds its home-currency value but not its balance in its own currency. Record that balance with a journal entry dated on or before :date — the amount in the account’s currency at the exchange rate, against Opening Balance Equity. Until it is posted, the target shows in the Unexplained balance on the Overview.', ['date' => $obState->asOf()->format('F j, Y')]) }}
+            </flux:text>
+        @endif
 
         {{-- Add a target --}}
         <div class="mt-4 flex flex-wrap items-end gap-2 border-t border-zinc-100 pt-4 dark:border-zinc-800">
