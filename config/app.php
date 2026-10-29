@@ -56,6 +56,22 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Trusted Hosts
+    |--------------------------------------------------------------------------
+    |
+    | Outside local and testing the app answers only on APP_URL's host and the
+    | hosts listed here (comma-separated; a full URL works too). A request for
+    | any other host is refused with 400 Bad Request. List every other name this
+    | installation is reached by, such as a second domain or App Platform's
+    | .ondigitalocean.app address once a custom domain is primary. Links in
+    | email always use APP_URL. See App\Support\Http\TrustedHosts.
+    |
+    */
+
+    'trusted_hosts' => array_values(array_filter(array_map(trim(...), explode(',', (string) env('TRUSTED_HOSTS', ''))))),
+
+    /*
+    |--------------------------------------------------------------------------
     | Country Region
     |--------------------------------------------------------------------------
     |

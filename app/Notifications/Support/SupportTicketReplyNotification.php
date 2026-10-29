@@ -3,6 +3,7 @@
 namespace App\Notifications\Support;
 
 use App\Models\SupportTicketMessage;
+use App\Support\Http\CanonicalUrl;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -38,7 +39,7 @@ class SupportTicketReplyNotification extends Notification implements ShouldQueue
                 'ticketSubject' => $ticket->subject,
                 'replyBody' => $this->message->body,
                 'preview' => Str::limit($this->message->body, 120),
-                'actionUrl' => route('support.show', $ticket),
+                'actionUrl' => CanonicalUrl::route('support.show', $ticket),
             ]);
     }
 }

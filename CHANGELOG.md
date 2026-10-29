@@ -146,6 +146,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   also escapes quotes and backslashes in quoted parameter values, such as
   attachment filenames.
   ([#160](https://github.com/lineledger/lineledger/pull/160))
+- **Links in email always point at `APP_URL`, and the app answers only on its
+  own host names.** Password-reset, email-verification, invitation and portal
+  sign-in links were built on whatever host name the request that sent them
+  arrived with, so a genuine email could carry its link to a site that isn't
+  yours. Every link in an email is now built on `APP_URL`. Outside local
+  development, a request for any host other than `APP_URL`'s, or one listed in
+  the new `TRUSTED_HOSTS`, is refused with 400 Bad Request, and
+  `X-Forwarded-Host` is no longer honoured from anyone.
+- **Forwarded client addresses count only from proxies you name.** Every peer's
+  `X-Forwarded-For`, `-Proto` and `-Port` headers were trusted, so on an install
+  reached directly (the one-click Droplet, Docker publishing ports 80/443) a
+  client could choose the IP address the sign-in throttle, the security monitor
+  and the security and audit logs saw. The new `TRUSTED_PROXIES` lists the load
+  balancers and proxies that may set them; it is empty by default, which trusts
+  none, and the App Platform spec sets it to `*`.
+- **The sign-in throttle also counts per account.** Besides five attempts a
+  minute for one email address from one IP, an address now gets ten a minute in
+  all, however many IPs they come from. `security:monitor` and Admin → Security
+  also flag failed sign-ins grouped by the address tried, so guessing spread
+  across many IPs still raises an alert.
+
+### Upgrade notes
+
+- **`APP_URL` must be the address people use.** Requests for any other host get
+  400 Bad Request; list the other names an installation answers on, including
+  any that Stripe's webhook or an inbound-email provider calls, in
+  `TRUSTED_HOSTS`.
+- **Behind a load balancer, CDN or reverse proxy, set `TRUSTED_PROXIES`** to the
+  address it connects from, and have it pass the `Host` header through.
+  Otherwise every visitor shows up with the proxy's IP, HTTPS goes undetected,
+  and signed links (email verification, file uploads) fail. On **App Platform**,
+  add `TRUSTED_PROXIES=*` to an existing app's environment before redeploying:
+  `deploy.sh` doesn't update an existing app's spec. On **Forge** with a
+  Cloudflare-proxied domain, use Cloudflare's IP ranges. The Droplet and Docker
+  reached directly need nothing.
+- See `UPGRADING.md` for the step-by-step.
 
 ## [1.3.1] - 2026-10-24
 

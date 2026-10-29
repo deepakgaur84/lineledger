@@ -4,6 +4,7 @@ namespace App\Notifications\Payroll;
 
 use App\Models\Company;
 use App\Models\TimeOffRequest;
+use App\Support\Http\CanonicalUrl;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -43,6 +44,6 @@ class TimeOffRequestAwaitingConfirmation extends Notification implements ShouldQ
                 'start' => $this->request->start_date->toDateString(),
                 'end' => $this->request->end_date->toDateString(),
             ]))
-            ->action(__('Confirm in payroll'), route('time-off-requests.index', ['company' => $this->company]));
+            ->action(__('Confirm in payroll'), CanonicalUrl::route('time-off-requests.index', ['company' => $this->company]));
     }
 }

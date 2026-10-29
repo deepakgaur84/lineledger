@@ -146,9 +146,17 @@ class FortifyServiceProvider extends ServiceProvider
         });
 
         RateLimiter::for('login', function (Request $request) {
-            $throttleKey = Str::transliterate(Str::lower($request->input(Fortify::username())).'|'.$request->ip());
+            $email = $request->input(Fortify::username());
+            $email = Str::transliterate(Str::lower(is_string($email) ? $email : ''));
 
-            return Limit::perMinute(5)->by($throttleKey);
+            return [
+                // One address from one client IP.
+                Limit::perMinute(5)->by($email.'|'.$request->ip()),
+                // One address from anywhere: caps guessing spread across many
+                // IPs (a botnet, or addresses a misconfigured proxy forwards),
+                // which the per-IP bucket above never sees adding up.
+                Limit::perMinute(10)->by('account|'.$email),
+            ];
         });
 
         RateLimiter::for('passkeys', function (Request $request) {

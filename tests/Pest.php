@@ -21,6 +21,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Testing\TestResponse;
 use Livewire\Livewire;
 use Livewire\Mechanisms\HandleRequests\EndpointResolver;
+use Symfony\Component\Mailer\SentMessage;
 use Tests\TestCase;
 
 /*
@@ -221,6 +222,20 @@ function claimLinesForReconciliation(BankReconciliation $rec, JournalEntry $entr
     ]);
 
     $rec->forceFill(['marked_line_ids' => array_values(array_unique([...$rec->markedLineIds(), ...$ids]))])->save();
+}
+
+/**
+ * Every email the array mailer has sent in this test, HTML and plain-text parts
+ * together with entities decoded, for asserting where the links in them point.
+ */
+function sentMailText(): string
+{
+    return app('mail.manager')->mailer('array')->getSymfonyTransport()->messages()
+        ->map(fn (SentMessage $sent): string => html_entity_decode(
+            $sent->getOriginalMessage()->getHtmlBody().' '.$sent->getOriginalMessage()->getTextBody(),
+            ENT_QUOTES | ENT_HTML5,
+        ))
+        ->implode("\n");
 }
 
 /**

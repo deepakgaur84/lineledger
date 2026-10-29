@@ -2,6 +2,7 @@
 
 namespace App\Notifications;
 
+use App\Support\Http\CanonicalUrl;
 use App\Support\UserAgentSummary;
 use Carbon\CarbonInterface;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -43,6 +44,6 @@ class NewDeviceLoginNotification extends Notification implements ShouldQueue
             ->line('Time: '.$this->at->toDayDateTimeString().' UTC')
             ->line('If this was you, no action is needed.')
             ->line('If it was not, change your password now and review your account security.')
-            ->action('Review security settings', route('security.edit'));
+            ->action('Review security settings', CanonicalUrl::route('security.edit'));
     }
 }

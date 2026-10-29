@@ -35,6 +35,107 @@ newest first.
   anchors every registered passkey. Both stay exactly as they were, and both are in
   every backup you take.
 
+## 1.3.1 → next release (unreleased)
+
+Not yet released; the release gives this section its number. Two security fixes
+change what the app accepts from the network, and both can need a setting before
+you upgrade. Links in email (password reset, email verification, invitations, portal
+sign-in, and every other notification) are now always built on `APP_URL`; outside
+local development the app answers only on `APP_URL`'s host and the new
+`TRUSTED_HOSTS`, and refuses any other with **400 Bad Request**. Forwarded client
+addresses (`X-Forwarded-For`, `-Proto`, `-Port`) now count only from the proxies in
+the new `TRUSTED_PROXIES`, which is empty by default; until now every peer was trusted.
+`X-Forwarded-Host` is no longer honoured at all. **No migrations, no backfills.**
+`docker/digitalocean/app.yaml` gains `TRUSTED_PROXIES`, and `docker-compose.yml`
+changes only in a comment.
+
+### Before you start
+
+Take a backup as usual. Then answer two questions for your installation:
+
+1. **Is `APP_URL` the address people type?** It must be, host and scheme. If people
+   (or Stripe's webhook, the inbound-email provider, an MCP client) also reach it by
+   another name, list those names in `TRUSTED_HOSTS`, comma-separated. Anything else
+   gets 400 after the upgrade. Subdomains of `APP_URL` are not included.
+2. **Does a load balancer, CDN or reverse proxy sit in front of the app?** If so, set
+   `TRUSTED_PROXIES` to the address it connects from, and make sure it passes the
+   original `Host` header through. Without it the app sees every visitor as the
+   proxy's IP, can't tell the request was HTTPS, and rejects signed links (email
+   verification, file uploads). If nothing sits in front, leave it empty.
+
+### Docker
+
+Reached directly (`SERVER_NAME` with ports 80/443, or plain HTTP on a LAN): nothing
+to set, provided `APP_URL` is the address you use. Behind your own reverse proxy, add
+`TRUSTED_PROXIES` to `.env` first. For a proxy on the same Docker host,
+`172.16.0.0/12` covers the Docker networks it connects from; publish the app on
+loopback (`HTTP_PORT=127.0.0.1:8080`) so nothing else can reach that port. The proxy
+must pass `Host` through (nginx: `proxy_set_header Host $host;`, Apache:
+`ProxyPreserveHost On`). Then upgrade as usual:
+
+```bash
+./backup.sh
+# In .env, set LINELEDGER_VERSION to the new release, plus TRUSTED_PROXIES / TRUSTED_HOSTS if you need them.
+docker compose pull && docker compose up -d
+docker compose exec app php artisan app:upgrade --verify
+```
+
+### DigitalOcean Droplet
+
+Run `lineledger upgrade`. The Droplet serves the app itself, so `TRUSTED_PROXIES`
+stays empty. It answers on its domain (or its IP, before `lineledger domain`); to
+reach it by another name too, `lineledger config TRUSTED_HOSTS other.example.com`.
+
+### DigitalOcean App Platform
+
+**This release changes `app.yaml`, and `./deploy.sh` doesn't update an existing
+app's spec.** Before you redeploy, open the app in the control panel → **Settings →
+App-Level Environment Variables → Edit**, add `TRUSTED_PROXIES` with the value `*`,
+and save. (Saving redeploys the app; releases before this one ignore the setting.)
+The load balancer is the only way to reach the containers, so trusting whatever
+connects is safe there, and without it email verification and uploads fail. Then
+run `./deploy.sh` again as usual. If your own domain is the primary one, the
+`.ondigitalocean.app` address now answers 400; add it to `TRUSTED_HOSTS` if anyone
+still uses it.
+
+### Forge / bare metal
+
+If the site's own nginx faces the internet, nothing to set. If the domain is proxied
+by Cloudflare (the orange cloud) or the server sits behind a load balancer, set
+`TRUSTED_PROXIES` in Forge → Site → Environment first: the balancer's private
+address, or Cloudflare's published ranges (<https://www.cloudflare.com/ips/>), IPv4
+and IPv6 joined with commas. This prints that list:
+
+```bash
+{ curl -fsS https://www.cloudflare.com/ips-v4; echo; curl -fsS https://www.cloudflare.com/ips-v6; } | grep . | paste -sd, -
+```
+
+A site serving more than one domain lists the others in `TRUSTED_HOSTS`. Then deploy
+with the unchanged deploy script (its `config:cache` picks the settings up), run
+`php artisan app:upgrade --verify` and `php artisan queue:restart`.
+
+### Behaviour to know about
+
+- **400 Bad Request for any host the app isn't configured for**, on every page and
+  the API. Local development (`APP_ENV=local`) is exempt, and so is the `/up` health
+  check, which Docker and App Platform call by the container's own address.
+- **Links in email follow `APP_URL`**, even on a site that answers on several hosts,
+  and even for mail sent while handling a request on another of them.
+- **The sign-in form counts per account as well as per IP.** Five attempts a minute
+  for one email address from one IP, as before, and now ten a minute for one address
+  from any number of IPs. Someone hammering an address can keep its owner waiting a
+  minute at a time; the security monitor reports it.
+- **`security:monitor` and Admin → Security group failed sign-ins by the email address
+  tried** as well as by IP, with the same `SECURITY_ALERT_FAILED_LOGIN_THRESHOLD`, so
+  attempts spread over many IPs still raise an alert.
+- **Check it worked:** sign in, then look at Admin → Security. Your own sign-in should
+  show your IP address, not your proxy's.
+
+### Rolling back
+
+Nothing in the database changed. Deploy the previous release again; it ignores
+`TRUSTED_HOSTS` and `TRUSTED_PROXIES` and goes back to trusting every peer.
+
 ## 1.3.0 → 1.3.1
 
 Released 2026-10-24. A patch release: a site admin without two-factor authentication

@@ -4,6 +4,7 @@ namespace App\Notifications\Companies;
 
 use App\Models\CompanyInvitation as CompanyInvitationModel;
 use App\Models\User;
+use App\Support\Http\CanonicalUrl;
 use App\Support\Locales;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -45,7 +46,7 @@ class CompanyInvitation extends Notification implements ShouldQueue
                 'inviterName' => $inviter->name,
                 'companyName' => $company->name,
             ]))
-            ->action(__('Accept invitation'), url("/invitations/{$this->invitation->code}/accept"));
+            ->action(__('Accept invitation'), CanonicalUrl::route('invitations.accept', $this->invitation));
     }
 
     /**

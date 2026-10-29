@@ -7,6 +7,7 @@ use App\Enums\CompanyRole;
 use App\Enums\SecurityEvent;
 use App\Models\SecurityLog;
 use Carbon\CarbonInterface;
+use Illuminate\Support\Str;
 
 /**
  * Detects anomalies in the immutable security log over a window. Shared by the
@@ -14,8 +15,9 @@ use Carbon\CarbonInterface;
  * and the site-admin security dashboard (which shows the same findings live), so
  * the two surfaces can't drift and the thresholds live in one place.
  *
- * Detectors: failed-login spike per IP, account lockout, mass API-key revocation,
- * and privilege escalation via a role change that raised a member's level.
+ * Detectors: failed-login spike per IP and per attempted email address, account
+ * lockout, mass API-key revocation, and privilege escalation via a role change
+ * that raised a member's level.
  */
 class SecurityAnomalyScanner
 {
@@ -26,6 +28,7 @@ class SecurityAnomalyScanner
     {
         return [
             ...$this->failedLoginSpikes($since),
+            ...$this->failedLoginSpikesByEmail($since),
             ...$this->lockouts($since),
             ...$this->apiKeyRevocationBursts($since),
             ...$this->privilegeEscalations($since),
@@ -56,6 +59,43 @@ class SecurityAnomalyScanner
     }
 
     /**
+     * Failed logins grouped by the address they tried, so guessing at one
+     * account spread across many IPs (each one under the per-IP threshold above)
+     * still adds up to an alert. Addresses are compared case-insensitively.
+     *
+     * @return list<string>
+     */
+    public function failedLoginSpikesByEmail(CarbonInterface $since): array
+    {
+        $threshold = (int) config('services.security_alerts.failed_login_threshold', 10);
+
+        return SecurityLog::query()
+            ->selectRaw('LOWER(attempted_email) as email, COUNT(*) as hits, COUNT(DISTINCT ip_address) as ips')
+            ->where('event', SecurityEvent::LoginFailed->value)
+            ->where('recorded_at', '>=', $since)
+            ->whereNotNull('attempted_email')
+            ->groupByRaw('LOWER(attempted_email)')
+            ->havingRaw('COUNT(*) >= ?', [$threshold])
+            ->orderBy('email')
+            ->get()
+            ->map(function (SecurityLog $row) {
+                $email = $this->displayableEmail((string) $row->getAttribute('email'));
+                $hits = (int) $row->getAttribute('hits');
+                $ips = (int) $row->getAttribute('ips');
+
+                return sprintf(
+                    'Failed-login spike for %s: %d attempts from %d IP address%s in window.',
+                    $email,
+                    $hits,
+                    $ips,
+                    $ips === 1 ? '' : 'es',
+                );
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
      * @return list<string>
      */
     public function lockouts(CarbonInterface $since): array
@@ -65,7 +105,9 @@ class SecurityAnomalyScanner
             ->where('recorded_at', '>=', $since)
             ->get()
             ->map(function (SecurityLog $row) {
-                $who = $row->attempted_email ?? ('user '.($row->user_id ?? '?'));
+                $who = $row->attempted_email !== null
+                    ? $this->displayableEmail($row->attempted_email)
+                    : 'user '.($row->user_id ?? '?');
                 $from = $row->ip_address ? " from {$row->ip_address}" : '';
 
                 return "Account lockout for {$who}{$from}.";
@@ -119,5 +161,15 @@ class SecurityAnomalyScanner
     protected function roleLevel(mixed $role): ?int
     {
         return is_string($role) ? CompanyRole::tryFrom($role)?->level() : null;
+    }
+
+    /**
+     * An attempted address is whatever the sign-in form was sent, and the
+     * findings are emailed as Markdown, so anything outside the characters of an
+     * ordinary address becomes "?" (no links, no formatting) and length is capped.
+     */
+    protected function displayableEmail(string $email): string
+    {
+        return Str::limit(preg_replace('/[^A-Za-z0-9.@+_\-]/', '?', $email) ?? '', 120);
     }
 }

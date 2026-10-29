@@ -21,6 +21,7 @@ use App\Http\Middleware\SetCompanyUrlDefaults;
 use App\Http\Middleware\SetLocale;
 use App\Http\Middleware\VerifyTurnstile;
 use App\Models\Company;
+use App\Support\Http\TrustedHosts;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests;
 use Illuminate\Foundation\Application;
@@ -41,18 +42,27 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // Production runs behind a TLS-terminating load balancer / CDN, which
-        // forwards the real scheme and client IP in X-Forwarded-* headers.
-        // Without trusting the proxy, $request->isSecure() is false (so the HSTS
-        // header in SecurityHeaders is never emitted) and $request->ip() is the
-        // balancer's IP (so per-IP API rate limiting collapses to one bucket).
-        // Trust all proxies because the app server is only reachable through the
-        // platform's balancer; narrow `at:` to the balancer CIDR if the host is
-        // ever exposed directly.
+        // Only APP_URL's host and TRUSTED_HOSTS are served (config/app.php).
+        // Outside local and testing, any other Host gets a 400 before anything
+        // reads it, so no page, redirect or email is built on a forged one. Not
+        // subdomains of APP_URL either. The health check is exempt: Docker and
+        // platform probes call it by the container's own address.
+        $middleware->trustHosts(
+            at: fn (): array => TrustedHosts::patternsFor(request()),
+            subdomains: false,
+        );
+
+        // Behind a TLS-terminating balancer the scheme and client IP arrive in
+        // X-Forwarded-* headers. Without trusting the proxy, $request->isSecure()
+        // is false (no HSTS from SecurityHeaders, signed links fail to validate)
+        // and $request->ip() is the balancer's IP. But a header from a peer that
+        // isn't the proxy is just client input: on a directly exposed install it
+        // would let a client choose the IP that the sign-in throttle and the
+        // security log see. So only the peers in TRUSTED_PROXIES count
+        // (config/trustedproxy.php, read per request; none by default), and
+        // X-Forwarded-Host is never honoured. A proxy passes the Host through.
         $middleware->trustProxies(
-            at: '*',
             headers: Request::HEADER_X_FORWARDED_FOR
-                | Request::HEADER_X_FORWARDED_HOST
                 | Request::HEADER_X_FORWARDED_PORT
                 | Request::HEADER_X_FORWARDED_PROTO,
         );

@@ -4,6 +4,7 @@ namespace App\Notifications\Support;
 
 use App\Actions\Support\OpenSupportTicket;
 use App\Models\SupportTicketMessage;
+use App\Support\Http\CanonicalUrl;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -47,7 +48,7 @@ class SupportTicketActivityNotification extends Notification implements ShouldQu
                 'ticketSubject' => $ticket->subject,
                 'ticketType' => $ticket->type->label(),
                 'body' => $this->message->body,
-                'actionUrl' => route('admin.support.show', $ticket),
+                'actionUrl' => CanonicalUrl::route('admin.support.show', $ticket),
             ]);
     }
 }
