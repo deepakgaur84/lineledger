@@ -461,6 +461,10 @@ new #[Title('Documentation — Payroll')] class extends Component {}; ?>
             </flux:table.rows>
         </flux:table>
 
+        <x-docs.callout type="note" heading="{{ __('Before you file T4 or T4A XML') }}">
+            {{ __('The CRA files T4 and T4A slips under your payroll (RP) program account, so Settings → Payroll needs your Business Number and Payroll (RP) account, the payroll contact’s name, phone, and email, and the Employer-offered dental benefits code (T4 box 45 — override it on an employee’s payroll setup when theirs differs). Until those are set, or while a SIN on file fails the CRA check digit, the T4 and T4A pages list what to fix and won’t download the CRA XML. Upload the file through Internet File Transfer, signed in to My Business Account or with a web access code under that same payroll account; a representative using Represent a Client also enters their RepID in Settings → Payroll.') }}
+        </x-docs.callout>
+
         <x-docs.figure
             src="{{ asset('docs/screenshots/payroll/pd7a.png') }}"
             alt="{{ __('The PD7A remittance report for a remitting period showing income tax, CPP, and EI owed to the CRA, the Not remitted status with its due date, the Record remittance button, and the per-run breakdown') }}"

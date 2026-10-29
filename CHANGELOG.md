@@ -79,6 +79,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `backup:import`. The keys now come back revoked, still linked to the audit
   entries they made, and the owner creates new ones. A restore that fails
   partway also no longer leaves an empty organization behind. Reported in #158.
+- **T4 and T4A XML follow the CRA's current schema.** The CRA would have
+  rejected every T4 and T4A file the app produced: they used the retired T619
+  transmittal (an "MM" transmitter number, a hyphenated submission reference),
+  element names the CRA doesn't define (`cpp2_cntrb_amt`, `ei_insur_ern_amt`,
+  `fees_srvc_amt`, `tot_cpp_cntrb_amt`…) and no box 24, box 45 or summary
+  contact. Both now follow the CRA's 2027 XML specifications (T619 2027V1,
+  T4 2027V2, T4A 2027V1) and pass its schema package 1-27-1, which the tests
+  check every generated file against. The T4 reports employer CPP and CPP2
+  apart, QPP and QPIP rather than CPP for Quebec employees, and amounts tagged
+  with an other-information code (30–99) or box 20, 44, 46 or 52, moving any
+  past six onto an additional slip as the CRA asks. A T4A names an individual
+  by name and SIN, or a business by its corporation name and business number.
+- **T4 and T4A files carry the payroll (RP) account, not the GST/HST number.**
+  Slips, summaries and the transmittal now use the Business Number and Payroll
+  (RP) account from Settings → Payroll. The CRA XML download is refused, with
+  what to fix listed on the T4 and T4A pages, until that account, the payroll
+  contact (name, a 10-digit phone, email) and the new **Employer-offered dental
+  benefits (T4 box 45)** code are set; an employee's payroll setup can override
+  the code. An optional **Representative ID** covers a representative filing
+  through Represent a Client. `CRA_TRANSMITTER_NUMBER` and
+  `CRA_TRANSMITTER_TYPE` are no longer read, and `CRA_TRANSMITTER_LANGUAGE`
+  now defaults to each organization's language. New
+  `companies.payroll_dental_benefits_code` and `payroll_cra_rep_id`, and
+  `employee_payroll_profiles.dental_benefits_code` columns.
+- **Employee SINs are checked when entered.** Payroll setup accepts nine digits
+  that pass the SIN check digit, or 000 000 000 when the employee hasn't given
+  one yet (saved as no SIN). A SIN already on file that fails the check or no
+  longer decrypts blocks the T4 XML and names the employee, instead of filing
+  a bad number or 000000000, which the CRA allows only when no SIN was given.
+  An employee with no SIN still files as 000000000, with a warning.
 
 ### Security
 

@@ -111,25 +111,16 @@ class T4SlipCalculator
     }
 
     /**
-     * Year totals across all slips, for the T4 Summary.
+     * Year totals across all slips, for the T4 Summary. The employer's share:
+     * box 27 (CPP, base and first additional), box 27A (CPP2), their sum as
+     * employer_cpp, and employer_ei (box 19).
      *
-     * @return array{slip_count: int, box14: int, box16: int, box16a: int, box17: int, box17a: int, box18: int, box22: int, box24: int, box26: int, box55: int, box56: int, employer_cpp: int, employer_ei: int}
+     * @return array{slip_count: int, box14: int, box16: int, box16a: int, box17: int, box17a: int, box18: int, box22: int, box24: int, box26: int, box55: int, box56: int, employer_cpp: int, box27: int, box27a: int, employer_ei: int}
      */
     public function summary(Company $company, int $year): array
     {
         $slips = $this->slipsForYear($company, $year);
-
-        $employer = DB::table('pay_run_lines as prl')
-            ->join('pay_runs as pr', 'pr.id', '=', 'prl.pay_run_id')
-            ->where('prl.company_id', $company->id)
-            ->whereIn('pr.status', self::POSTED)
-            ->whereYear('pr.pay_date', $year)
-            ->selectRaw('
-                COALESCE(SUM(COALESCE(prl.cpp_employer_override_cents, prl.cpp_employer_computed_cents)
-                    + COALESCE(prl.cpp2_employer_override_cents, prl.cpp2_employer_computed_cents)), 0) AS er_cpp,
-                COALESCE(SUM(COALESCE(prl.ei_employer_override_cents, prl.ei_employer_computed_cents)), 0) AS er_ei
-            ')
-            ->first();
+        $employer = $this->employerContributions($company, $year);
 
         return [
             'slip_count' => count($slips),
@@ -144,7 +135,42 @@ class T4SlipCalculator
             'box26' => array_sum(array_column($slips, 'box26')),
             'box55' => array_sum(array_column($slips, 'box55')),
             'box56' => array_sum(array_column($slips, 'box56')),
-            'employer_cpp' => (int) ($employer->er_cpp ?? 0),
+            'employer_cpp' => $employer['employer_cpp'],
+            'box27' => $employer['box27'],
+            'box27a' => $employer['box27a'],
+            'employer_ei' => $employer['employer_ei'],
+        ];
+    }
+
+    /**
+     * The employer's CPP and EI for the year from posted pay runs: box 27
+     * (CPP, base and first additional), box 27A (CPP2) and their sum, which
+     * the T4 Summary PDF prints, and box 19 (EI). The CRA XML reports boxes 27
+     * and 27A apart.
+     *
+     * @return array{employer_cpp: int, box27: int, box27a: int, employer_ei: int}
+     */
+    public function employerContributions(Company $company, int $year): array
+    {
+        $employer = DB::table('pay_run_lines as prl')
+            ->join('pay_runs as pr', 'pr.id', '=', 'prl.pay_run_id')
+            ->where('prl.company_id', $company->id)
+            ->whereIn('pr.status', self::POSTED)
+            ->whereYear('pr.pay_date', $year)
+            ->selectRaw('
+                COALESCE(SUM(COALESCE(prl.cpp_employer_override_cents, prl.cpp_employer_computed_cents)), 0) AS er_cpp,
+                COALESCE(SUM(COALESCE(prl.cpp2_employer_override_cents, prl.cpp2_employer_computed_cents)), 0) AS er_cpp2,
+                COALESCE(SUM(COALESCE(prl.ei_employer_override_cents, prl.ei_employer_computed_cents)), 0) AS er_ei
+            ')
+            ->first();
+
+        $cpp = (int) ($employer->er_cpp ?? 0);
+        $cpp2 = (int) ($employer->er_cpp2 ?? 0);
+
+        return [
+            'employer_cpp' => $cpp + $cpp2,
+            'box27' => $cpp,
+            'box27a' => $cpp2,
             'employer_ei' => (int) ($employer->er_ei ?? 0),
         ];
     }

@@ -2881,12 +2881,6 @@ parameters:
 			path: app/Services/Reporting/SalesPurchaseReportBuilder.php
 
 		-
-			message: '#^Using nullsafe property access "\?\-\>first_name" on left side of \?\? is unnecessary\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Services/Reporting/T4XmlGenerator.php
-
-		-
 			message: '#^Cannot call method label\(\) on string\.$#'
 			identifier: method.nonObject
 			count: 1

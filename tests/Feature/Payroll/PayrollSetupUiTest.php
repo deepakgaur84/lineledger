@@ -52,7 +52,7 @@ it('sets up an employee payroll profile with encrypted SIN and salary in cents',
         ->set('pay_basis', 'salary')
         ->set('annual_salary', '72,000.00')
         ->set('payroll_schedule_id', $schedule->id)
-        ->set('sin', '123 456 789')
+        ->set('sin', '046 454 286')
         ->set('td1_federal_claim', '16,599.00')
         ->set('td1_provincial_claim', '12,580.00')
         ->set('vacation_rate_pct', 4)
@@ -68,8 +68,8 @@ it('sets up an employee payroll profile with encrypted SIN and salary in cents',
         ->and($profile->annual_salary_cents)->toBe(7200000)
         ->and($profile->td1_federal_claim_cents)->toBe(1659900)
         ->and($profile->vacation_rate_bp)->toBe(400)
-        ->and($profile->sin_last4)->toBe('6789')
-        ->and($profile->sin_encrypted)->toBe('123456789');
+        ->and($profile->sin_last4)->toBe('4286')
+        ->and($profile->sin_encrypted)->toBe('046454286');
 });
 
 it('accepts Quebec as a province of employment and persists the QPIP exemption', function () {

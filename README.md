@@ -502,11 +502,16 @@ you need the full set of knobs; the keys below are the ones that turn the featur
 | **Cheque print alignment** | No env vars. `config/cheque.php` holds the Intuit voucher-stock grid — every field's `[x, y]` baseline, font sizes, the `Ymd` date comb, the payee address block and the voucher columns — plus `offset_x` / `offset_y` to nudge the whole page for a printer. It is a config file, so a change needs `php artisan config:cache` (or a redeploy) to take | `config/cheque.php` |
 | **Security-alert thresholds** | `SECURITY_ALERT_WINDOW_MINUTES`, `SECURITY_ALERT_FAILED_LOGIN_THRESHOLD`, `SECURITY_ALERT_API_KEY_REVOCATION_THRESHOLD` (defaults 60 / 10 / 5) | `config/services.php` |
 
-> **Filing payroll slips needs your transmitter identity.** The T4 / T4A XML carries a
-> CRA transmitter number and the RL-1 XML carries Revenu Québec preparer numbers. The
-> defaults are **placeholders** (`MM000000`, `NP000000`) that CRA and RQ will reject —
-> set `CRA_TRANSMITTER_NUMBER`, `CRA_TRANSMITTER_TYPE`, `CRA_TRANSMITTER_LANGUAGE`,
-> and (for Quebec) `RQ_TRANSMITTER_NUMBER`, `RQ_PREPARER_NUMBER`,
+> **Filing T4 / T4A slips needs each organization's payroll account.** The CRA XML is
+> filed under the payroll (RP) account, payroll contact and dental benefits code (T4
+> box 45) set in **Settings → Payroll**, and the download is refused until they are
+> set. The CRA's 2027 T619 has no transmitter number, so `CRA_TRANSMITTER_NUMBER` and
+> `CRA_TRANSMITTER_TYPE` are no longer read; `CRA_TRANSMITTER_LANGUAGE` (`E` or `F`)
+> only overrides the organization's language.
+>
+> **Filing RL-1 slips needs your transmitter identity.** The RL-1 XML carries Revenu
+> Québec preparer numbers. The defaults are **placeholders** (`NP000000`) that RQ will
+> reject — set `RQ_TRANSMITTER_NUMBER`, `RQ_PREPARER_NUMBER`,
 > `RQ_AUTHORIZATION_NUMBER`, `RQ_RL1_SLIP_TYPE` before you file. See
 > `config/payroll.php`.
 
