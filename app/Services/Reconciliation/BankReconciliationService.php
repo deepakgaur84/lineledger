@@ -10,8 +10,12 @@ use App\Models\BankReconciliation;
 use App\Models\JournalEntry;
 use App\Models\JournalLine;
 use App\Models\User;
+use App\Services\Banking\AccountCurrencyAmounts;
+use App\Services\Currency\ExchangeRateService;
 use App\Services\Posting\EntryNumberGenerator;
 use App\Services\Posting\JournalPoster;
+use App\Support\Currency;
+use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -28,12 +32,20 @@ use RuntimeException;
  *  - undo():     Reverse the service-charge / interest entries, un-clear every
  *                linked line, and delete the rec row. Only the latest completed
  *                rec for an account may be undone.
+ *
+ * Every figure is in the account's own currency, the one its statement is in:
+ * the beginning, ending, service-charge and interest amounts, and the cleared
+ * balance, which sums each ticked line's amount in that currency
+ * ({@see AccountCurrencyAmounts}). On a foreign-currency account a service
+ * charge or interest is posted at its home value for its date's rate and keeps
+ * the foreign amount as its memo, as any foreign bank line does.
  */
 class BankReconciliationService
 {
     public function __construct(
         protected JournalPoster $journalPoster,
         protected EntryNumberGenerator $entryNumbers,
+        protected ExchangeRateService $exchangeRates,
     ) {}
 
     /**
@@ -413,6 +425,9 @@ class BankReconciliationService
         return $rec->ending_balance_cents - $this->clearedBalanceCents($rec);
     }
 
+    /**
+     * The beginning balance plus every ticked line, in the account's currency.
+     */
     public function clearedBalanceCents(BankReconciliation $rec): int
     {
         $ids = $rec->markedLineIds();
@@ -421,13 +436,19 @@ class BankReconciliationService
             return $rec->beginning_balance_cents;
         }
 
-        $sum = (int) JournalLine::query()
+        $sum = $this->amountsFor($rec)->sum(JournalLine::query()
             ->where('account_id', $rec->account_id)
-            ->whereIn('id', $ids)
-            ->selectRaw('COALESCE(SUM(debit_cents - credit_cents), 0) AS s')
-            ->value('s');
+            ->whereIn('id', $ids));
 
         return $rec->beginning_balance_cents + $sum;
+    }
+
+    /**
+     * How the reconciliation's account counts each line: in its own currency.
+     */
+    public function amountsFor(BankReconciliation $rec): AccountCurrencyAmounts
+    {
+        return AccountCurrencyAmounts::for($rec->account ?? $rec->account()->firstOrFail());
     }
 
     protected function lastEndingBalanceCents(Account $account): int
@@ -618,6 +639,9 @@ class BankReconciliationService
     protected function postServiceChargeEntry(BankReconciliation $rec, Account $account, array $sc): array
     {
         $date = Carbon::parse($sc['date']);
+        $cents = (int) $sc['cents'];
+        [$currency, $rate] = $this->adjustmentRate($account, $date);
+        $home = $currency === null ? $cents : Currency::toHomeCents($cents, $rate);
 
         $entry = JournalEntry::query()->create([
             'company_id' => $account->company_id,
@@ -630,20 +654,22 @@ class BankReconciliationService
 
         $entry->lines()->create([
             'account_id' => $sc['account_id'],
-            'debit_cents' => (int) $sc['cents'],
+            'debit_cents' => $home,
             'credit_cents' => 0,
             'memo' => 'Bank service charge',
             'line_order' => 0,
+            ...Currency::lineMemo($currency, $rate, $cents, 0),
         ]);
 
         $bankLine = $entry->lines()->create([
             'account_id' => $account->id,
             'debit_cents' => 0,
-            'credit_cents' => (int) $sc['cents'],
+            'credit_cents' => $home,
             'memo' => 'Bank service charge',
             'line_order' => 1,
             'cleared_at' => now(),
             'bank_reconciliation_id' => $rec->id,
+            ...Currency::lineMemo($currency, $rate, 0, $cents),
         ]);
 
         $entry->refresh();
@@ -661,6 +687,9 @@ class BankReconciliationService
     protected function postInterestEntry(BankReconciliation $rec, Account $account, array $int): array
     {
         $date = Carbon::parse($int['date']);
+        $cents = (int) $int['cents'];
+        [$currency, $rate] = $this->adjustmentRate($account, $date);
+        $home = $currency === null ? $cents : Currency::toHomeCents($cents, $rate);
 
         $entry = JournalEntry::query()->create([
             'company_id' => $account->company_id,
@@ -673,25 +702,51 @@ class BankReconciliationService
 
         $bankLine = $entry->lines()->create([
             'account_id' => $account->id,
-            'debit_cents' => (int) $int['cents'],
+            'debit_cents' => $home,
             'credit_cents' => 0,
             'memo' => 'Interest earned',
             'line_order' => 0,
             'cleared_at' => now(),
             'bank_reconciliation_id' => $rec->id,
+            ...Currency::lineMemo($currency, $rate, $cents, 0),
         ]);
 
         $entry->lines()->create([
             'account_id' => $int['account_id'],
             'debit_cents' => 0,
-            'credit_cents' => (int) $int['cents'],
+            'credit_cents' => $home,
             'memo' => 'Interest earned',
             'line_order' => 1,
+            ...Currency::lineMemo($currency, $rate, 0, $cents),
         ]);
 
         $entry->refresh();
         $this->journalPoster->post($entry);
 
         return [$entry->fresh(), (int) $bankLine->id];
+    }
+
+    /**
+     * The currency and rate a service charge or interest on $account books at.
+     * The amount is in the account's currency, as on the statement: a home
+     * account books it as is (no currency, rate 1); a foreign one converts at
+     * the rate for the adjustment's date, the lookup the statement feed and the
+     * expense and deposit posters use, so a fee posts the same home value
+     * whichever way it is recorded. No rate for the date throws
+     * MissingExchangeRateException rather than posting unconverted.
+     *
+     * @return array{0: ?string, 1: string}
+     */
+    protected function adjustmentRate(Account $account, CarbonInterface $date): array
+    {
+        $company = $account->company;
+
+        if ($company->isHomeCurrency($account->currency_code)) {
+            return [null, '1'];
+        }
+
+        $currency = mb_strtoupper((string) $account->currency_code);
+
+        return [$currency, $this->exchangeRates->rateFor($company, $currency, CarbonImmutable::parse($date->toDateString()))];
     }
 }

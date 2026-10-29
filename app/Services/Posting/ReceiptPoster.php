@@ -818,9 +818,11 @@ class ReceiptPoster
     }
 
     /**
-     * Deposit debits the home value received at the receipt rate; AR is credited
-     * per application at each invoice's locked rate (plus the unapplied remainder
-     * at the receipt rate). The home-cents residual balances to Exchange Gain/Loss.
+     * Deposit debits the home value received at the receipt rate (with the
+     * foreign memo when the deposit account is in the receipt's currency); AR is
+     * credited per application at each invoice's locked rate (plus the unapplied
+     * remainder at the receipt rate). The home-cents residual balances to
+     * Exchange Gain/Loss.
      */
     protected function buildForeignReceiptLines(JournalEntry $entry, CustomerReceipt $receipt, Account $arAccount): void
     {
@@ -830,12 +832,23 @@ class ReceiptPoster
 
         $depositHome = Currency::toHomeCents($amount, $ratePay);
 
+        // Deposited into an account in the receipt's own currency (a USD payment
+        // into USD chequing), the deposit leg carries the foreign amount too, so
+        // that account's foreign balance rises by what reached it and its
+        // statement reconciles against it. Into a home account it is a plain
+        // home-cents leg.
+        $depositCurrency = Account::withoutGlobalScopes()->whereKey($receipt->deposit_to_account_id)->value('currency_code');
+        $depositMemo = $depositCurrency !== null && mb_strtoupper((string) $depositCurrency) === $currency
+            ? Currency::lineMemo($currency, $ratePay, max($amount, 0), max(-$amount, 0))
+            : [];
+
         $entry->lines()->create([
             'account_id' => $receipt->deposit_to_account_id,
             'debit_cents' => max($depositHome, 0),
             'credit_cents' => max(-$depositHome, 0),
             'memo' => BankLineMemo::forSource($receipt),
             'line_order' => 0,
+            ...$depositMemo,
         ]);
 
         $order = 1;

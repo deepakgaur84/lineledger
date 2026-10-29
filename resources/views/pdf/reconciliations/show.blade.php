@@ -5,6 +5,7 @@
         ($rec->account?->code ?? '').' — '.($rec->account?->displayName() ?? ''),
         'Status: '.$rec->status->label(),
         $rec->completed_at ? 'Completed: '.$rec->completed_at->toDateTimeString().($rec->completedBy ? ' — '.$rec->completedBy->name : '') : null,
+        ($currency ?? null) !== null ? 'Amounts in '.$currency : null,
     ]),
 ])
 
@@ -41,7 +42,7 @@
                 <td>{{ $line->journalEntry->entry_date->toDateString() }}</td>
                 <td>{{ $line->journalEntry->entry_no }}</td>
                 <td>{{ $line->memo ?? $line->journalEntry->memo }}</td>
-                <td class="num">{{ number_format(((int) $line->debit_cents) / 100, 2) }}</td>
+                <td class="num">{{ number_format(((int) $line->reconcile_amount_cents) / 100, 2) }}</td>
             </tr>
         @empty
             <tr><td colspan="4" style="text-align:center; color:#6b7280;">Nothing cleared on this side.</td></tr>
@@ -68,7 +69,7 @@
                 <td>{{ $line->journalEntry->entry_date->toDateString() }}</td>
                 <td>{{ $line->journalEntry->entry_no }}</td>
                 <td>{{ $line->memo ?? $line->journalEntry->memo }}</td>
-                <td class="num">{{ number_format(((int) $line->credit_cents) / 100, 2) }}</td>
+                <td class="num">{{ number_format(((int) $line->reconcile_amount_cents) / 100, 2) }}</td>
             </tr>
         @empty
             <tr><td colspan="4" style="text-align:center; color:#6b7280;">Nothing cleared on this side.</td></tr>

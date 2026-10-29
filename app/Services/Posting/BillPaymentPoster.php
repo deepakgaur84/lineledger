@@ -548,8 +548,9 @@ class BillPaymentPoster
     /**
      * Build the payment's journal lines: debit the AP control, credit the bank.
      * For a foreign payment the AP is cleared at each bill's locked rate while the
-     * bank is credited the home value at the payment rate; the home-cents residual
-     * is the realized exchange gain/loss.
+     * bank is credited the home value at the payment rate (with the foreign memo
+     * when the bank is in the payment's currency); the home-cents residual is the
+     * realized exchange gain/loss.
      */
     protected function buildPaymentLines(JournalEntry $entry, BillPayment $payment, Account $control): void
     {
@@ -618,12 +619,22 @@ class BillPaymentPoster
             ]);
         }
 
+        // Paid from an account in the payment's own currency (a USD bill from USD
+        // chequing), the bank leg carries the foreign amount too, so that
+        // account's foreign balance drops by what left it. From a home account
+        // it is a plain home-cents leg.
+        $paidFromCurrency = Account::withoutGlobalScopes()->whereKey($payment->paid_from_account_id)->value('currency_code');
+        $bankMemo = $paidFromCurrency !== null && mb_strtoupper((string) $paidFromCurrency) === $currency
+            ? Currency::lineMemo($currency, $ratePay, 0, $amount)
+            : [];
+
         $entry->lines()->create([
             'account_id' => $payment->paid_from_account_id,
             'debit_cents' => 0,
             'credit_cents' => $bankHome,
             'memo' => BankLineMemo::forSource($payment),
             'line_order' => $order++,
+            ...$bankMemo,
         ]);
 
         // Realized FX residual balances the entry in home cents.

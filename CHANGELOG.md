@@ -122,6 +122,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lists any reversal edited since, which it leaves alone. `integrity:check` now
   reports a void that leaves foreign units behind. Revaluations already posted
   are not changed; see `UPGRADING.md`.
+- **Foreign-currency bank lines post at their home value.** On a bank or
+  credit-card account in a foreign currency, a line added from For Review or
+  the statement import without a vendor or tax code (every deposit, and most
+  fees and charges) was booked at the statement's foreign amount as if it were
+  home currency, with no foreign amount kept: 100.00 USD went in as 100.00 CAD
+  instead of 135.00 at a 1.35 rate. Home balances, exchange gains and losses
+  and the period-end revaluation were then off by the exchange rate. These
+  lines are now converted at the rate for the transaction date and keep the
+  foreign amount, as expenses, deposits and transfers already did, so a line
+  posts the same home value however it is recorded. Paying a bill from an
+  account in the bill's own currency now also lowers that account's foreign
+  balance, not only its home balance. A line with no rate for its date is
+  refused until you enter one, and a line can't be categorized to an account
+  in a third currency; record a transfer instead. Entries posted before this
+  fix keep their amounts.
+- **Foreign-currency accounts reconcile in their own currency.** A bank or
+  credit-card account in a foreign currency could not be reconciled: the
+  reconcile screen added up each transaction's home value, so a USD statement
+  showing 1,000.00 never agreed with a 1,000 USD deposit booked at 1,400.00
+  CAD, and the Difference reached 0.00 only if you typed a made-up balance in
+  your home currency. Statement import compared the same home values, so it
+  never matched the account's existing transactions and offered them to be
+  added again. The reconcile screen, completed reconciliations and their CSV,
+  Excel and PDF downloads, statement matching and the bank register now all
+  work in the account's own currency, the one its statements are in. A
+  service charge or interest entered when you reconcile is posted at its home
+  value at that day's rate and keeps its foreign amount, instead of being
+  booked as if it were home currency. A customer payment deposited straight
+  into an account in the payment's own currency now raises that account's
+  foreign balance too, so it reconciles and the period-end revaluation no
+  longer counts it as a loss. A transaction recorded before its foreign amount
+  was kept counts at the amount it was booked at when that was the
+  statement's own figure (a line added from the statement feed, or a service
+  charge or interest from an earlier reconciliation); any other counts as zero
+  and is marked on the screen. If you reconciled a foreign account before by
+  entering home-currency figures, correct the beginning balance of its next
+  reconciliation with Edit details.
 
 ### Security
 

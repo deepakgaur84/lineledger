@@ -16,6 +16,7 @@ use App\Models\JournalEntry;
 use App\Models\TaxCode;
 use App\Services\Banking\Import\OpenBillMatcher;
 use App\Services\Banking\StatementLineCategoryGuard;
+use App\Services\Banking\StatementLineCurrencyGuard;
 use App\Services\Posting\BillPaymentPoster;
 use App\Services\Posting\ExpensePoster;
 use Carbon\CarbonImmutable;
@@ -43,6 +44,12 @@ use Illuminate\Support\Facades\DB;
  * the vendor's defaults when they had none. The statement amount is the GROSS:
  * an expense with a tax code is saved tax-inclusive (see SaveExpense's
  * amount_includes_tax), so the payment leg still equals the statement to the cent.
+ *
+ * The amount is in the bank account's currency. On a foreign-currency account
+ * every path books home cents at the transaction date's rate and keeps the
+ * foreign amount as the memo, so a line posts the same home value whichever
+ * path records it; a category in a third currency is refused
+ * ({@see StatementLineCurrencyGuard}).
  */
 final class RecordStatementLine
 {
@@ -54,6 +61,7 @@ final class RecordStatementLine
         private readonly BillPaymentPoster $billPaymentPoster,
         private readonly OpenBillMatcher $bills,
         private readonly StatementLineCategoryGuard $categories,
+        private readonly StatementLineCurrencyGuard $currencyGuard,
     ) {}
 
     /**
@@ -105,13 +113,13 @@ final class RecordStatementLine
                 $entry = $this->recordBillPayment($line, $account, $contact, $allocations === null ? $billId : null, $allocations);
                 [$primaryTax, $secondaryTax] = [null, null]; // a bill already carries its tax
             } elseif ($line->isOutflow() && ($contact !== null || $primaryTax !== null)) {
-                $entry = $this->recordExpense($line, $account, $contact, $this->requireAccount($accountId), $primaryTax, $secondaryTax);
+                $entry = $this->recordExpense($line, $account, $contact, $this->requireCategory($account, $accountId), $primaryTax, $secondaryTax);
 
                 if ($rememberVendorDefault && $contact !== null) {
                     $this->rememberVendorDefaults($contact, (int) $accountId, $primaryTax);
                 }
             } else {
-                $entry = $this->journalEntry->handle($line, $this->requireAccount($accountId), $contact?->id);
+                $entry = $this->journalEntry->handle($line, $this->requireCategory($account, $accountId), $contact?->id);
             }
 
             $bankLine = $entry->lines()
@@ -246,6 +254,9 @@ final class RecordStatementLine
         $payment = $this->saveBillPayment->handle([
             'contact_id' => $contact->id,
             'payment_type' => $paymentType->value,
+            // The amount is in the account's currency, which the matcher has
+            // checked is the bills' — so the payment is too, whatever the vendor's.
+            'currency_code' => $account->currency_code ?: $account->company->currency_code,
             'payment_date' => CarbonImmutable::parse($line->txn_date)->toDateString(),
             'paid_from_account_id' => $account->id,
             'reference' => $this->reference($line),
@@ -271,11 +282,17 @@ final class RecordStatementLine
         return $contact;
     }
 
-    private function requireAccount(?int $accountId): int
+    /**
+     * The category the expense or journal entry posts to: required, and in the
+     * home currency or the bank account's own.
+     */
+    private function requireCategory(Account $account, ?int $accountId): int
     {
         if ($accountId === null) {
             throw new PostingValidationException(__('Choose a category for this transaction.'));
         }
+
+        $this->currencyGuard->assertCategoriesFit($account, [$accountId]);
 
         return $accountId;
     }
