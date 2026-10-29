@@ -98,6 +98,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decrypted, for example after a database is restored under a different
   `APP_KEY`, the RL-1 and ROE XML exports failed. They now file 000000000, as
   the T4 export already did.
+- **Backups restore next to the organization they came from.** On the server
+  that made it, a restore stopped with a database error for any organization
+  that had ever invited a teammate, turned on inbox email, taken a card payment
+  through Stripe or had an AI assistant propose a write, because it copied
+  values no two organizations may share. The restored organization now gets
+  its own: invitations never accepted, and an assistant's proposals still
+  waiting to be confirmed, come back expired; inbox email comes back off, so
+  mail to the original's forwarding address never reaches the copy; card
+  payments keep the Stripe payment id in their reference. The same kind of
+  failure as #158.
 
 ### Security
 
