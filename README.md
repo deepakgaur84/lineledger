@@ -633,7 +633,9 @@ them into `PayrollVerificationDataset`).
 
 `PayrollConstantsRepository` **refuses** to compute for a date or province with no
 loaded table — the pay-run UI blocks payroll rather than withhold wrong amounts —
-so a missing update fails loudly instead of quietly producing bad numbers.
+so a missing update fails loudly instead of quietly producing bad numbers. A table
+covers pay dates until the next one and never past December 31 of its own year, so
+from January 1 every pay run is refused until that year's tables are appended.
 
 ## Testing
 

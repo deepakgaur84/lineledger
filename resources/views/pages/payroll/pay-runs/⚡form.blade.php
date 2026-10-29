@@ -5,6 +5,7 @@ use App\Actions\Payroll\SavePayRun;
 use App\Enums\AccountSubtype;
 use App\Enums\PayBasis;
 use App\Enums\PayRunStatus;
+use App\Exceptions\Payroll\MissingPayrollConstantsException;
 use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Company;
@@ -355,7 +356,16 @@ new #[Title('Pay run')] class extends Component {
             return;
         }
 
-        $calculate->calculate($run);
+        try {
+            $calculate->calculate($run);
+        } catch (MissingPayrollConstantsException $e) {
+            // No tax table covers the pay date (e.g. a new year's tables aren't
+            // installed yet). The draft is saved: land on it, where the reason stays shown.
+            Flux::toast(variant: 'danger', text: $e->userMessage());
+            $this->redirectRoute('pay-runs.show', ['company' => $this->company, 'payRun' => $run], navigate: true);
+
+            return;
+        }
 
         Flux::toast(variant: 'success', text: __('Pay run calculated.'));
         $this->redirectRoute('pay-runs.show', ['company' => $this->company, 'payRun' => $run], navigate: true);
