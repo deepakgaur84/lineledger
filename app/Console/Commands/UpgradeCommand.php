@@ -19,7 +19,7 @@ use Illuminate\Database\Migrations\Migrator;
  * says what each step did and which were skipped.
  *
  * Every step is idempotent and cheap once it has run — migrations apply
- * nothing, both backfills match nothing — so re-running after a failure is
+ * nothing, every backfill matches nothing — so re-running after a failure is
  * safe, and so is running it on every deploy. --dry-run lists the pending
  * migrations and what each backfill would change without writing (the
  * integrity check is read-only, so --verify still runs under it); while
@@ -39,7 +39,7 @@ class UpgradeCommand extends Command
         {--verify : Run integrity:check afterwards}
         {--company= : Limit the backfills to one company ID or slug}';
 
-    protected $description = 'Run every post-release step in order: migrate, backfill bank line memos and reconciliation stamps, and optionally verify ledger integrity.';
+    protected $description = 'Run every post-release step in order: migrate, backfill bank line memos, reconciliation stamps and reversal currency memos, and optionally verify ledger integrity.';
 
     /** The company --company resolved to, when given. */
     private ?Company $company = null;
@@ -115,6 +115,7 @@ class UpgradeCommand extends Command
             ['Migrations', fn (): array => $this->migrate($migrator, $dryRun)],
             ['Bank line memos', fn (): array => $this->afterMigrating($dryRun) ?? $this->backfill('banking:backfill-line-memos', $dryRun)],
             ['Reconciliation stamps', fn (): array => $this->afterMigrating($dryRun) ?? $this->backfill('banking:backfill-reconciliation-stamps', $dryRun)],
+            ['Reversal currency memos', fn (): array => $this->afterMigrating($dryRun) ?? $this->backfill('currency:backfill-reversal-memos', $dryRun)],
         ];
 
         if ($this->option('verify')) {

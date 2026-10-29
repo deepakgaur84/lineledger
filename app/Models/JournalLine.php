@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Actions\Accounting\ReverseJournalEntry;
+use App\Services\Posting\JournalPoster;
 use Closure;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
@@ -10,6 +12,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 
 /**
+ * @property int|null $class_id
+ * @property int|null $location_id
  * @property int|null $fund_id
  */
 #[Fillable([
@@ -58,6 +62,63 @@ class JournalLine extends Model
                 $line->entry_date = $entry->entry_date?->toDateString();
             }
         });
+    }
+
+    /**
+     * The attributes of the line that reverses this one: same account, contact,
+     * tax code and dimensions, with debit and credit swapped and the foreign-
+     * currency memo mirrored the same way ({@see reversingForeignMemo()}), so the
+     * pair cancels in foreign units as well as in home cents.
+     *
+     * Every reversal is built from this — a void ({@see JournalPoster::void()})
+     * and an accrual reversal ({@see ReverseJournalEntry}) — so a column cannot
+     * be forgotten by one writer and not the other.
+     *
+     * @return array<string, mixed>
+     */
+    public function reversingAttributes(int $lineOrder): array
+    {
+        return [
+            'account_id' => $this->account_id,
+            'debit_cents' => $this->credit_cents,
+            'credit_cents' => $this->debit_cents,
+            ...$this->reversingForeignMemo(),
+            'memo' => $this->memo,
+            'contact_id' => $this->contact_id,
+            'tax_code_id' => $this->tax_code_id,
+            'line_order' => $lineOrder,
+            'class_id' => $this->class_id,
+            'location_id' => $this->location_id,
+            'fund_id' => $this->fund_id,
+        ];
+    }
+
+    /**
+     * The foreign-currency memo of the line that reverses this one: the same
+     * currency and locked rate, foreign debit and credit swapped. A home-currency
+     * line carries none, and neither does its reversal.
+     *
+     * @return array{currency_code: ?string, fx_rate: mixed, foreign_debit_cents: int, foreign_credit_cents: int}
+     */
+    public function reversingForeignMemo(): array
+    {
+        return [
+            'currency_code' => $this->currency_code,
+            'fx_rate' => $this->fx_rate,
+            'foreign_debit_cents' => (int) $this->foreign_credit_cents,
+            'foreign_credit_cents' => (int) $this->foreign_debit_cents,
+        ];
+    }
+
+    /**
+     * Whether this line carries any part of a foreign-currency memo.
+     */
+    public function hasForeignMemo(): bool
+    {
+        return $this->currency_code !== null
+            || $this->fx_rate !== null
+            || (int) $this->foreign_debit_cents !== 0
+            || (int) $this->foreign_credit_cents !== 0;
     }
 
     /**

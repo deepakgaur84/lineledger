@@ -79,6 +79,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `backup:import`. The keys now come back revoked, still linked to the audit
   entries they made, and the owner creates new ones. A restore that fails
   partway also no longer leaves an empty organization behind. Reported in #158.
+- **Voiding a foreign-currency document takes its foreign amount off too.** A
+  void reversed each line in your home currency but not its foreign amount and
+  rate, so a voided USD invoice, bill, credit memo, receipt, payment, deposit,
+  cheque or transfer stayed on its accounts in USD. Every period-end revaluation
+  then booked an unrealized gain or loss on that phantom balance, and voiding a
+  credit memo or vendor credit that had closed an invoice or bill (Close settled
+  balance) never re-opened it. Voids now carry the foreign amount and rate onto
+  the reversing entry, and so does the draft Reverse creates from a journal
+  entry. `app:upgrade` repairs earlier voids with a new step,
+  `currency:backfill-reversal-memos`: it copies each original line's foreign
+  amount onto the reversal, re-opens what a voided credit had kept closed, and
+  lists any reversal edited since, which it leaves alone. `integrity:check` now
+  reports a void that leaves foreign units behind. Revaluations already posted
+  are not changed; see `UPGRADING.md`.
 
 ### Security
 
