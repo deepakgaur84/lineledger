@@ -50,7 +50,7 @@ new #[Title('Recurring journal entry')] class extends Component {
     public function generateNow(RecurringJournalEntryGenerator $generator): void
     {
         try {
-            $entry = $generator->generateOne($this->recurring);
+            $entries = $generator->generateAllDue($this->recurring);
         } catch (RuntimeException $e) {
             Flux::toast(variant: 'danger', text: $e->getMessage());
 
@@ -58,6 +58,20 @@ new #[Title('Recurring journal entry')] class extends Component {
         }
 
         $this->recurring->refresh();
+        unset($this->generated);
+
+        // A schedule that was behind catches up in one go: stay on this page, where
+        // the generated drafts are listed, instead of opening just one of them.
+        if ($entries->count() !== 1) {
+            Flux::toast(
+                variant: $entries->isEmpty() ? 'warning' : 'success',
+                text: $entries->isEmpty() ? __('Nothing was due.') : __(':count drafts generated.', ['count' => $entries->count()]),
+            );
+
+            return;
+        }
+
+        $entry = $entries->first();
 
         $this->redirectRoute('journal.edit', ['company' => $this->company->slug, 'entry' => $entry->id], navigate: true);
     }

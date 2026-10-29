@@ -1419,3 +1419,21 @@ re-add the provider-based changes; the other files are fork-only.
   (`createPendingLineContact()` in `ManagesStatementLineContacts.php`, called from accept, create-rule and save-split).
   The file-import wizard (`pages/banking/⚡import.blade.php`, now a patched file) does the same on confirm, confirm-all, create-rule and
   before every commit (`createAllPendingLineContacts()`). On upstream sync, rebuild that file from upstream and re-add those calls.
+
+## 28. Recurring schedules: "Generate now" catches up
+
+Upstream's **Generate now** button on a recurring invoice/bill/journal schedule created one occurrence per click, so a schedule
+started months ago needed one click per month. (The nightly `recurring:generate` run already caught up every missed occurrence,
+up to 60 per run.) Now the button creates **every occurrence already due** in one go, each dated for its own run date:
+
+- `RecurringDocumentGenerator::generateAllDue()` and `RecurringJournalEntryGenerator::generateAllDue()` throw like `generateOne()`
+  when the schedule is paused or references something that no longer exists, then call the same `generateDue()` the nightly run
+  uses (so automation modes, the "email only the most recent" rule and the 60-occurrence cap behave identically). When nothing is
+  due yet they fall back to `generateOne()` and create the next occurrence early, as before.
+- The two schedule pages (`pages/recurring/⚡show.blade.php`, `pages/recurring-journal/⚡show.blade.php`) call it from
+  `generateNow`: exactly one result opens it for editing as before; several results stay on the schedule page with a
+  "N drafts generated." toast, where they are listed.
+- Docs page text updated (`pages/docs/⚡recurring.blade.php`).
+- Files: `app/Services/Recurring/RecurringDocumentGenerator.php`, `app/Services/Recurring/RecurringJournalEntryGenerator.php`, the two
+  `⚡show.blade.php` pages above, `⚡recurring.blade.php` (docs), `tests/Feature/Recurring/RecurringCatchUpTest.php`.
+- **On upstream sync:** rebuild each patched file from the new upstream version and re-add only the lines described here.

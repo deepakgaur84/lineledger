@@ -51,7 +51,7 @@ new #[Title('Recurring schedule')] class extends Component {
     public function generateNow(RecurringDocumentGenerator $generator): void
     {
         try {
-            $document = $generator->generateOne($this->recurring);
+            $documents = $generator->generateAllDue($this->recurring);
         } catch (RuntimeException $e) {
             Flux::toast(variant: 'danger', text: $e->getMessage());
 
@@ -59,6 +59,20 @@ new #[Title('Recurring schedule')] class extends Component {
         }
 
         $this->recurring->refresh();
+        unset($this->generated);
+
+        // A schedule that was behind catches up in one go: stay on this page, where
+        // the generated drafts are listed, instead of opening just one of them.
+        if ($documents->count() !== 1) {
+            Flux::toast(
+                variant: $documents->isEmpty() ? 'warning' : 'success',
+                text: $documents->isEmpty() ? __('Nothing was due.') : __(':count drafts generated.', ['count' => $documents->count()]),
+            );
+
+            return;
+        }
+
+        $document = $documents->first();
 
         if ($document instanceof Invoice) {
             $this->redirectRoute('invoices.edit', ['company' => $this->company->slug, 'invoice' => $document->id], navigate: true);

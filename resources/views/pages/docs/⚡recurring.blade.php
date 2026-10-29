@@ -149,7 +149,7 @@ new #[Title('Documentation — Recurring')] class extends Component {}; ?>
         </flux:text>
 
         <x-docs.callout type="tip" heading="{{ __('Generate one on demand') }}">
-            {{ __('You do not have to wait for the nightly run. Open an Active schedule and select Generate now to create its next occurrence immediately, dated for the Next run date. It follows the same automation setting as a scheduled run, counts as that occurrence — Generated goes up by one and Next run moves on a period — and drops you straight into the new invoice\'s or bill\'s edit form. If the schedule\'s contact or a line account no longer exists, Generate now tells you so instead of creating anything.') }}
+            {{ __('You do not have to wait for the nightly run. Open an Active schedule and select Generate now to create every occurrence that is already due, so a schedule with a start date months ago catches up in one go (up to 60 at a time; select it again for more), each dated for its own run date. When nothing is due yet it creates the next occurrence early. It follows the same automation setting as a scheduled run, counts each occurrence — Generated goes up and Next run moves on a period for every one — and, when exactly one is created, drops you straight into the new invoice\'s or bill\'s edit form; when several are created you stay on the schedule, where they are listed. If the schedule\'s contact or a line account no longer exists, Generate now tells you so instead of creating anything.') }}
         </x-docs.callout>
 
         {{-- ───────────────────────── Edit, pause, delete ───────────────────────── --}}

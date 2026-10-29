@@ -84,6 +84,38 @@ class RecurringJournalEntryGenerator
     }
 
     /**
+     * Manual "Generate now" from the schedule page: create every occurrence that is
+     * already due, so a schedule started months ago catches up in one go (the same
+     * as the nightly run, but now and with errors reported). When nothing is due
+     * yet, create the next occurrence early, as {@see generateOne()} does. Throws
+     * if the schedule is paused or references something that no longer exists.
+     *
+     * @return Collection<int, JournalEntry>
+     */
+    public function generateAllDue(RecurringJournalEntry $schedule): Collection
+    {
+        $row = RecurringJournalEntry::query()->withoutGlobalScopes()->with('lines')->findOrFail($schedule->getKey());
+        $company = Company::query()->findOrFail($row->company_id);
+
+        if (! $row->is_active) {
+            throw new RuntimeException('This recurring schedule is paused or ended.');
+        }
+
+        $reason = $this->blockingReason($row);
+        if ($reason !== null) {
+            throw new RuntimeException($reason);
+        }
+
+        $today = $company->currentDateTime()->startOfDay();
+
+        if ($row->next_run_date === null || $row->next_run_date->greaterThan($today)) {
+            return collect([$this->generateOne($schedule)]);
+        }
+
+        return $this->generateDue($schedule, $today);
+    }
+
+    /**
      * Generate a single occurrence immediately (manual "Generate now"), using the
      * scheduled next_run_date, or the company's today when none is set. Throws if
      * the schedule is inactive or references something that no longer exists.
