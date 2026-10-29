@@ -79,6 +79,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `backup:import`. The keys now come back revoked, still linked to the audit
   entries they made, and the owner creates new ones. A restore that fails
   partway also no longer leaves an empty organization behind. Reported in #158.
+- **Backups restore next to the organization they came from.** On the server
+  that made it, a restore stopped with a database error for any organization
+  that had ever invited a teammate, turned on inbox email, taken a card payment
+  through Stripe or had an AI assistant propose a write, because it copied
+  values no two organizations may share. The restored organization now gets
+  its own: invitations never accepted, and an assistant's proposals still
+  waiting to be confirmed, come back expired; inbox email comes back off, so
+  mail to the original's forwarding address never reaches the copy; card
+  payments keep the Stripe payment id in their reference. The same kind of
+  failure as #158.
 
 ### Security
 
