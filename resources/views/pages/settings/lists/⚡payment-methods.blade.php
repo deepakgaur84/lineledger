@@ -1,6 +1,7 @@
 <?php
 
 use App\Actions\MasterData\SavePaymentMethod;
+use App\Enums\JurisdictionCapability;
 use App\Livewire\Concerns\HoldsEditLock;
 use App\Models\Company;
 use App\Models\PaymentMethod;
@@ -20,6 +21,8 @@ new #[Title('Payment methods')] class extends Component {
 
     public bool $f_is_cheque = false;
 
+    public bool $f_is_card = false;
+
     public bool $f_is_active = true;
 
     public function mount(Company $company): void
@@ -30,7 +33,7 @@ new #[Title('Payment methods')] class extends Component {
     public function openCreate(): void
     {
         $this->releaseEditLock();
-        $this->reset(['editingId', 'f_name', 'f_is_cheque', 'f_is_active']);
+        $this->reset(['editingId', 'f_name', 'f_is_cheque', 'f_is_card', 'f_is_active']);
         $this->f_is_active = true;
         Flux::modal('payment-methods-form')->show();
     }
@@ -46,6 +49,7 @@ new #[Title('Payment methods')] class extends Component {
         $this->editingId = $m->id;
         $this->f_name = $m->name;
         $this->f_is_cheque = $m->is_cheque;
+        $this->f_is_card = $m->is_card;
         $this->f_is_active = $m->is_active;
         Flux::modal('payment-methods-form')->show();
     }
@@ -59,17 +63,25 @@ new #[Title('Payment methods')] class extends Component {
         $validated = $this->validate([
             'f_name' => ['required', 'string', 'max:255'],
             'f_is_cheque' => ['boolean'],
+            'f_is_card' => ['boolean'],
             'f_is_active' => ['boolean'],
         ]);
 
         $editing = $this->editingId ? PaymentMethod::findOrFail($this->editingId) : null;
         abort_if($editing !== null && $editing->company_id !== $this->company->id, 403);
 
-        app(SavePaymentMethod::class)->handle([
+        $data = [
             'name' => $validated['f_name'],
             'is_cheque' => $validated['f_is_cheque'],
             'is_active' => $validated['f_is_active'],
-        ], $editing);
+        ];
+
+        // Only a US organization sees the card switch; elsewhere a save leaves the flag as it was.
+        if ($this->showsCardFlag()) {
+            $data['is_card'] = $validated['f_is_card'];
+        }
+
+        app(SavePaymentMethod::class)->handle($data, $editing);
 
         $this->completeEditLockSave();
         Flux::modal('payment-methods-form')->close();
@@ -80,6 +92,16 @@ new #[Title('Payment methods')] class extends Component {
     public function methods()
     {
         return PaymentMethod::query()->orderBy('name')->get();
+    }
+
+    /**
+     * The card flag keeps card and payment-app payments out of the 1099 Summary,
+     * a US-only report, so only a US organization is shown it.
+     */
+    #[Computed]
+    public function showsCardFlag(): bool
+    {
+        return $this->company->supports(JurisdictionCapability::Form1099);
     }
 }; ?>
 
@@ -98,6 +120,9 @@ new #[Title('Payment methods')] class extends Component {
                     <tr>
                         <th class="px-4 py-2 text-left">{{ __('Name') }}</th>
                         <th class="px-4 py-2 text-center">{{ $j->cheque('singular') }}</th>
+                        @if ($this->showsCardFlag)
+                            <th class="px-4 py-2 text-center">{{ __('Card or app') }}</th>
+                        @endif
                         <th class="px-4 py-2"></th>
                     </tr>
                 </thead>
@@ -110,6 +135,13 @@ new #[Title('Payment methods')] class extends Component {
                                     <flux:icon name="check" class="mx-auto size-4 text-emerald-600" />
                                 @endif
                             </td>
+                            @if ($this->showsCardFlag)
+                                <td class="px-4 py-2 text-center">
+                                    @if ($m->is_card)
+                                        <flux:icon name="check" class="mx-auto size-4 text-emerald-600" />
+                                    @endif
+                                </td>
+                            @endif
                             <td class="px-4 py-2 text-right">
                                 <flux:button variant="ghost" size="sm" icon="pencil" wire:click="openEdit({{ $m->id }})" />
                             </td>
@@ -128,6 +160,9 @@ new #[Title('Payment methods')] class extends Component {
             <flux:heading size="lg">{{ $editingId ? __('Edit payment method') : __('New payment method') }}</flux:heading>
             <flux:input wire:model="f_name" :label="__('Name')" required data-test="method-name" />
             <flux:switch wire:model="f_is_cheque" :label="$j->chequeLabel('method')" :description="__('Enables the :action action on bill payments using this method.', ['action' => $j->chequeLabel('print')])" data-test="method-is-cheque" />
+            @if ($this->showsCardFlag)
+                <flux:switch wire:model="f_is_card" :label="__('Card or payment app')" :description="__('A credit, debit or prepaid card, or a payment app such as PayPal or Venmo. The card company or app reports these payments on Form 1099-K, so the 1099 Summary leaves them out.')" data-test="method-is-card" />
+            @endif
             @if ($editingId)
                 <div>
                     <flux:label>{{ __('Payment Method ID (API)') }}</flux:label>

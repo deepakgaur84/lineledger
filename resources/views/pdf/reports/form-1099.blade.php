@@ -22,6 +22,7 @@
     <div class="subtitle">{{ $company->name }}</div>
     <div class="meta">
         Calendar year: {{ $year }}<br>
+        Reporting threshold: {{ $threshold }}<br>
         Generated {{ \App\Support\Reporting\GeneratedAt::label($company) }}
     </div>
 
@@ -36,7 +37,7 @@
         <tbody>
         @forelse ($rows as $row)
             <tr>
-                <td>{{ $row['name'] }}{{ $row['meets_threshold'] ? '' : ' (below $600)' }}</td>
+                <td>{{ $row['name'] }}{{ $row['meets_threshold'] ? '' : ' (below '.$threshold.')' }}</td>
                 <td>{{ $row['tax_number'] ?: '—' }}</td>
                 <td class="num">{{ number_format($row['total_cents'] / 100, 2) }}</td>
             </tr>
@@ -54,6 +55,6 @@
         @endif
     </table>
 
-    <div class="footer">Includes posted bill payments and posted cheques to 1099-tracked vendors during the calendar year. 1099-NEC Box 1 (nonemployee compensation).</div>
+    <div class="footer">Includes posted bill payments, cheques and pay-now expenses to 1099-tracked vendors during the calendar year. Leaves out payments charged to a credit card account or made with a card or payment-app method, which the card company or app reports on Form 1099-K. 1099-NEC Box 1 (nonemployee compensation).</div>
 </body>
 </html>

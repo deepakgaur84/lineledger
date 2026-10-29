@@ -32,9 +32,10 @@ interface CompanyDefaults
     public function coreAccounts(): array;
 
     /**
-     * Payment methods to seed for a new company in this jurisdiction.
+     * Payment methods to seed for a new company in this jurisdiction. is_card
+     * marks a card or payment-app method (see PaymentMethod); it defaults to false.
      *
-     * @return list<array{name: string, is_cheque: bool}>
+     * @return list<array{name: string, is_cheque: bool, is_card?: bool}>
      */
     public function paymentMethods(): array;
 

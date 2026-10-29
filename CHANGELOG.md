@@ -201,6 +201,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   receipt issued before its donation was posted allows, it is voided and
   replaced by a corrected draft, as Reissue does. Reissue keeps the corrected
   draft linked to the donation.
+- **The 1099 Summary uses the $2,000 threshold for 2026 and leaves out card
+  payments.** It held every year to $600, so a vendor paid $600 to $1,999.99
+  in 2026 showed as needing a 1099-NEC. The IRS threshold is $2,000 for
+  payments made in 2026 and stays $600 for earlier years. The threshold now
+  follows the report's year on screen, in the PDF and in the MCP
+  `form1099-tool`, and a later year whose inflation-adjusted figure the IRS
+  has not published yet says so and uses the latest published one. The report
+  also counted card payments, which the card company reports on Form 1099-K
+  and which don't belong on a 1099-NEC. It now leaves out bill payments and
+  expenses paid from a credit card account, or made with a payment method
+  marked **Card or payment app** (new in Settings → Lists → Payment methods
+  for US organizations), such as a debit card or PayPal paid from the bank.
+  Credit card starts marked, as does any existing method with "card" in its
+  name; mark PayPal, Venmo and the like yourself. Cheques, ACH and wire
+  payments always count. New `payment_methods.is_card` column, also on the
+  payment methods API.
 
 ### Security
 

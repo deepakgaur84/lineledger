@@ -359,7 +359,11 @@ new #[Title('Documentation — Reports')] class extends Component {}; ?>
 
         <flux:heading size="md" class="mt-6">{{ __('1099 Summary (US only)') }}</flux:heading>
         <flux:text>
-            {{ __('For US organizations, the 1099 Summary totals what you paid each vendor you flagged for 1099 tracking over a calendar year — counting posted bill payments, cheques, and pay-now expenses, but not refunds. Vendors under the $600 reporting threshold are hidden by default, with a toggle to show everyone. Amounts report as nonemployee compensation (1099-NEC Box 1). Export to CSV, Excel, or PDF. To use it, flag the vendor and record their Tax ID on the vendor record. The report does not appear for Canadian organizations.') }}
+            {{ __('For US organizations, the 1099 Summary totals what you paid each vendor you flagged for 1099 tracking over a calendar year — counting posted bill payments, cheques, and pay-now expenses, but not refunds or card payments. Vendors under the year’s IRS reporting threshold are hidden by default, with a toggle to show everyone. The threshold follows the year the payments were made in: $600 for payments made before 2026, $2,000 for payments made in 2026, and from 2027 an amount the IRS adjusts for inflation. Amounts report as nonemployee compensation (1099-NEC Box 1). Export to CSV, Excel, or PDF. To use it, flag the vendor and record their Tax ID on the vendor record. The report does not appear for Canadian organizations.') }}
+        </flux:text>
+
+        <flux:text>
+            {{ __('Card and payment-app payments are left out because the card company or app reports them to the IRS on Form 1099-K, so they don’t belong on a 1099-NEC. That covers a bill payment or expense paid from a credit card account, and one made with a payment method marked Card or payment app, such as a debit card or PayPal paid from your bank account. Credit card is marked for you; mark any other card or app method under Settings → Lists → Payment methods. Cheques, ACH and wire payments always count.') }}
         </flux:text>
 
         {{-- ─────────────────── Sales & purchases analysis ─────────────────── --}}
