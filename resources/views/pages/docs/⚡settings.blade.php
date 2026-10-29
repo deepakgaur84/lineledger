@@ -420,6 +420,9 @@ new #[Title('Documentation — Settings')] class extends Component {}; ?>
         <flux:text>
             {{ __('API keys come back revoked. A backup never holds a key’s secret, so the restored keys only record which integrations you had; create new ones in the API keys panel of Settings → Security and update those integrations.') }}
         </flux:text>
+        <flux:text>
+            {{ __('Employee SINs are encrypted again with this server’s key as they are restored, so they come back readable whichever server made the backup. If a SIN could not be read when the backup was made, the preview says so and that employee comes back without one; enter it again on their payroll profile.') }}
+        </flux:text>
 
         <p><strong>{{ __('To restore a backup into a new organization:') }}</strong></p>
         <ol class="list-decimal ps-6 space-y-1">

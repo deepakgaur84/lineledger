@@ -121,9 +121,10 @@ class RoeXmlGenerator
 
     private function sin(?EmployeePayrollProfile $profile): string
     {
-        $sin = $profile?->sin_encrypted; // decrypted by the cast
+        // Null when unset or no longer decryptable: file the placeholder, as the T4 does.
+        $sin = $profile?->sinOrNull();
 
-        return $sin !== null && $sin !== '' ? (preg_replace('/\D/', '', $sin) ?? '000000000') : '000000000';
+        return $sin !== null ? (preg_replace('/\D/', '', $sin) ?? '000000000') : '000000000';
     }
 
     private function bn(string $taxNumber): string

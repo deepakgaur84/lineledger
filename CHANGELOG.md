@@ -79,6 +79,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `backup:import`. The keys now come back revoked, still linked to the audit
   entries they made, and the owner creates new ones. A restore that fails
   partway also no longer leaves an empty organization behind. Reported in #158.
+- **Employee SINs survive a restore.** A restore wrote each SIN into the new
+  organization unencrypted, where the app expects it encrypted, so every SIN in
+  a restored organization was unreadable and sat unencrypted in the database.
+  The T4 filed 000000000 in its place, the T4 PDF printed only the last four
+  digits, the RL-1 and ROE exports failed, and the organization could never be
+  backed up again. Nothing flagged it: `integrity:check` and `audit:verify`
+  still passed. A restore now encrypts SINs with the server's own key, so they
+  come back readable whichever server made the backup, with the same `APP_KEY`
+  or another. Organizations restored before this release are repaired by
+  `app:upgrade`, which now runs `backup:repair-encrypted-columns`: it encrypts
+  the SINs a restore left unencrypted and lists any that this `APP_KEY` cannot
+  decrypt, which have to be entered again (`--dry-run` shows both without
+  changing anything). A SIN that can't be decrypted no longer stops a backup
+  either: it is left out, and the restore preview says how many employees come
+  back without one.
+- **RL-1 and ROE exports file the unknown-SIN placeholder.** When a SIN can't be
+  decrypted, for example after a database is restored under a different
+  `APP_KEY`, the RL-1 and ROE XML exports failed. They now file 000000000, as
+  the T4 export already did.
 
 ### Security
 
