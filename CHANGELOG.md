@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   running balance after each line, always worked out in date order, so it stays
   correct whatever the sort, page or Show cleared setting. Long registers page
   50 rows at a time instead of loading every line at once.
+- **No built-in sibling deployments.** `APP_URL_CA` and `APP_URL_US` no longer
+  default to `books.lineledger.ca` and `books.lineledger.com`, which aren't run any
+  more, so the guest country-switcher banner stays off unless you list your own
+  sibling deployments. `SECURITY.md` now scopes reports to the source code; running
+  deployments, including the public demo, are out of scope.
 
 ### Fixed
 
