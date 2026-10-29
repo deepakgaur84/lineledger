@@ -127,7 +127,7 @@ class RecurringDocumentGenerator
 
         $today = $company->currentDateTime()->startOfDay();
 
-        if ($doc->next_run_date === null || $doc->next_run_date->greaterThan($today)) {
+        if ($doc->next_run_date === null || $doc->next_run_date->toDateString() > $today->toDateString()) {
             return collect([$this->generateOne($document)]);
         }
 

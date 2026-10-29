@@ -112,7 +112,7 @@ class RecurringJournalEntryGenerator
 
         $today = $company->currentDateTime()->startOfDay();
 
-        if ($row->next_run_date === null || $row->next_run_date->greaterThan($today)) {
+        if ($row->next_run_date === null || $row->next_run_date->toDateString() > $today->toDateString()) {
             return collect([$this->generateOne($schedule)]);
         }
 
