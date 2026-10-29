@@ -7,6 +7,7 @@ use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\Contact;
+use App\Models\Donation;
 use App\Models\DonationReceipt;
 use App\Support\Money;
 use Flux\Flux;
@@ -75,9 +76,28 @@ new #[Title('Donation receipt')] class extends Component {
             $this->revenue_account_id = $donationReceipt->revenue_account_id;
             $this->debit_account_id = $donationReceipt->debit_account_id;
             $this->notes = (string) $donationReceipt->notes;
+
+            if ($this->linkedDonation !== null) {
+                $this->gift_type = $this->linkedDonation->gift_type->value;
+            }
         } else {
             $this->gift_date = $company->currentDateTime()->toDateString();
         }
+    }
+
+    /**
+     * The donation this receipt was spawned from. It owns the donor, gift type,
+     * gift date and amount, and books the gift — so the form shows those read-only
+     * and offers no debit account (SaveDonationReceipt enforces both).
+     */
+    #[Computed]
+    public function linkedDonation(): ?Donation
+    {
+        if ($this->receipt === null || ! $this->receipt->isLinkedToDonation()) {
+            return null;
+        }
+
+        return $this->receipt->donation()->withTrashed()->with('contact')->first();
     }
 
     #[Computed]
@@ -111,7 +131,9 @@ new #[Title('Donation receipt')] class extends Component {
 
     public function save()
     {
-        $validated = $this->validate([
+        $donation = $this->linkedDonation;
+
+        $rules = [
             'contact_id' => ['nullable', 'integer', Rule::exists('contacts', 'id')->where('company_id', $this->company->id)],
             'gift_type' => ['required', Rule::enum(GiftType::class)],
             'gift_date' => ['required', 'date'],
@@ -124,9 +146,16 @@ new #[Title('Donation receipt')] class extends Component {
             'revenue_account_id' => ['nullable', 'integer', Rule::exists('accounts', 'id')->where('company_id', $this->company->id)],
             'debit_account_id' => ['nullable', 'integer', Rule::exists('accounts', 'id')->where('company_id', $this->company->id)],
             'notes' => ['nullable', 'string', 'max:2000'],
-        ]);
+        ];
 
-        $amountCents = Money::tryFromString($this->amount)?->cents ?? 0;
+        if ($donation !== null) {
+            // The donation owns these, and the action takes them from it.
+            unset($rules['contact_id'], $rules['gift_type'], $rules['gift_date'], $rules['amount'], $rules['revenue_account_id'], $rules['debit_account_id']);
+        }
+
+        $validated = $this->validate($rules);
+
+        $amountCents = $donation !== null ? $donation->amount_cents : (Money::tryFromString($this->amount)?->cents ?? 0);
         $advantageCents = $this->advantage !== '' ? (Money::tryFromString($this->advantage)?->cents ?? 0) : 0;
 
         if ($amountCents <= 0) {
@@ -135,20 +164,25 @@ new #[Title('Donation receipt')] class extends Component {
             return;
         }
 
-        $receipt = app(SaveDonationReceipt::class)->handle([
+        $inKind = ($donation !== null ? $donation->gift_type->value : $this->gift_type) === GiftType::InKind->value;
+
+        $data = [
+            'advantage_cents' => $advantageCents,
+            'advantage_description' => $this->advantage_description ?: null,
+            'in_kind_description' => $inKind ? ($this->in_kind_description ?: null) : null,
+            'appraised_by' => $inKind ? ($this->appraised_by ?: null) : null,
+            'appraisal_date' => $inKind ? ($this->appraisal_date ?: null) : null,
+            'notes' => $this->notes ?: null,
+        ] + ($donation !== null ? $donation->receiptFields() : [
             'contact_id' => $validated['contact_id'] ?: null,
             'gift_type' => $validated['gift_type'],
             'gift_date' => $validated['gift_date'],
             'amount_cents' => $amountCents,
-            'advantage_cents' => $advantageCents,
-            'advantage_description' => $this->advantage_description ?: null,
-            'in_kind_description' => $this->gift_type === GiftType::InKind->value ? ($this->in_kind_description ?: null) : null,
-            'appraised_by' => $this->gift_type === GiftType::InKind->value ? ($this->appraised_by ?: null) : null,
-            'appraisal_date' => $this->gift_type === GiftType::InKind->value ? ($this->appraisal_date ?: null) : null,
             'revenue_account_id' => $validated['revenue_account_id'] ?: null,
-            'debit_account_id' => $this->gift_type === GiftType::InKind->value ? ($validated['debit_account_id'] ?: null) : null,
-            'notes' => $this->notes ?: null,
-        ], $this->receipt);
+            'debit_account_id' => $inKind ? ($validated['debit_account_id'] ?: null) : null,
+        ]);
+
+        $receipt = app(SaveDonationReceipt::class)->handle($data, $this->receipt);
 
         Flux::toast(variant: 'success', text: __('Donation receipt saved.'));
 
@@ -164,46 +198,81 @@ new #[Title('Donation receipt')] class extends Component {
     <flux:subheading class="mb-6">{{ __('Drafts can be edited until issued. Issuing locks the serial number.') }}</flux:subheading>
 
     <form wire:submit="save" class="space-y-6">
-        <flux:select wire:model="contact_id" :label="__('Donor')" data-test="donation-receipt-contact">
-            <flux:select.option value="">{{ __('No linked contact') }}</flux:select.option>
-            @foreach ($this->donors as $donor)
-                <flux:select.option value="{{ $donor->id }}">{{ $donor->display_name }}</flux:select.option>
-            @endforeach
-        </flux:select>
+        @if ($this->linkedDonation)
+            @php($donation = $this->linkedDonation)
+            <flux:callout variant="secondary" icon="link" data-test="donation-receipt-linked-donation">
+                <flux:callout.heading>{{ __('Created from donation :number', ['number' => $donation->donation_no]) }}</flux:callout.heading>
+                <flux:callout.text>
+                    {{ __('The donation books this gift, so issuing the receipt posts nothing to the ledger.') }}
+                    {{ __('The donor, gift type, gift date and amount come from the donation — edit the donation to change them.') }}
+                    <a href="{{ route('donations.show', ['company' => $company, 'donation' => $donation]) }}" wire:navigate class="underline" data-test="donation-receipt-donation-link">{{ __('Open donation :number', ['number' => $donation->donation_no]) }}</a>
+                </flux:callout.text>
+            </flux:callout>
 
-        <flux:select wire:model.live="gift_type" :label="__('Gift type')" data-test="donation-receipt-gift-type">
-            @foreach (GiftType::cases() as $case)
-                <flux:select.option value="{{ $case->value }}">{{ $case->label() }}</flux:select.option>
-            @endforeach
-        </flux:select>
+            <div class="grid grid-cols-2 gap-4 text-sm" data-test="donation-receipt-donation-fields">
+                <div>
+                    <div class="text-muted-foreground">{{ __('Donor') }}</div>
+                    <div>{{ $donation->contact?->display_name ?? __('Anonymous') }}</div>
+                </div>
+                <div>
+                    <div class="text-muted-foreground">{{ __('Gift type') }}</div>
+                    <div>{{ $donation->gift_type->label() }}</div>
+                </div>
+                <div>
+                    <div class="text-muted-foreground">{{ __('Gift date') }}</div>
+                    <div>{{ $donation->donation_date?->format('M j, Y') }}</div>
+                </div>
+                <div>
+                    <div class="text-muted-foreground">{{ __('Fair market value') }}</div>
+                    <div class="font-mono">{{ Money::fromCents($donation->amount_cents, $donation->currency_code ?? $company->currency_code) }}</div>
+                </div>
+            </div>
+        @else
+            <flux:select wire:model="contact_id" :label="__('Donor')" data-test="donation-receipt-contact">
+                <flux:select.option value="">{{ __('No linked contact') }}</flux:select.option>
+                @foreach ($this->donors as $donor)
+                    <flux:select.option value="{{ $donor->id }}">{{ $donor->display_name }}</flux:select.option>
+                @endforeach
+            </flux:select>
 
-        <div class="grid grid-cols-2 gap-4">
-            <flux:input type="date" wire:model="gift_date" :label="__('Gift date')" required data-test="donation-receipt-gift-date" />
-            <flux:input wire:model="amount" :label="__('Fair market value')" placeholder="0.00" required data-test="donation-receipt-amount" />
-        </div>
+            <flux:select wire:model.live="gift_type" :label="__('Gift type')" data-test="donation-receipt-gift-type">
+                @foreach (GiftType::cases() as $case)
+                    <flux:select.option value="{{ $case->value }}">{{ $case->label() }}</flux:select.option>
+                @endforeach
+            </flux:select>
+
+            <div class="grid grid-cols-2 gap-4">
+                <flux:input type="date" wire:model="gift_date" :label="__('Gift date')" required data-test="donation-receipt-gift-date" />
+                <flux:input wire:model="amount" :label="__('Fair market value')" placeholder="0.00" required data-test="donation-receipt-amount" />
+            </div>
+        @endif
 
         <div class="grid grid-cols-2 gap-4">
             <flux:input wire:model="advantage" :label="__('Advantage value')" placeholder="0.00" :description="__('Value of anything the donor received in return.')" data-test="donation-receipt-advantage" />
             <flux:input wire:model="advantage_description" :label="__('Advantage description')" data-test="donation-receipt-advantage-description" />
         </div>
 
-        <flux:select wire:model="revenue_account_id" :label="__('Donation revenue account')" data-test="donation-receipt-revenue-account">
-            <flux:select.option value="">{{ __('Default donation income account') }}</flux:select.option>
-            @foreach ($this->incomeAccounts as $account)
-                <flux:select.option value="{{ $account->id }}">{{ $account->code }} — {{ $account->displayName() }}</flux:select.option>
-            @endforeach
-        </flux:select>
+        @unless ($this->linkedDonation)
+            <flux:select wire:model="revenue_account_id" :label="__('Donation revenue account')" data-test="donation-receipt-revenue-account">
+                <flux:select.option value="">{{ __('Default donation income account') }}</flux:select.option>
+                @foreach ($this->incomeAccounts as $account)
+                    <flux:select.option value="{{ $account->id }}">{{ $account->code }} — {{ $account->displayName() }}</flux:select.option>
+                @endforeach
+            </flux:select>
+        @endunless
 
         @if ($gift_type === \App\Enums\GiftType::InKind->value)
             <div class="space-y-4 rounded-lg border border-border p-4" data-test="donation-receipt-in-kind-fields">
                 <flux:heading size="sm">{{ __('Gift in kind') }}</flux:heading>
                 <flux:textarea wire:model="in_kind_description" :label="__('Description of property')" rows="2" data-test="donation-receipt-in-kind-description" />
-                <flux:select wire:model="debit_account_id" :label="__('Asset / expense account to debit')" :description="__('Where the gift is recorded at fair market value.')" data-test="donation-receipt-debit-account">
-                    <flux:select.option value="">{{ __('Select an account') }}</flux:select.option>
-                    @foreach ($this->assetAccounts as $account)
-                        <flux:select.option value="{{ $account->id }}">{{ $account->code }} — {{ $account->displayName() }}</flux:select.option>
-                    @endforeach
-                </flux:select>
+                @unless ($this->linkedDonation)
+                    <flux:select wire:model="debit_account_id" :label="__('Asset / expense account to debit')" :description="__('Where the gift is recorded at fair market value.')" data-test="donation-receipt-debit-account">
+                        <flux:select.option value="">{{ __('Select an account') }}</flux:select.option>
+                        @foreach ($this->assetAccounts as $account)
+                            <flux:select.option value="{{ $account->id }}">{{ $account->code }} — {{ $account->displayName() }}</flux:select.option>
+                        @endforeach
+                    </flux:select>
+                @endunless
                 <div class="grid grid-cols-2 gap-4">
                     <flux:input wire:model="appraised_by" :label="__('Appraised by')" :description="__('Required for gifts over $1,000.')" data-test="donation-receipt-appraised-by" />
                     <flux:input type="date" wire:model="appraisal_date" :label="__('Appraisal date')" data-test="donation-receipt-appraisal-date" />

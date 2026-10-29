@@ -9,6 +9,7 @@ use App\Enums\AuditAction;
 use App\Enums\DonationReceiptStatus;
 use App\Models\Account;
 use App\Models\Company;
+use App\Models\Donation;
 use App\Models\DonationReceipt;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Posting\JournalPoster;
@@ -19,14 +20,22 @@ use InvalidArgumentException;
 /**
  * Issues, voids, and reissues official donation receipts.
  *
- *  - issue():   draft → issued. Freezes the eligible amount, runs CRA validations,
- *               and (for in-kind gifts) posts DR asset/expense / CR donation
- *               revenue at fair market value. Cash gifts post no GL (the money is
- *               already booked elsewhere) to avoid double-counting revenue.
- *  - void():    issued → void. Retains the serial number (CRA requires voided
- *               receipts be kept) and reverses any in-kind GL entry.
- *  - reissue(): voids the original and returns a fresh draft that references it,
- *               so a corrected receipt carries a new serial linked to the cancelled one.
+ *  - issue():     draft → issued. Freezes the eligible amount, runs CRA validations,
+ *                 and (for a stand-alone in-kind gift) posts DR asset/expense / CR
+ *                 donation revenue at fair market value. Cash gifts post no GL (the
+ *                 money is already booked elsewhere) to avoid double-counting revenue.
+ *                 A receipt spawned from a donation never posts, in kind or not —
+ *                 the donation booked the gift — and is issued only once that
+ *                 donation is posted, for its figures as they then stand.
+ *  - void():      issued → void. Retains the serial number (CRA requires voided
+ *                 receipts be kept) and reverses any in-kind GL entry.
+ *  - voidDraft(): draft → void, for a draft that must never be issued (its
+ *                 donation was voided); the serial it took is kept the same way.
+ *  - reissue():   voids the original and returns a fresh draft that references it,
+ *                 so a corrected receipt carries a new serial linked to the cancelled
+ *                 one. A spawned receipt's draft stays linked to the donation.
+ *
+ * {@see DonationReceiptSynchronizer} drives these from the donation's side.
  */
 final class DonationReceiptIssuer
 {
@@ -46,6 +55,14 @@ final class DonationReceiptIssuer
             throw new InvalidArgumentException('Only draft donation receipts can be issued.');
         }
 
+        if ($receipt->isLinkedToDonation()) {
+            $this->assertDonationIsReceiptable($receipt);
+
+            // Issue for the donation as it stands now, not as it stood when the
+            // draft was last saved.
+            $receipt = $this->saver->syncFromDonation($receipt);
+        }
+
         $company = app('current_company');
         $eligible = $receipt->amount_cents - $receipt->advantage_cents;
 
@@ -54,7 +71,7 @@ final class DonationReceiptIssuer
         return DB::transaction(function () use ($receipt, $company, $eligible): DonationReceipt {
             $entry = null;
 
-            if ($receipt->isInKind() && $receipt->debit_account_id !== null) {
+            if ($receipt->postsInKindEntry()) {
                 $revenueAccountId = $receipt->revenue_account_id ?? $this->defaultDonationAccountId($company);
 
                 $entry = $this->saveJournalEntry->handle([
@@ -113,37 +130,67 @@ final class DonationReceiptIssuer
         });
     }
 
-    public function reissue(DonationReceipt $original): DonationReceipt
+    /**
+     * Draft → void, for a draft that must never be issued: its donation was
+     * voided. The serial number was taken when the draft was saved, so it stays
+     * on file as void like any cancelled receipt; nothing was posted to reverse.
+     */
+    public function voidDraft(DonationReceipt $receipt, string $reason): DonationReceipt
+    {
+        if (! $receipt->isDraft()) {
+            throw new InvalidArgumentException('Only draft donation receipts can be voided as drafts.');
+        }
+
+        return DB::transaction(function () use ($receipt, $reason): DonationReceipt {
+            $receipt->forceFill([
+                'status' => DonationReceiptStatus::Void,
+                'voided_at' => now(),
+                'voided_by_user_id' => Auth::id(),
+                'void_reason' => $reason,
+            ])->save();
+
+            $this->audit->record($receipt->company_id, AuditAction::DonationReceiptVoided, $receipt, [
+                'receipt_no' => $receipt->receipt_no,
+                'reason' => $reason,
+                'was_draft' => true,
+            ]);
+
+            return $receipt;
+        });
+    }
+
+    public function reissue(DonationReceipt $original, ?string $reason = null): DonationReceipt
     {
         if (! $original->isIssued()) {
             throw new InvalidArgumentException('Only issued donation receipts can be reissued.');
         }
 
-        return DB::transaction(function () use ($original): DonationReceipt {
-            $this->void($original, 'Reissued as a corrected receipt.');
+        if ($original->isLinkedToDonation()) {
+            $donation = $original->donation()->withTrashed()->first();
 
-            $draft = $this->saver->handle([
-                'contact_id' => $original->contact_id,
-                'gift_type' => $original->gift_type->value,
-                'gift_date' => $original->gift_date->toDateString(),
-                'donor_name' => $original->donor_name,
-                'donor_line1' => $original->donor_line1,
-                'donor_line2' => $original->donor_line2,
-                'donor_city' => $original->donor_city,
-                'donor_region' => $original->donor_region,
-                'donor_postal_code' => $original->donor_postal_code,
-                'donor_country' => $original->donor_country,
-                'amount_cents' => $original->amount_cents,
-                'advantage_cents' => $original->advantage_cents,
-                'advantage_description' => $original->advantage_description,
-                'in_kind_description' => $original->in_kind_description,
-                'appraised_by' => $original->appraised_by,
-                'appraisal_date' => $original->appraisal_date?->toDateString(),
-                'revenue_account_id' => $original->revenue_account_id,
-                'debit_account_id' => $original->debit_account_id,
-            ]);
+            if ($donation === null || $donation->trashed() || $donation->isVoid()) {
+                throw new InvalidArgumentException(__('Donation :number was voided, so this receipt cannot be reissued. Void it instead.', [
+                    'number' => $donation->donation_no ?? '#'.$original->donation_id,
+                ]));
+            }
+        }
+
+        return DB::transaction(function () use ($original, $reason): DonationReceipt {
+            $this->void($original, $reason ?? 'Reissued as a corrected receipt.');
+
+            // A receipt spawned from a donation stays linked to it, so the
+            // corrected draft follows the donation and never posts either.
+            $draft = $this->saver->handle(['donation_id' => $original->donation_id] + SaveDonationReceipt::dataFrom($original));
 
             $draft->forceFill(['reissued_from_id' => $original->id])->save();
+
+            if ($original->isLinkedToDonation()) {
+                Donation::query()
+                    ->withTrashed()
+                    ->whereKey($original->donation_id)
+                    ->where(fn ($q) => $q->whereNull('donation_receipt_id')->orWhere('donation_receipt_id', $original->id))
+                    ->update(['donation_receipt_id' => $draft->id]);
+            }
 
             $this->audit->record($original->company_id, AuditAction::DonationReceiptReissued, $draft, [
                 'reissued_from_receipt_no' => $original->receipt_no,
@@ -152,6 +199,30 @@ final class DonationReceiptIssuer
 
             return $draft;
         });
+    }
+
+    /**
+     * A receipt spawned from a donation states a gift the donation books, so it
+     * is issued only once that donation is posted: a draft donation may still be
+     * a pledge (the CRA allows no receipt for one), and a voided one was reversed.
+     */
+    protected function assertDonationIsReceiptable(DonationReceipt $receipt): void
+    {
+        $donation = $receipt->donation()->withTrashed()->first();
+
+        if ($donation === null || $donation->trashed()) {
+            throw new InvalidArgumentException(__('The donation this receipt was created from no longer exists, so the receipt cannot be issued.'));
+        }
+
+        if ($donation->isVoid()) {
+            throw new InvalidArgumentException(__('Donation :number was voided, so its receipt cannot be issued.', ['number' => $donation->donation_no]));
+        }
+
+        if (! $donation->isPosted()) {
+            throw new InvalidArgumentException(__('Post donation :number before issuing its receipt. A draft donation may still be a pledge, and an official receipt is only for a gift received.', [
+                'number' => $donation->donation_no,
+            ]));
+        }
     }
 
     protected function assertReceiptIsIssuable(DonationReceipt $receipt, int $eligible): void

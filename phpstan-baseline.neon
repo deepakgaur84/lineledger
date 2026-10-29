@@ -70,18 +70,6 @@ parameters:
 			message: '#^Cannot access property \$value on string\.$#'
 			identifier: property.nonObject
 			count: 1
-			path: app/Actions/Fundraising/SaveDonation.php
-
-		-
-			message: '#^Cannot call method toDateString\(\) on string\.$#'
-			identifier: method.nonObject
-			count: 1
-			path: app/Actions/Fundraising/SaveDonation.php
-
-		-
-			message: '#^Cannot access property \$value on string\.$#'
-			identifier: property.nonObject
-			count: 1
 			path: app/Actions/Membership/SaveMember.php
 
 		-
@@ -587,12 +575,6 @@ parameters:
 			identifier: ternary.alwaysFalse
 			count: 1
 			path: app/Http/Controllers/Bills/PrintBillController.php
-
-		-
-			message: '#^Cannot access property \$value on string\.$#'
-			identifier: property.nonObject
-			count: 1
-			path: app/Http/Controllers/Charity/PrintDonationReceiptController.php
 
 		-
 			message: '#^Parameter \#2 \$intent of method App\\Http\\Controllers\\Stripe\\WebhookController\:\:handleSucceeded\(\) expects Stripe\\PaymentIntent, Stripe\\StripeObject given\.$#'
@@ -1135,36 +1117,6 @@ parameters:
 			path: app/Models/DocumentFolder.php
 
 		-
-			message: '#^Strict comparison using \=\=\= between string and App\\Enums\\DonationStatus\:\:Draft will always evaluate to false\.$#'
-			identifier: identical.alwaysFalse
-			count: 1
-			path: app/Models/Donation.php
-
-		-
-			message: '#^Strict comparison using \=\=\= between string and App\\Enums\\DonationStatus\:\:Posted will always evaluate to false\.$#'
-			identifier: identical.alwaysFalse
-			count: 1
-			path: app/Models/Donation.php
-
-		-
-			message: '#^Strict comparison using \=\=\= between string and App\\Enums\\DonationReceiptStatus\:\:Draft will always evaluate to false\.$#'
-			identifier: identical.alwaysFalse
-			count: 1
-			path: app/Models/DonationReceipt.php
-
-		-
-			message: '#^Strict comparison using \=\=\= between string and App\\Enums\\DonationReceiptStatus\:\:Issued will always evaluate to false\.$#'
-			identifier: identical.alwaysFalse
-			count: 1
-			path: app/Models/DonationReceipt.php
-
-		-
-			message: '#^Strict comparison using \=\=\= between string and App\\Enums\\GiftType\:\:InKind will always evaluate to false\.$#'
-			identifier: identical.alwaysFalse
-			count: 1
-			path: app/Models/DonationReceipt.php
-
-		-
 			message: '#^Cannot call method isExpirable\(\) on string\.$#'
 			identifier: method.nonObject
 			count: 1
@@ -1577,24 +1529,6 @@ parameters:
 			identifier: notIdentical.alwaysTrue
 			count: 1
 			path: app/Services/Banking/Import/Support/PdfTextStructurer.php
-
-		-
-			message: '#^Cannot access property \$value on string\.$#'
-			identifier: property.nonObject
-			count: 2
-			path: app/Services/Charity/DonationReceiptIssuer.php
-
-		-
-			message: '#^Cannot call method toDateString\(\) on string\.$#'
-			identifier: method.nonObject
-			count: 3
-			path: app/Services/Charity/DonationReceiptIssuer.php
-
-		-
-			message: '#^Strict comparison using \=\=\= between string and App\\Enums\\DonationStatus\:\:Void will always evaluate to false\.$#'
-			identifier: identical.alwaysFalse
-			count: 1
-			path: app/Services/Fundraising/DonationPoster.php
 
 		-
 			message: '#^Cannot call method label\(\) on string\.$#'
