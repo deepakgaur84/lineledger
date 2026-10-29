@@ -46,7 +46,11 @@ new #[Title('Bank register')] class extends Component {
         $this->company = $company;
 
         if (request('account')) {
-            $this->account_id = (int) request('account');
+            // Another organization's account (or a missing one) is a 404.
+            $account = $this->companyAccount((int) request('account'));
+            abort_if($account === null, 404);
+
+            $this->account_id = $account->id;
         } else {
             // Reopen on the account this operator last worked in anywhere in
             // Banking; fall back to the lowest-numbered active account.
@@ -65,6 +69,11 @@ new #[Title('Bank register')] class extends Component {
 
     public function updatedAccountId(): void
     {
+        // account_id arrives from the browser: only one of the organization's
+        // own accounts is accepted.
+        abort_if($this->account_id !== null && $this->companyAccount($this->account_id) === null, 404);
+
+        unset($this->account);
         LastBankAccount::remember($this->company, $this->account_id);
         $this->resetPage();
     }
@@ -91,10 +100,26 @@ new #[Title('Bank register')] class extends Component {
         $this->resetPage();
     }
 
+    /**
+     * The register's account, resolved through the organization. journal_lines
+     * carry no company_id and JournalLine has no CompanyScope, so every line
+     * query keys on this account — never on the raw, client-held account_id.
+     */
+    #[Computed]
+    public function account(): ?Account
+    {
+        return $this->account_id === null ? null : $this->companyAccount($this->account_id);
+    }
+
+    protected function companyAccount(int $id): ?Account
+    {
+        return Account::query()->whereBelongsTo($this->company)->find($id);
+    }
+
     protected function linesQuery()
     {
         return JournalLine::query()
-            ->where('account_id', $this->account_id)
+            ->where('account_id', $this->account?->id)
             ->where('is_posted', true);
     }
 

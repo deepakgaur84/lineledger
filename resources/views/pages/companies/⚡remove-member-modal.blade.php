@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\CompanyRole;
 use App\Enums\SecurityEvent;
 use App\Models\Company;
 use App\Models\User;
@@ -8,11 +9,14 @@ use App\Services\Security\AccessRevoker;
 use Flux\Flux;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
+use Livewire\Attributes\Locked;
 use Livewire\Component;
 
 new class extends Component {
     public Company $company;
 
+    /** Locked: the members page mounts one modal per member it lists. */
+    #[Locked]
     public ?int $memberId = null;
 
     public string $memberName = '';
@@ -36,7 +40,15 @@ new class extends Component {
     {
         Gate::authorize('removeMember', $this->company);
 
-        $user = User::findOrFail($this->memberId);
+        // Only a member of this organization, and never an owner — the members
+        // page offers no remove button for one.
+        $membership = $this->company->memberships()
+            ->where('user_id', $this->memberId)
+            ->firstOrFail();
+
+        abort_if($membership->role === CompanyRole::Owner, 403);
+
+        $user = User::findOrFail($membership->user_id);
 
         if ($this->memberName === '') {
             $this->memberName = $user->name;

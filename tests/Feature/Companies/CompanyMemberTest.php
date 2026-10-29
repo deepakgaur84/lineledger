@@ -49,8 +49,7 @@ test('company member can be removed by owner', function () {
 
     $this->actingAs($owner);
 
-    Livewire::test('pages::companies.remove-member-modal', ['company' => $company])
-        ->set('memberId', $member->id)
+    Livewire::test('pages::companies.remove-member-modal', ['company' => $company, 'memberId' => $member->id])
         ->call('removeMember')
         ->assertHasNoErrors();
 
@@ -69,8 +68,7 @@ test('company member cannot be removed by non owners', function () {
 
     $this->actingAs($admin);
 
-    Livewire::test('pages::companies.remove-member-modal', ['company' => $company])
-        ->set('memberId', $member->id)
+    Livewire::test('pages::companies.remove-member-modal', ['company' => $company, 'memberId' => $member->id])
         ->call('removeMember')
         ->assertForbidden();
 });
@@ -88,8 +86,7 @@ test('removed members current company is set to personal company', function () {
 
     $this->actingAs($owner);
 
-    Livewire::test('pages::companies.remove-member-modal', ['company' => $company])
-        ->set('memberId', $member->id)
+    Livewire::test('pages::companies.remove-member-modal', ['company' => $company, 'memberId' => $member->id])
         ->call('removeMember')
         ->assertHasNoErrors();
 
