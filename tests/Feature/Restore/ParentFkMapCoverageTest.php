@@ -38,6 +38,7 @@ beforeEach(function () {
     // Plain values that merely end in `_id` — external handles, not row ids.
     $this->notReferences = [
         'companies.stripe_account_id', // Stripe Connect account handle
+        'companies.payroll_cra_rep_id', // CRA representative identifier (RepID) for the T619
         'contacts.employee_id', // employee number, free text
         'journal_entries.source_external_id', // QuickBooks TxnID carried over by the migration
         'customer_receipts.stripe_payment_intent_id', // Stripe PaymentIntent handle

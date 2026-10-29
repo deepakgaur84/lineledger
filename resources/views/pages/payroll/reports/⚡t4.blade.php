@@ -9,11 +9,13 @@ use App\Services\Pdf\PdfMerger;
 use App\Services\Pdf\Slips\SlipFieldMaps;
 use App\Services\Pdf\Slips\SlipTemplateRegistry;
 use App\Services\Pdf\Slips\T4SlipPdfAdapter;
+use App\Services\Reporting\Cra\CraFilingReadiness;
 use App\Services\Reporting\CsvExporter;
 use App\Services\Reporting\PdfExporter;
 use App\Services\Reporting\T4SlipCalculator;
 use App\Services\Reporting\T4XmlGenerator;
 use App\Support\Money;
+use Flux\Flux;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
@@ -87,7 +89,7 @@ new #[Title('T4 slips')] class extends Component {
 
     private function resetSnapshot(): void
     {
-        unset($this->filing, $this->slips, $this->summary);
+        unset($this->filing, $this->slips, $this->summary, $this->xmlReadiness);
     }
 
     public function money(int $cents): string
@@ -154,9 +156,32 @@ new #[Title('T4 slips')] class extends Component {
         ], 't4-summary-'.$this->year.'.pdf');
     }
 
+    /**
+     * What stands between this year's slips and a CRA XML file the CRA
+     * accepts: errors block the download, warnings are shown beside it.
+     */
+    #[Computed]
+    public function xmlReadiness(): CraFilingReadiness
+    {
+        return app(T4XmlGenerator::class)->readiness($this->company, $this->year, $this->slips);
+    }
+
     public function exportXml()
     {
-        $xml = app(T4XmlGenerator::class)->generate($this->company, $this->year, $this->slips, $this->summary);
+        if (! $this->xmlReadiness->isReady()) {
+            Flux::toast(variant: 'danger', text: __('The CRA XML can’t be downloaded yet. Fix the problems listed on this page first.'));
+
+            return null;
+        }
+
+        // A summary finalized before the employer's CPP and CPP2 (boxes 27
+        // and 27A) were kept apart takes them from the posted pay runs.
+        $summary = $this->summary + array_intersect_key(
+            app(T4SlipCalculator::class)->employerContributions($this->company, $this->year),
+            array_flip(['box27', 'box27a']),
+        );
+
+        $xml = app(T4XmlGenerator::class)->generate($this->company, $this->year, $this->slips, $summary);
 
         return response()->streamDownload(
             fn () => print($xml),
@@ -241,6 +266,35 @@ new #[Title('T4 slips')] class extends Component {
                 'user' => $this->filing->finalizedBy?->name ?? __('unknown'),
             ]) }}
         </div>
+    @endif
+
+    @if (! empty($this->slips))
+        @php($readiness = $this->xmlReadiness)
+        @if ($readiness->errors !== [])
+            <flux:callout variant="danger" icon="exclamation-triangle" class="mb-4" data-test="t4-xml-errors">
+                <flux:callout.heading>{{ __('Before you download the CRA XML') }}</flux:callout.heading>
+                <flux:callout.text>
+                    <ul class="list-disc space-y-1 pl-5">
+                        @foreach ($readiness->errors as $problem)
+                            <li>{{ $problem }}</li>
+                        @endforeach
+                    </ul>
+                    <p class="mt-2"><flux:link :href="route('settings.payroll', ['company' => $company])" wire:navigate>{{ __('Open Payroll settings') }}</flux:link></p>
+                </flux:callout.text>
+            </flux:callout>
+        @endif
+        @if ($readiness->warnings !== [])
+            <flux:callout variant="warning" icon="information-circle" class="mb-4" data-test="t4-xml-warnings">
+                <flux:callout.heading>{{ __('Check before you file the CRA XML') }}</flux:callout.heading>
+                <flux:callout.text>
+                    <ul class="list-disc space-y-1 pl-5">
+                        @foreach ($readiness->warnings as $problem)
+                            <li>{{ $problem }}</li>
+                        @endforeach
+                    </ul>
+                </flux:callout.text>
+            </flux:callout>
+        @endif
     @endif
 
     @php($s = $this->summary)

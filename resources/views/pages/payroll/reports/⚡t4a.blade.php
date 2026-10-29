@@ -5,12 +5,14 @@ use App\Actions\Payroll\UnlockSlipFiling;
 use App\Enums\SlipType;
 use App\Models\Company;
 use App\Models\PayrollSlipFiling;
+use App\Services\Reporting\Cra\CraFilingReadiness;
 use App\Services\Reporting\CsvExporter;
 use App\Services\Reporting\PdfExporter;
 use App\Services\Reporting\T4ASlipCalculator;
 use App\Services\Reporting\T4AXmlGenerator;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
+use Flux\Flux;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
@@ -91,7 +93,7 @@ new #[Title('T4A slips')] class extends Component {
 
     private function resetSnapshot(): void
     {
-        unset($this->filing, $this->rows);
+        unset($this->filing, $this->rows, $this->filingSlips, $this->xmlReadiness);
     }
 
     public function totals(): array
@@ -129,18 +131,48 @@ new #[Title('T4A slips')] class extends Component {
         ], "t4a-{$this->year}.pdf");
     }
 
+    /**
+     * The slips and summary the CRA e-file carries: only the reportable
+     * (>$500) recipients, whatever the show-below-threshold toggle says. When
+     * finalized, the snapshot already holds exactly those and the locked summary.
+     *
+     * @return array{slips: array<int, array<string, mixed>>, summary: array<string, mixed>}
+     */
+    #[Computed]
+    public function filingSlips(): array
+    {
+        if ($this->filing !== null) {
+            return [
+                'slips' => $this->filing->lines->map(fn ($line) => $line->data)->sortBy('name')->values()->all(),
+                'summary' => $this->filing->summary,
+            ];
+        }
+
+        return [
+            'slips' => app(T4ASlipCalculator::class)->slipsForYear($this->company, $this->year),
+            'summary' => app(T4ASlipCalculator::class)->summary($this->company, $this->year),
+        ];
+    }
+
+    /**
+     * What stands between the reportable slips and a CRA XML file the CRA
+     * accepts: errors block the download, warnings are shown beside it.
+     */
+    #[Computed]
+    public function xmlReadiness(): CraFilingReadiness
+    {
+        return app(T4AXmlGenerator::class)->readiness($this->company, $this->year, $this->filingSlips['slips']);
+    }
+
     public function exportXml()
     {
-        // CRA e-file: only the reportable (>$500) recipients, regardless of the
-        // show-below-threshold display toggle. When finalized, the snapshot
-        // already holds exactly the reportable slips and the locked summary.
-        if ($this->filing !== null) {
-            $slips = $this->filing->lines->map(fn ($line) => $line->data)->sortBy('name')->values()->all();
-            $summary = $this->filing->summary;
-        } else {
-            $slips = app(T4ASlipCalculator::class)->slipsForYear($this->company, $this->year);
-            $summary = app(T4ASlipCalculator::class)->summary($this->company, $this->year);
+        if (! $this->xmlReadiness->isReady()) {
+            Flux::toast(variant: 'danger', text: __('The CRA XML can’t be downloaded yet. Fix the problems listed on this page first.'));
+
+            return null;
         }
+
+        ['slips' => $slips, 'summary' => $summary] = $this->filingSlips;
 
         $xml = app(T4AXmlGenerator::class)->generate($this->company, $this->year, $slips, $summary);
 
@@ -202,6 +234,35 @@ new #[Title('T4A slips')] class extends Component {
                 'user' => $this->filing->finalizedBy?->name ?? __('unknown'),
             ]) }}
         </div>
+    @endif
+
+    @if (! empty($this->filingSlips['slips']))
+        @php($readiness = $this->xmlReadiness)
+        @if ($readiness->errors !== [])
+            <flux:callout variant="danger" icon="exclamation-triangle" class="mb-4" data-test="t4a-xml-errors">
+                <flux:callout.heading>{{ __('Before you download the CRA XML') }}</flux:callout.heading>
+                <flux:callout.text>
+                    <ul class="list-disc space-y-1 pl-5">
+                        @foreach ($readiness->errors as $problem)
+                            <li>{{ $problem }}</li>
+                        @endforeach
+                    </ul>
+                    <p class="mt-2"><flux:link :href="route('settings.payroll', ['company' => $company])" wire:navigate>{{ __('Open Payroll settings') }}</flux:link></p>
+                </flux:callout.text>
+            </flux:callout>
+        @endif
+        @if ($readiness->warnings !== [])
+            <flux:callout variant="warning" icon="information-circle" class="mb-4" data-test="t4a-xml-warnings">
+                <flux:callout.heading>{{ __('Check before you file the CRA XML') }}</flux:callout.heading>
+                <flux:callout.text>
+                    <ul class="list-disc space-y-1 pl-5">
+                        @foreach ($readiness->warnings as $problem)
+                            <li>{{ $problem }}</li>
+                        @endforeach
+                    </ul>
+                </flux:callout.text>
+            </flux:callout>
+        @endif
     @endif
 
     <div class="overflow-x-auto rounded-lg border border-border">

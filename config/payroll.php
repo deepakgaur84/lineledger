@@ -4,21 +4,30 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | CRA electronic filing (T4 XML)
+    | CRA electronic filing (T4 / T4A XML)
     |--------------------------------------------------------------------------
     |
-    | Settings used when generating the CRA T4 XML submission. The transmitter
-    | number ("MM" account) is assigned by the CRA and MUST be set before you
-    | file. The generated XML follows the documented CRA T4 layout, but the
-    | exact schema version changes yearly — validate it against the current CRA
-    | schema (and your transmitter details) before submitting.
+    | The T4 and T4A XML follow the CRA's 2027 XML specifications (T619
+    | 2027V1, T4 2027V2, T4A 2027V1) and validate against its schema package
+    | 1-27-1, vendored in tests/fixtures/cra-xml with the test that checks
+    | every generated file. The CRA revises them each fall: compare a new
+    | package and the "What's new" notes, then add its version there.
+    |
+    | The T619 transmittal no longer has an "MM" transmitter number (the old
+    | CRA_TRANSMITTER_NUMBER / CRA_TRANSMITTER_TYPE are not read). It names
+    | the account you sign in to Internet File Transfer with: each
+    | organization's payroll (RP) account from Settings → Payroll, plus the
+    | representative ID set there when a representative uploads the file.
+    | The download is refused until that account and the payroll contact are
+    | set.
+    |
+    | language: E or F for the CRA's correspondence about the file; unset, it
+    | follows each organization's language.
     |
     */
 
     'transmitter' => [
-        'number' => env('CRA_TRANSMITTER_NUMBER', 'MM000000'),
-        'type' => env('CRA_TRANSMITTER_TYPE', '1'), // 1=submitter filing its own, etc.
-        'language' => env('CRA_TRANSMITTER_LANGUAGE', 'E'),
+        'language' => env('CRA_TRANSMITTER_LANGUAGE'),
     ],
 
     /*

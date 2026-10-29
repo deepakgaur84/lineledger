@@ -1,0 +1,2 @@
+# Keep the CRA schema files byte-identical to the published package (CRLF).
+*.xsd -text

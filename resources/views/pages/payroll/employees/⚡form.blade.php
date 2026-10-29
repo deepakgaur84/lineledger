@@ -7,6 +7,7 @@ use App\Notifications\Portal\EmployeePortalLoginLinkNotification;
 use App\Enums\AccountSubtype;
 use App\Enums\AccountType;
 use App\Enums\Country;
+use App\Enums\DentalBenefitsCode;
 use App\Enums\PayBasis;
 use App\Enums\RoeReason;
 use App\Enums\VacationPolicy;
@@ -19,6 +20,7 @@ use App\Models\EmployeePayrollProfile;
 use App\Models\PayrollSchedule;
 use App\Models\TimeOffPolicy;
 use App\Rules\MoneyString;
+use App\Rules\ValidSocialInsuranceNumber;
 use App\Support\Money;
 use App\Support\Payroll\Constants\PayrollConstantsRepository;
 use App\Support\Payroll\PayrollItemType;
@@ -77,6 +79,9 @@ new #[Title('Employee payroll setup')] class extends Component {
     public bool $ei_exempt = false;
 
     public bool $qpip_exempt = false;
+
+    /** T4 box 45 for this employee: '' follows the organization's code (Payroll settings), else 1–5. */
+    public string $dental_benefits_code = '';
 
     public bool $income_tax_exempt = false;
 
@@ -177,6 +182,7 @@ new #[Title('Employee payroll setup')] class extends Component {
             $this->cpp_exempt = $profile->cpp_exempt;
             $this->ei_exempt = $profile->ei_exempt;
             $this->qpip_exempt = $profile->qpip_exempt;
+            $this->dental_benefits_code = (string) ($profile->dental_benefits_code?->value ?? '');
             $this->additional_tax_per_period = Money::fromCents($profile->additional_tax_per_period_cents)->toDecimalString();
             $this->vacation_policy = $profile->vacation_policy->value;
             $this->vacation_rate_pct = $profile->vacation_rate_bp / 100;
@@ -410,6 +416,17 @@ new #[Title('Employee payroll setup')] class extends Component {
             : Flux::toast(variant: 'danger', text: __('No payroll tables are loaded for that province and date.'));
     }
 
+    /** The box 45 choice that follows the organization's code, naming that code. */
+    #[Computed]
+    public function organizationDentalOption(): string
+    {
+        $code = $this->company->payroll_dental_benefits_code;
+
+        return $code !== null
+            ? __('Same as the organization (:code)', ['code' => $code->label()])
+            : __('Same as the organization (not chosen yet in Payroll settings)');
+    }
+
     public function save(SaveEmployeePayrollProfile $action): void
     {
         $companyId = $this->company->id;
@@ -426,7 +443,8 @@ new #[Title('Employee payroll setup')] class extends Component {
             'hourly_rate' => ['nullable', 'string', 'required_if:pay_basis,hourly', new MoneyString],
             'default_hours_per_period' => ['nullable', 'numeric', 'min:0'],
             'payroll_schedule_id' => ['nullable', 'integer', Rule::exists('payroll_schedules', 'id')->where('company_id', $companyId)],
-            'sin' => ['nullable', 'string', 'max:20'],
+            'sin' => ['nullable', 'string', 'max:20', new ValidSocialInsuranceNumber],
+            'dental_benefits_code' => ['nullable', 'in:'.implode(',', array_column(DentalBenefitsCode::cases(), 'value'))],
             'date_of_birth' => ['nullable', 'date'],
             'hire_date' => ['nullable', 'date'],
             'termination_date' => ['nullable', 'date'],
@@ -520,6 +538,7 @@ new #[Title('Employee payroll setup')] class extends Component {
             'cpp_exempt' => $this->cpp_exempt,
             'ei_exempt' => $this->ei_exempt,
             'qpip_exempt' => $this->province_of_employment === 'QC' ? $this->qpip_exempt : false,
+            'dental_benefits_code' => ($validated['dental_benefits_code'] ?? '') !== '' ? (int) $validated['dental_benefits_code'] : null,
             'additional_tax_per_period_cents' => $validated['additional_tax_per_period'] ? Money::fromString($validated['additional_tax_per_period'])->cents : 0,
             'vacation_policy' => $validated['vacation_policy'],
             'vacation_rate_bp' => (int) round($validated['vacation_rate_pct'] * 100),
@@ -715,7 +734,7 @@ new #[Title('Employee payroll setup')] class extends Component {
         <div class="rounded-lg border border-border p-5">
             <flux:heading size="lg" class="mb-4">{{ __('Identity') }}</flux:heading>
             <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <flux:input wire:model="sin" :label="__('Social Insurance Number')" :placeholder="$sinLast4 ? '•••• •'.$sinLast4 : '000 000 000'" :description="$sinLast4 ? __('Leave blank to keep the current SIN.') : null" />
+                <flux:input wire:model="sin" :label="__('Social Insurance Number')" :placeholder="$sinLast4 ? '•••• •'.$sinLast4 : '000 000 000'" :description="$sinLast4 ? __('Leave blank to keep the current SIN, or enter 000 000 000 to remove it.') : __('Enter 000 000 000 if the employee hasn’t given you one yet.')" />
                 <flux:input type="date" wire:model="date_of_birth" :label="__('Date of birth')" />
                 <flux:input type="date" wire:model="hire_date" :label="__('Hire date')" />
                 <flux:input type="date" wire:model="termination_date" :label="__('Termination date')" :description="__('Set when the employee leaves (used for ROE).')" />
@@ -768,6 +787,12 @@ new #[Title('Employee payroll setup')] class extends Component {
                 @if ($province_of_employment !== 'QC')
                     <flux:input type="date" wire:model="cpt30_election_date" :label="__('CPT30 election date')" :description="__('Set if the employee (65–70) filed CPT30 to stop CPP.')" />
                 @endif
+                <flux:select wire:model="dental_benefits_code" :label="__('Dental benefits (T4 box 45)')" :description="__('Who could use dental coverage you offered on December 31. Change it only when this employee differs from the organization.')" class="md:col-span-2" data-test="employee-dental-benefits-code">
+                    <flux:select.option value="">{{ $this->organizationDentalOption }}</flux:select.option>
+                    @foreach (\App\Enums\DentalBenefitsCode::options() as $value => $label)
+                        <flux:select.option value="{{ $value }}">{{ $label }}</flux:select.option>
+                    @endforeach
+                </flux:select>
             </div>
             <flux:button type="button" variant="ghost" size="sm" icon="sparkles" wire:click="prefillTd1" class="mt-3">{{ __('Use current basic amounts') }}</flux:button>
             <div class="mt-4 flex flex-wrap gap-6">

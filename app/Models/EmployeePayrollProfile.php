@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Concerns\BelongsToCompany;
+use App\Enums\DentalBenefitsCode;
 use App\Enums\PayBasis;
 use App\Enums\VacationPolicy;
 use Carbon\CarbonInterface;
@@ -25,13 +26,14 @@ use Illuminate\Support\Collection;
  * @property bool $banked_overtime_enabled
  * @property ?CarbonInterface $banked_overtime_agreement_date
  * @property ?int $banked_overtime_multiplier_bp
+ * @property ?DentalBenefitsCode $dental_benefits_code
  */
 #[Fillable([
     'company_id', 'contact_id', 'sin_encrypted', 'sin_last4',
     'date_of_birth', 'hire_date', 'termination_date', 'province_of_employment',
     'pay_basis', 'annual_salary_cents', 'hourly_rate_cents', 'default_hours_per_period',
     'payroll_schedule_id', 'td1_federal_claim_cents', 'td1_federal_code',
-    'td1_provincial_claim_cents', 'td1_provincial_code', 'cpp_exempt', 'ei_exempt', 'qpip_exempt',
+    'td1_provincial_claim_cents', 'td1_provincial_code', 'cpp_exempt', 'ei_exempt', 'qpip_exempt', 'dental_benefits_code',
     'income_tax_exempt', 'indian_act_exempt', 'workers_comp_exempt', 'workers_comp_rate_bp', 'cpt30_election_date',
     'additional_tax_per_period_cents', 'authorized_annual_deductions_cents', 'vacation_policy', 'vacation_rate_bp',
     'vacation_balance_cents', 'wage_expense_account_id', 'class_id', 'location_id', 'is_active',
@@ -205,6 +207,7 @@ class EmployeePayrollProfile extends Model
             'cpp_exempt' => 'boolean',
             'ei_exempt' => 'boolean',
             'qpip_exempt' => 'boolean',
+            'dental_benefits_code' => DentalBenefitsCode::class,
             'income_tax_exempt' => 'boolean',
             'indian_act_exempt' => 'boolean',
             'workers_comp_exempt' => 'boolean',
