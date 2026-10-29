@@ -25,7 +25,19 @@ use Illuminate\Support\Facades\DB;
  */
 
 beforeEach(function () {
-    $this->company = Company::factory()->create(['address_country' => 'CA', 'features_payroll' => true]);
+    $this->company = Company::factory()->create([
+        'address_country' => 'CA',
+        'features_payroll' => true,
+        // What the RL-1 and ROE exports need before they produce a file: the CRA
+        // payroll account and payroll contact (ROE Blocks 5 and 16) and the
+        // Revenu Québec identification and file numbers (RL-1).
+        'payroll_business_number' => '123456789',
+        'payroll_rp_account' => 'RP0001',
+        'payroll_contact_name' => 'Pat Payroll',
+        'payroll_contact_phone' => '613-555-0101',
+        'payroll_rq_identification_number' => '1234567890',
+        'payroll_rq_file_number' => 'RS0001',
+    ]);
     app()->instance('current_company', $this->company);
     $schedule = PayrollSchedule::factory()->create();
     $this->employee = Contact::create(['display_name' => 'Restored Employee', 'first_name' => 'Restored', 'last_name' => 'Employee', 'is_employee' => true]);
@@ -79,7 +91,7 @@ it('exports the ROE XML with the unknown-SIN placeholder instead of crashing', f
     $roe = app(RoeCalculator::class)->build($this->company, $this->employee, RoeReason::ShortageOfWork, '2026-03-14');
     $xml = app(RoeXmlGenerator::class)->generate($this->company, $this->employee, $roe);
 
-    expect($xml)->toContain('<BLK14_SIN>000000000</BLK14_SIN>');
+    expect($xml)->toContain('<B8>000000000</B8>');
 });
 
 it('files the real SIN on every export once it decrypts', function () {
@@ -95,7 +107,7 @@ it('files the real SIN on every export once it decrypts', function () {
         ->and(app(Rl1XmlGenerator::class)->generate($this->company, 2026, $rl1->slipsForYear($this->company, 2026), $rl1->summary($this->company, 2026)))
         ->toContain('<NoAssuranceSociale>046454286</NoAssuranceSociale>')
         ->and(app(RoeXmlGenerator::class)->generate($this->company, $this->employee, $roe))
-        ->toContain('<BLK14_SIN>046454286</BLK14_SIN>');
+        ->toContain('<B8>046454286</B8>');
 });
 
 it('reads the SIN for the exports, or null when there is none or it does not decrypt', function () {
