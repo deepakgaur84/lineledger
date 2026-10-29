@@ -1456,7 +1456,7 @@ adds an opt-in so they can post themselves. Both default to **off** (drafts, unc
   Depreciation for months on or before the lock date is still skipped entirely, as before.
 - Docs text updated on the Accounting and Fixed assets pages.
 - Files: migration above, `app/Models/RecurringJournalEntry.php`, `app/Actions/Accounting/SaveRecurringJournalEntry.php`,
-  `app/Services/Recurring/RecurringJournalEntryGenerator.php` (also carries the §28 catch-up), `app/Services/Assets/DepreciationGenerator.php`,
+  `app/Services/Recurring/RecurringJournalEntryGenerator.php` and `RecurringDocumentGenerator.php` (also carry the §28 catch-up, with a PHPStan-baseline-safe date comparison), `app/Services/Assets/DepreciationGenerator.php`,
   `pages/recurring-journal/⚡form.blade.php`, `pages/recurring-journal/⚡show.blade.php` (also §28), `pages/assets/⚡index.blade.php`,
   `pages/docs/⚡accounting.blade.php`, `pages/docs/⚡fixed-assets.blade.php`, `tests/Feature/Recurring/RecurringAutoPostTest.php`.
 - **On upstream sync:** rebuild each patched file from the new upstream version and re-add only the lines described here.
