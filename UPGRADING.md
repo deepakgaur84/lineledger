@@ -171,6 +171,14 @@ It is idempotent: a second run fills nothing. To see what it would do first, per
 organization, run `php artisan app:upgrade --dry-run` (or
 `php artisan currency:backfill-reversal-memos --dry-run`).
 
+**Preview it with `php artisan currency:backfill-reversal-memos --dry-run`.** This release
+also has migrations, and while one is pending `app:upgrade --dry-run` previews none of the
+data steps. So apply them first (`php artisan migrate --force`), run the dry run, read what
+it would fill, re-open and skip in each organization, then run `app:upgrade`. Under
+Docker, set `MIGRATE_ON_BOOT=false` for this upgrade, or the `app` container runs
+`app:upgrade`, this backfill included, as it starts; prefix the commands with
+`docker compose exec app`.
+
 #### Behaviour to know about
 
 - **Revaluations already posted are not changed.** A Home Currency Adjustment run after a
@@ -183,6 +191,20 @@ organization, run `php artisan app:upgrade --dry-run` (or
 - **`integrity:check` has a sixth check:** a voided entry and its reversal must cancel in
   foreign units on every account. It is report-only, with no `--fix`; the backfill above
   is the repair.
+
+### Foreign-currency accounts reconcile in their own currency
+
+**No migrations, no backfills, no config or env changes.** A bank or credit-card account in
+a foreign currency now reconciles in that currency, the one its statements are in: the
+reconcile screen, completed reconciliations and their downloads, statement matching and the
+bank register all count its transactions in it.
+
+- **A foreign account you reconciled before by typing home-currency figures** can show a
+  Difference other than 0.00 on those completed reconciliations: their ticked transactions
+  now count in the account's currency, while the balances you typed are home amounts. Its
+  next reconciliation starts from the last ending balance, a home figure, so when you begin
+  it, select **Edit details** and correct the **Beginning balance** to the statement's
+  balance in the account's currency.
 
 ### Journal entries on foreign-currency accounts
 
@@ -313,6 +335,24 @@ be settled from pay the employee has already received.
    ```
 
    Under Docker, prefix it with `docker compose exec app`.
+
+### Payroll: TD1 claims, shared pay dates and Indian Act exempt income
+
+**Two migrations, no backfills, no config or env changes.** `app:upgrade` applies them.
+
+#### Before the next pay run
+
+- **Recalculate each pay run still in Calculated status before you post it.** A run
+  calculated before the upgrade has no record of the year-to-date it was worked out
+  against, so posting it asks for a recalculation. A calculated run that will never be
+  posted now also blocks posting any later run for the same employee: post it, or open it
+  and save it as a draft.
+- **Turn on Indian Act exempt income for status Indian employees** whose employment income
+  is exempt under section 87 of the Indian Act, on the Tax credits (TD1) card of their
+  payroll setup. Turn on **CPP exempt** too unless you elected CPP coverage for them on form
+  CPT124 (in Quebec, **QPP exempt** unless you filed form RR-2-V). **Income tax exempt**
+  alone still reports their pay as taxable in T4 box 14. Pay runs calculated before the
+  upgrade follow the new switch, so their 2026 T4 moves to code 71.
 
 ## 1.3.0 → 1.3.1
 
