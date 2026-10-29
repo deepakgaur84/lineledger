@@ -21,6 +21,7 @@ use App\Models\TimeOffPolicy;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
 use App\Services\Payroll\CalculatePayRun;
+use App\Support\Payroll\Constants\PayrollConstantsRepository;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -65,6 +66,7 @@ class PayRunPoster
         protected EntryNumberGenerator $entryNumbers,
         protected PayrollAccountResolver $accounts,
         protected AccountingAuditRecorder $auditRecorder,
+        protected PayrollConstantsRepository $constants,
     ) {}
 
     public function post(PayRun $payRun): JournalEntry
@@ -91,6 +93,13 @@ class PayRunPoster
 
             if ($payRun->company->isLockedFor($payDate)) {
                 throw PeriodLockedException::for($payDate, CarbonImmutable::parse($payRun->company->lock_date));
+            }
+
+            // Posting never re-runs the engine, so refuse amounts no loaded tax
+            // table stands behind, e.g. a run calculated before the engine refused
+            // pay dates past the last loaded year.
+            foreach ($payRun->lines->pluck('province_of_employment')->unique() as $province) {
+                $this->constants->resolve((string) $province, $payDate);
             }
 
             $entry = JournalEntry::create([

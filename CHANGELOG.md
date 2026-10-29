@@ -235,6 +235,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   puts everything back, and runs posted earlier are left as they were (see
   `UPGRADING.md` to correct them). New `pay_run_line_earnings.accrual_relief_cents`
   column.
+- **Pay runs dated past the loaded tax tables are refused.** A pay run dated
+  in a year with no tables yet was calculated on the previous year's: a January
+  2027 run reused the July 2026 CPP, EI and income-tax figures, although base
+  CPP drops to 4.75% on January 1, 2027. A table now covers pay dates only to
+  December 31 of its own year, so from January 1 a run can't be calculated or
+  posted until that year's tables are added. The run stays a draft and says
+  why, in English or French, instead of showing an error, and Use current basic
+  amounts on the employee form no longer fills in last year's amounts. A run
+  calculated on the old tables before this release can't be posted either. Pay
+  dates through December 31, 2026 are unchanged.
 
 ### Security
 
