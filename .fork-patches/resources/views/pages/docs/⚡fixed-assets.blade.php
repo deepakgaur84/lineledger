@@ -196,7 +196,7 @@ new #[Title('Documentation — Fixed assets')] class extends Component {}; ?>
         />
 
         <x-docs.callout type="note" heading="{{ __('What automatic depreciation does to your books') }}">
-            {{ __('LineLedger never posts depreciation behind your back. It creates one draft journal entry per month that debits the depreciation expense account and credits the accumulated depreciation account for the month’s amount — bundling every due asset onto the same entry, each line memoed with the asset’s number and name. Nothing reaches your reports until you open that draft and post it. Until then, the asset’s accumulated total and net book value reflect only the months you have already posted.') }}
+            {{ __('By default LineLedger does not post depreciation behind your back. It creates one draft journal entry per month that debits the depreciation expense account and credits the accumulated depreciation account for the month’s amount — bundling every due asset onto the same entry, each line memoed with the asset’s number and name. Nothing reaches your reports until you open that draft and post it — unless you switch on Post monthly depreciation automatically at the top of the Fixed assets list, which posts each month’s entry as soon as it is generated (a month in a locked period stays a draft). Until a draft is posted, the asset’s accumulated total and net book value reflect only the months you have already posted.') }}
         </x-docs.callout>
 
         <x-docs.callout type="tip">
@@ -223,7 +223,7 @@ new #[Title('Documentation — Fixed assets')] class extends Component {}; ?>
         </ol>
 
         <x-docs.callout type="tip">
-            {{ __('Because manual depreciation usually repeats every month for the same amount, you can save it as a schedule under Accounting → Recurring entries so you do not have to rewrite it. A schedule never posts on its own: on each due date it creates a draft journal entry, and you still open that draft and post it. Keeping the three accounts on the asset record makes the entry quick to fill in. See') }}
+            {{ __('Because manual depreciation usually repeats every month for the same amount, you can save it as a schedule under Accounting → Recurring entries so you do not have to rewrite it. By default a schedule creates a draft journal entry on each due date and you open and post it; switch on Post each entry automatically on the schedule to have it posted for you. Keeping the three accounts on the asset record makes the entry quick to fill in. See') }}
             <a class="underline" href="{{ route('docs.accounting') }}" wire:navigate>{{ __('Accounting → Recurring (memorized) journal entries') }}</a>{{ __('.') }}
         </x-docs.callout>
 

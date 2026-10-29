@@ -119,7 +119,7 @@ new #[Title('Recurring journal entry')] class extends Component {
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
             <flux:heading size="xl" level="1">{{ $recurring->name ?: __('Untitled schedule') }}</flux:heading>
-            <flux:subheading>{{ __('Recurring journal entry') }}{{ $recurring->memo ? ' — '.$recurring->memo : '' }}</flux:subheading>
+            <flux:subheading>{{ __('Recurring journal entry') }}{{ $recurring->memo ? ' — '.$recurring->memo : '' }} · <span data-test="recurring-journal-post-mode">{{ $recurring->auto_post ? __('Posts automatically') : __('Saved as drafts') }}</span></flux:subheading>
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
