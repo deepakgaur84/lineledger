@@ -1456,17 +1456,7 @@ adds an opt-in so they can post themselves. Both default to **off** (drafts, unc
   Depreciation for months on or before the lock date is still skipped entirely, as before.
 - Docs text updated on the Accounting and Fixed assets pages.
 - Files: migration above, `app/Models/RecurringJournalEntry.php`, `app/Actions/Accounting/SaveRecurringJournalEntry.php`,
-  `app/Services/Recurring/RecurringJournalEntryGenerator.php` and `RecurringDocumentGenerator.php` (also carry the §28 catch-up, with a PHPStan-baseline-safe date comparison), `app/Services/Assets/DepreciationGenerator.php`,
+  `app/Services/Recurring/RecurringJournalEntryGenerator.php` and `RecurringDocumentGenerator.php` (also carry the §28 catch-up, using a method-call pattern the PHPStan baseline already counts), `app/Services/Assets/DepreciationGenerator.php`,
   `pages/recurring-journal/⚡form.blade.php`, `pages/recurring-journal/⚡show.blade.php` (also §28), `pages/assets/⚡index.blade.php`,
   `pages/docs/⚡accounting.blade.php`, `pages/docs/⚡fixed-assets.blade.php`, `tests/Feature/Recurring/RecurringAutoPostTest.php`.
 - **On upstream sync:** rebuild each patched file from the new upstream version and re-add only the lines described here.
-
-## 30. Print on the Transactions drill-down page
-
-The **Print** button on the Transactions page (reached by drilling down from a balance sheet / income statement line) returned
-404: `PrintReportController` only prints reports listed in the report hub catalog, and Transactions is deliberately not in the hub.
-The controller now skips that catalog check for drill-only reports (`DRILL_ONLY_REPORTS = ['reports.transactions']`); the route's
-auth and company-membership middleware still apply (a non-member gets 403).
-
-- Files: `app/Http/Controllers/Reports/PrintReportController.php`, `tests/Feature/Reporting/ReportPrintDrillTest.php`.
-- **On upstream sync:** rebuild the controller from the new upstream version and re-add only the `DRILL_ONLY_REPORTS` bypass.
