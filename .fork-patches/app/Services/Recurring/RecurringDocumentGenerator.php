@@ -127,7 +127,7 @@ class RecurringDocumentGenerator
 
         $today = $company->currentDateTime()->startOfDay();
 
-        if ($doc->next_run_date === null || $doc->next_run_date->toDateString() > $today->toDateString()) {
+        if ($doc->next_run_date === null || CarbonImmutable::parse($doc->next_run_date)->greaterThan($today)) {
             return collect([$this->generateOne($document)]);
         }
 
