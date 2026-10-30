@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-29
+
+**Highlights.** UK companies get **statutory accounts** (FRS 102 Section 1A or
+FRS 105) as a PDF to file or a Word document to edit, and invoices get a second,
+**Airy** layout. The rest is fixes. **Security:** an open page re-checks your
+access on every action, the accounts, payments and deposits a form sends are
+checked against your organization on the server, and outside local development
+the app answers only on `APP_URL` and the new `TRUSTED_HOSTS` and trusts
+forwarded addresses only from the new `TRUSTED_PROXIES`. **Foreign currency:**
+bank-feed lines and journal entries on a foreign-currency account keep their
+foreign amount, those accounts reconcile in their own currency, and a void takes
+its foreign amount off too. **Payroll:** the T4, T4A, RL-1 and ROE files follow
+the current CRA, Revenu Québec and Service Canada formats, TD1 claims, annual
+maximums, vacation pay and Indian Act exempt income are handled correctly, and a
+pay date past the loaded tax tables is refused. Restores keep employee SINs
+readable and no longer collide with the organization they came from, and the
+1099 Summary uses the $2,000 threshold for 2026. Nine migrations and two new
+`app:upgrade` steps; behind a load balancer, CDN or reverse proxy, set
+`TRUSTED_PROXIES` before you upgrade. See `UPGRADING.md`.
+
 ### Added
 
 - **Statutory accounts (UK)** — year-end accounts for small companies as one PDF,
@@ -1442,7 +1462,8 @@ general ledger as the single source of truth.
   set them only if you're moving to object storage, then run
   `php artisan storage:check`. See the README's **Object storage** section.
 
-[Unreleased]: https://github.com/lineledger/lineledger/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/lineledger/lineledger/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/lineledger/lineledger/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/lineledger/lineledger/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/lineledger/lineledger/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/lineledger/lineledger/compare/v1.2.1...v1.2.2

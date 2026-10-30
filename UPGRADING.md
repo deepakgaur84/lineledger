@@ -12,10 +12,10 @@ newest first.
 - **Back up first, every time.** A release can carry a migration that cannot be undone,
   and restoring a backup is the only supported way back. How to take one is under each
   release's *Before you start*.
-- **One release at a time.** Go 1.0.0 → 1.1.0 → 1.2.0 → 1.3.0, running each release's
-  steps in turn. Skipping a release skips its backfills and its behaviour notes.
-- **Docker tags.** The image is `ghcr.io/lineledger/lineledger`. `1.3.0` is one exact
-  release; `1.3` follows the newest 1.3.x patch; `latest` follows the newest tagged
+- **One release at a time.** Go 1.0.0 → 1.1.0 → 1.2.0 → 1.3.0 → 1.4.0, running each
+  release's steps in turn. Skipping a release skips its backfills and its behaviour notes.
+- **Docker tags.** The image is `ghcr.io/lineledger/lineledger`. `1.4.0` is one exact
+  release; `1.4` follows the newest 1.4.x patch; `latest` follows the newest tagged
   release; `edge` follows `main` between releases. Release tags are built for
   linux/amd64 and linux/arm64; `edge` and other `main` builds are amd64 only. Pin
   `LINELEDGER_VERSION` in `.env` to the exact release, so an upgrade happens when you
@@ -23,7 +23,7 @@ newest first.
 - **`php artisan app:upgrade` is the post-deploy step, everywhere.** It runs the pending
   migrations, then every backfill the release needs (since 1.1.0:
   `banking:backfill-line-memos` and `banking:backfill-reconciliation-stamps`; 1.2.0 through
-  1.3.1 add none; the next release adds `backup:repair-encrypted-columns` and
+  1.3.1 add none; 1.4.0 adds `backup:repair-encrypted-columns` and
   `currency:backfill-reversal-memos`). Each
   backfill is idempotent, so a second run changes nothing. `--dry-run` runs the same
   steps without writing anything; `--verify` ends with an `integrity:check` that reports
@@ -36,11 +36,24 @@ newest first.
   anchors every registered passkey. Both stay exactly as they were, and both are in
   every backup you take.
 
-## 1.3.1 → Unreleased
+## 1.3.1 → 1.4.0
 
-Not released yet; the release gives this section its number and fills in the rest. Until
-then, notes for the changes on `main` since 1.3.1 collect here as they land, one
-subsection for each change that asks something of an operator.
+Released 2026-10-29. A minor release that adds statutory accounts for UK companies and an
+Airy invoice layout, with fixes to security, foreign currency, payroll year-end filing and
+restores. PHP `^8.5` and Laravel 13 are unchanged; `phpoffice/phpword` is new (the
+statutory accounts' Word download) and `symfony/mime` moves from 8.1.7 to 8.1.10.
+**Nine migrations and two new `app:upgrade` steps** (`backup:repair-encrypted-columns`,
+then `currency:backfill-reversal-memos`), all run by `app:upgrade`. **New settings:**
+`TRUSTED_HOSTS` and `TRUSTED_PROXIES`; behind a load balancer, CDN or reverse proxy, set
+`TRUSTED_PROXIES` before you upgrade. `CRA_TRANSMITTER_NUMBER` and `CRA_TRANSMITTER_TYPE`
+are no longer read, `CRA_TRANSMITTER_LANGUAGE` now defaults to each organization's
+language, and `APP_URL_CA` and `APP_URL_US` now default to empty.
+`docker/digitalocean/app.yaml` gains `TRUSTED_PROXIES`, `docker-compose.yml` changes only
+in comments, and `backup.sh` and `restore.sh` are unchanged from 1.3.1. **The `1.3` tag
+stays on 1.3.1:** if `.env` pins `LINELEDGER_VERSION=1.3`, change it to `1.4.0` (or `1.4`).
+Take a backup first; with these migrations it is the supported way back to 1.3.1. Coming
+from 1.3.0 or earlier, do the earlier steps below first. Each subsection below covers one
+change that asks something of an operator.
 
 ### Trusted hosts and proxies
 
@@ -81,7 +94,7 @@ must pass `Host` through (nginx: `proxy_set_header Host $host;`, Apache:
 
 ```bash
 ./backup.sh
-# In .env, set LINELEDGER_VERSION to the new release, plus TRUSTED_PROXIES / TRUSTED_HOSTS if you need them.
+# In .env, set LINELEDGER_VERSION=1.4.0 (or 1.4), plus TRUSTED_PROXIES / TRUSTED_HOSTS if you need them.
 docker compose pull && docker compose up -d
 docker compose exec app php artisan app:upgrade --verify
 ```
