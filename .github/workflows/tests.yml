@@ -12,6 +12,15 @@ on:
   # nothing tested any bot commit — including the one that copies patched files
   # over their real paths, i.e. the code that actually ships.
   workflow_dispatch:
+    inputs:
+      full:
+        description: 'Run the whole test suite (default: only tests relevant to the last push)'
+        type: boolean
+        default: false
+  # Fork: the whole suite is slow, so pushes run only the tests that matter (see
+  # .github/scripts/select-tests.sh) and the full suite runs here, nightly (1am NZ).
+  schedule:
+    - cron: '0 12 * * *'
 
 # Least privilege: the test job only reads the tree.
 permissions:
@@ -27,23 +36,39 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
 
       - name: Setup PHP
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
         with:
           php-version: ${{ matrix.php-version }}
           tools: composer:v2
-          coverage: xdebug
+          coverage: none
 
       - name: Setup Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22'
 
+      - name: Select tests
+        id: select
+        env:
+          BASE_SHA: ${{ github.event.before }}
+          FORCE_FULL: ${{ github.event_name == 'schedule' || inputs.full == true }}
+        run: |
+          if [ "$FORCE_FULL" = "true" ]; then
+            { echo "mode=full"; echo "files="; echo "js=true"; } >> "$GITHUB_OUTPUT"
+          else
+            bash .github/scripts/select-tests.sh "$BASE_SHA"
+          fi
+          cat "$GITHUB_OUTPUT"
+
       - name: Install Node Dependencies
         run: npm i
 
       - name: Run JS Unit Tests
+        if: steps.select.outputs.js == 'true'
         run: npm test
 
       - name: Install Dependencies
@@ -59,7 +84,16 @@ jobs:
         run: npm run build
 
       - name: Run Tests
+        if: steps.select.outputs.mode != 'none'
         env:
           DB_CONNECTION: sqlite
           DB_DATABASE: ':memory:'
-        run: ./vendor/bin/pest
+          MODE: ${{ steps.select.outputs.mode }}
+          FILES: ${{ steps.select.outputs.files }}
+        run: |
+          if [ "$MODE" = "full" ]; then
+            ./vendor/bin/pest
+          else
+            echo "Running selected tests: $FILES"
+            ./vendor/bin/pest $FILES
+          fi

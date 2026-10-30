@@ -7,6 +7,8 @@ on:
   pull_request:
     branches:
       - main
+  # Fork: "Run workflow" checks every file with Pint; pushes check only changed PHP files.
+  workflow_dispatch:
 
 # Least privilege: linting only needs to read the tree.
 permissions:
@@ -17,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
 
       - name: Setup PHP
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
@@ -26,8 +30,27 @@ jobs:
       - name: Install Dependencies
         run: composer install -q --no-ansi --no-interaction --no-scripts --no-progress --prefer-dist
 
+      # Fork: Pint over all ~2200 files takes minutes; a push only needs its own files.
       - name: Run Pint
-        run: vendor/bin/pint --test
+        env:
+          BASE_SHA: ${{ github.event.before }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          base="$BASE_SHA"
+          if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            base="$(git rev-parse HEAD^ 2>/dev/null || true)"
+          fi
+          if [ "$EVENT" = "workflow_dispatch" ] || [ -z "$base" ] || git diff --name-only "$base" HEAD | grep -qE '^pint\.json$'; then
+            vendor/bin/pint --test
+            exit 0
+          fi
+          files="$(git diff --name-only --diff-filter=ACMR "$base" HEAD -- '*.php' | grep -v '\.blade\.php$' | grep -v '^\.fork-patches/' || true)"
+          if [ -z "$files" ]; then
+            echo "No PHP files changed; nothing to lint."
+          else
+            echo "Linting: $files"
+            vendor/bin/pint --test $files
+          fi
 
   static-analysis:
     runs-on: ubuntu-latest
