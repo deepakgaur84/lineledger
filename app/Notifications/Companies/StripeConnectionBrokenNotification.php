@@ -4,6 +4,7 @@ namespace App\Notifications\Companies;
 
 use App\Actions\Portal\FlagBrokenStripeConnection;
 use App\Models\Company;
+use App\Support\Http\CanonicalUrl;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -37,6 +38,6 @@ class StripeConnectionBrokenNotification extends Notification implements ShouldQ
                 'company' => $this->company->name,
             ]))
             ->line(__('Reconnect your Stripe account to start accepting payments again. Existing receipts and payouts are unaffected.'))
-            ->action(__('Reconnect Stripe'), route('companies.edit', ['company' => $this->company->slug]));
+            ->action(__('Reconnect Stripe'), CanonicalUrl::route('companies.edit', ['company' => $this->company->slug]));
     }
 }

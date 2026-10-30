@@ -15,8 +15,8 @@ use App\Services\Posting\ReceiptPoster;
 use Livewire\Livewire;
 
 /**
- * Reproduces the production drift seen on Society's First (company 487):
- * receipt 37529 (4200) was re-saved so its single application moved from one
+ * Reproduces a drift seen in production:
+ * a receipt (4200) was re-saved so its single application moved from one
  * invoice to another. SaveReceipt wipes + re-creates the application rows
  * BEFORE ReceiptPoster::repost() runs, and repost() only recomputes the
  * invoices in the receipt's CURRENT applications — so the invoice the receipt
@@ -33,16 +33,16 @@ beforeEach(function () {
 
     app()->instance('current_company', $this->company);
 
-    $this->customer = Contact::create(['display_name' => 'SF016 Estate', 'is_customer' => true]);
+    $this->customer = Contact::create(['display_name' => 'Bayside Trading', 'is_customer' => true]);
     $this->income = Account::query()->where('subtype', AccountSubtype::Income->value)->first();
     $this->undeposited = Account::query()->where('subtype', AccountSubtype::UndepositedFunds->value)->first();
 
-    // Invoice A — the large funeral invoice (INV 27/SF016, 103040).
-    $this->invoiceA = reassignPostedInvoice($this->customer, $this->income, 'INV-SF016', 103040);
+    // Invoice A — the large invoice (INV-B204, 103040).
+    $this->invoiceA = reassignPostedInvoice($this->customer, $this->income, 'INV-B204', 103040);
 
-    // Invoice B — the small ASI invoice (INV 27/SF016 ASI B, 4200).
+    // Invoice B — the small follow-up invoice (INV-B204-B, 4200).
     // B is due later than A, so auto-apply by due date would always pick A first.
-    $this->invoiceB = reassignPostedInvoice($this->customer, $this->income, 'INV-SF016-ASI-B', 4200, '2026-11-01');
+    $this->invoiceB = reassignPostedInvoice($this->customer, $this->income, 'INV-B204-B', 4200, '2026-11-01');
 
     expect($this->invoiceA->total_cents)->toBe(103040);
     expect($this->invoiceB->total_cents)->toBe(4200);
@@ -113,7 +113,7 @@ it('recomputes the invoice a receipt no longer applies to when SaveReceipt + rep
     // Receipt of 4200 applied to A, posted.
     $receipt = CustomerReceipt::create([
         'contact_id' => $this->customer->id,
-        'receipt_no' => 'REC-SF016-B',
+        'receipt_no' => 'REC-B204-B',
         'receipt_date' => '2026-09-04',
         'deposit_to_account_id' => $this->undeposited->id,
         'amount_cents' => 4200,
@@ -162,10 +162,10 @@ it('recomputes the old invoice when the application is moved via PATCH /api/v1/r
     app()->forgetInstance('current_company');
     $headers = ['Authorization' => 'Bearer '.$this->plain];
 
-    // Receipt of 4200 applied to B (the ASI), posted — B becomes paid.
+    // Receipt of 4200 applied to B (the follow-up), posted — B becomes paid.
     $receiptId = $this->postJson('/api/v1/receipts', [
         'contact_id' => $this->customer->id,
-        'receipt_no' => 'REC-SF016-B',
+        'receipt_no' => 'REC-B204-B',
         'receipt_date' => '2026-09-04',
         'deposit_to_account_id' => $this->undeposited->id,
         'amount_cents' => 4200,

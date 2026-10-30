@@ -3,9 +3,11 @@
 namespace App\Models;
 
 use App\Concerns\BelongsToCompany;
+use App\Enums\DentalBenefitsCode;
 use App\Enums\PayBasis;
 use App\Enums\VacationPolicy;
 use Carbon\CarbonInterface;
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -24,14 +26,15 @@ use Illuminate\Support\Collection;
  * @property bool $banked_overtime_enabled
  * @property ?CarbonInterface $banked_overtime_agreement_date
  * @property ?int $banked_overtime_multiplier_bp
+ * @property ?DentalBenefitsCode $dental_benefits_code
  */
 #[Fillable([
     'company_id', 'contact_id', 'sin_encrypted', 'sin_last4',
     'date_of_birth', 'hire_date', 'termination_date', 'province_of_employment',
     'pay_basis', 'annual_salary_cents', 'hourly_rate_cents', 'default_hours_per_period',
     'payroll_schedule_id', 'td1_federal_claim_cents', 'td1_federal_code',
-    'td1_provincial_claim_cents', 'td1_provincial_code', 'cpp_exempt', 'ei_exempt', 'qpip_exempt',
-    'income_tax_exempt', 'workers_comp_exempt', 'workers_comp_rate_bp', 'cpt30_election_date',
+    'td1_provincial_claim_cents', 'td1_provincial_code', 'cpp_exempt', 'ei_exempt', 'qpip_exempt', 'dental_benefits_code',
+    'income_tax_exempt', 'indian_act_exempt', 'workers_comp_exempt', 'workers_comp_rate_bp', 'cpt30_election_date',
     'additional_tax_per_period_cents', 'authorized_annual_deductions_cents', 'vacation_policy', 'vacation_rate_bp',
     'vacation_balance_cents', 'wage_expense_account_id', 'class_id', 'location_id', 'is_active',
     'banked_overtime_enabled', 'banked_overtime_agreement_date', 'banked_overtime_multiplier_bp',
@@ -163,6 +166,29 @@ class EmployeePayrollProfile extends Model
     }
 
     /**
+     * The decrypted SIN, or null when none is on file or the stored value does
+     * not decrypt. The slip exports (T4, RL-1 and ROE XML, the T4 PDF) read it
+     * here and file their unknown-SIN placeholder for null instead of failing.
+     *
+     * A value does not decrypt after a database restore under a different
+     * APP_KEY (unrecoverable: the SIN must be entered again), or in an
+     * organization restored before restores encrypted SINs, which
+     * `backup:repair-encrypted-columns` (part of `app:upgrade`) fixes.
+     */
+    public function sinOrNull(): ?string
+    {
+        try {
+            // getAttribute() runs the `encrypted` cast, which throws when the
+            // stored value does not decrypt.
+            $sin = $this->getAttribute('sin_encrypted');
+        } catch (DecryptException) {
+            return null;
+        }
+
+        return is_string($sin) && $sin !== '' ? $sin : null;
+    }
+
+    /**
      * @return array<string, string>
      */
     protected function casts(): array
@@ -181,7 +207,9 @@ class EmployeePayrollProfile extends Model
             'cpp_exempt' => 'boolean',
             'ei_exempt' => 'boolean',
             'qpip_exempt' => 'boolean',
+            'dental_benefits_code' => DentalBenefitsCode::class,
             'income_tax_exempt' => 'boolean',
+            'indian_act_exempt' => 'boolean',
             'workers_comp_exempt' => 'boolean',
             'workers_comp_rate_bp' => 'integer',
             'cpt30_election_date' => 'date:Y-m-d',

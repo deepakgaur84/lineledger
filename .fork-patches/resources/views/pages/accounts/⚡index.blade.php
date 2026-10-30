@@ -26,6 +26,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Computed;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
 use Livewire\Component;
@@ -82,6 +83,8 @@ new #[Title('Chart of Accounts')] class extends Component {
     /** @var array<int, string> */
     public array $visibleColumns = ['subtype', 'balance'];
 
+    /** Locked: only openMerge() sets it, after checking the record is this organization's. */
+    #[Locked]
     public ?int $mergingId = null;
 
     public ?int $mergeTargetId = null;
@@ -458,7 +461,7 @@ new #[Title('Chart of Accounts')] class extends Component {
     #[Computed]
     public function mergeTargets()
     {
-        $merging = $this->mergingId ? Account::find($this->mergingId) : null;
+        $merging = $this->mergingAccount();
 
         if (! $merging) {
             return collect();
@@ -483,25 +486,39 @@ new #[Title('Chart of Accounts')] class extends Component {
     #[Computed]
     public function mergeSummary(): string
     {
-        if (! $this->mergingId) {
+        $merging = $this->mergingAccount();
+
+        if (! $merging) {
             return '';
         }
 
-        $journalLines = DB::table('journal_lines')->where('account_id', $this->mergingId)->count();
-        $itemDefaults = DB::table('items')->where(function ($q) {
-            $q->where('income_account_id', $this->mergingId)
-                ->orWhere('expense_account_id', $this->mergingId)
-                ->orWhere('inventory_asset_account_id', $this->mergingId)
-                ->orWhere('cogs_account_id', $this->mergingId);
+        // Raw counts see every organization's rows, and the line tables carry no
+        // company_id, so they key on the account resolved through this one.
+        $journalLines = DB::table('journal_lines')->where('account_id', $merging->id)->count();
+        $itemDefaults = DB::table('items')->where('company_id', $this->company->id)->where(function ($q) use ($merging) {
+            $q->where('income_account_id', $merging->id)
+                ->orWhere('expense_account_id', $merging->id)
+                ->orWhere('inventory_asset_account_id', $merging->id)
+                ->orWhere('cogs_account_id', $merging->id);
         })->count();
-        $recurringLines = DB::table('recurring_document_lines')->where('account_id', $this->mergingId)->count()
-            + DB::table('recurring_journal_entry_lines')->where('account_id', $this->mergingId)->count();
+        $recurringLines = DB::table('recurring_document_lines')->where('account_id', $merging->id)->count()
+            + DB::table('recurring_journal_entry_lines')->where('account_id', $merging->id)->count();
 
         return __(':lines journal line(s), :items item default(s), and :recurring recurring template line(s) will move to the account you choose.', [
             'lines' => number_format($journalLines),
             'items' => number_format($itemDefaults),
             'recurring' => number_format($recurringLines),
         ]);
+    }
+
+    /**
+     * The account the open merge dialog is for, when it is this organization's.
+     */
+    private function mergingAccount(): ?Account
+    {
+        return $this->mergingId === null
+            ? null
+            : Account::query()->whereBelongsTo($this->company)->find($this->mergingId);
     }
 
     /**

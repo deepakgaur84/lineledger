@@ -1,0 +1,3 @@
+# Official agency files are kept byte for byte, as published (CRLF and all),
+# so their checksums match the downloads named in each README.
+*.xsd -text

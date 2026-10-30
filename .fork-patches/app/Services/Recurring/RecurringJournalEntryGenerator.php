@@ -16,6 +16,7 @@ use Closure;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 use RuntimeException;
 
 /**
@@ -27,6 +28,11 @@ use RuntimeException;
  * Mirrors {@see RecurringDocumentGenerator}: binds app('current_company') for the
  * action call (not bound in a job/command), and uses a row lock plus a re-read of
  * next_run_date inside the transaction for idempotency under concurrent workers.
+ *
+ * A schedule holds home amounts only. A line on a foreign-currency account gets
+ * its foreign amount from SaveJournalEntry at the occurrence date's rate, so the
+ * draft is worth reviewing before it is posted; with no rate on file for that
+ * date the schedule pauses and says why.
  */
 class RecurringJournalEntryGenerator
 {
@@ -72,11 +78,20 @@ class RecurringJournalEntryGenerator
                     break;
                 }
 
-                $created->push($this->generateStep(
-                    $row,
-                    $company,
-                    CarbonImmutable::parse($row->next_run_date->toDateString()),
-                ));
+                try {
+                    $created->push($this->generateStep(
+                        $row,
+                        $company,
+                        CarbonImmutable::parse($row->next_run_date->toDateString()),
+                    ));
+                } catch (ValidationException $e) {
+                    // The draft could not be built — e.g. a line on a foreign-currency
+                    // account and no exchange rate on file for the date. Pause this
+                    // schedule with the reason rather than fail the company's run.
+                    $this->pause($row, (string) (collect($e->errors())->flatten()->first() ?? $e->getMessage()));
+
+                    break;
+                }
 
                 if (! $row->is_active) {
                     break;

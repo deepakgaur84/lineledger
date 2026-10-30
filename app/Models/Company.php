@@ -9,6 +9,7 @@ use App\Enums\CompanyRole;
 use App\Enums\ContributionMethod;
 use App\Enums\CostingMethod;
 use App\Enums\Country;
+use App\Enums\DentalBenefitsCode;
 use App\Enums\Industry;
 use App\Enums\JurisdictionCapability;
 use App\Enums\LegalStructure;
@@ -20,6 +21,7 @@ use App\Services\Posting\PeriodLockOverride;
 use App\Support\Currency;
 use App\Support\Jurisdiction\JurisdictionProfile;
 use App\Support\Locales;
+use App\Support\Payroll\PayrollAccountNumber;
 use App\Support\SiteSettings;
 use App\Support\Storage\StorageDisks;
 use App\Support\Tax\ProvincialSalesTax;
@@ -46,6 +48,7 @@ use Illuminate\Support\Facades\Storage;
  * @property array<string, mixed>|null $settings
  * @property string|null $inbound_email_token
  * @property bool $inbound_email_enabled
+ * @property DentalBenefitsCode|null $payroll_dental_benefits_code
  */
 #[Fillable([
     'name',
@@ -105,6 +108,10 @@ use Illuminate\Support\Facades\Storage;
     'portal_team_calendar',
     'payroll_business_number',
     'payroll_rp_account',
+    'payroll_dental_benefits_code',
+    'payroll_cra_rep_id',
+    'payroll_rq_identification_number',
+    'payroll_rq_file_number',
     'payroll_contact_name',
     'payroll_contact_email',
     'payroll_contact_phone',
@@ -507,6 +514,18 @@ class Company extends Model
     public function usesPayroll(): bool
     {
         return $this->supports(JurisdictionCapability::Payroll);
+    }
+
+    /**
+     * The CRA payroll program account (BN15, e.g. 123456789RP0001) from the
+     * Business Number and RP account in Payroll settings, or null when they are
+     * missing or do not form one. T4 and T4A slips, their summaries and the
+     * ROE are filed under this account — never under the GST/HST number in
+     * tax_number, which is the RT program.
+     */
+    public function payrollAccountNumber(): ?string
+    {
+        return PayrollAccountNumber::compose($this->payroll_business_number, $this->payroll_rp_account);
     }
 
     /**
@@ -931,6 +950,7 @@ class Company extends Model
             'portal_team_calendar' => 'boolean',
             'payroll_federally_regulated' => 'boolean',
             'payroll_remittance_frequency' => RemittanceFrequency::class,
+            'payroll_dental_benefits_code' => DentalBenefitsCode::class,
             'features_inventory' => 'boolean',
             'features_fixed_assets' => 'boolean',
             'features_estimates' => 'boolean',

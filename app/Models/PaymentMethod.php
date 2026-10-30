@@ -7,7 +7,7 @@ use App\Support\Locales;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 
-#[Fillable(['company_id', 'name', 'is_cheque', 'is_active'])]
+#[Fillable(['company_id', 'name', 'is_cheque', 'is_card', 'is_active'])]
 class PaymentMethod extends Model
 {
     use BelongsToCompany;
@@ -19,6 +19,7 @@ class PaymentMethod extends Model
     {
         return [
             'is_cheque' => 'boolean',
+            'is_card' => 'boolean',
             'is_active' => 'boolean',
         ];
     }

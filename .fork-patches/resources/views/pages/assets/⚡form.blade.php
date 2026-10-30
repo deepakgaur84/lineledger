@@ -17,6 +17,7 @@ use Flux\Flux;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
@@ -87,8 +88,11 @@ new #[Title('Asset')] class extends Component {
 
     public bool $is_active = true;
 
+    /** The transaction the asset was created from; set server-side only. */
+    #[Locked]
     public ?string $source_type = null;
 
+    #[Locked]
     public ?int $source_id = null;
 
     protected function editLockRecord(): ?Model
@@ -172,7 +176,7 @@ new #[Title('Asset')] class extends Component {
         $sourceId = (int) request()->query('source_id');
 
         if ($sourceType && $sourceId) {
-            $prefilled = app(AssetSourcePrefiller::class)->resolve($sourceType, $sourceId);
+            $prefilled = app(AssetSourcePrefiller::class)->resolve($company, $sourceType, $sourceId);
 
             if ($prefilled) {
                 $this->name = $prefilled['name'] ?? '';

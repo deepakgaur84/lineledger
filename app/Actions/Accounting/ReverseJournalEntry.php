@@ -3,6 +3,7 @@
 namespace App\Actions\Accounting;
 
 use App\Models\JournalEntry;
+use App\Models\JournalLine;
 use App\Services\Posting\EntryNumberGenerator;
 use App\Services\Posting\JournalPoster;
 use Carbon\CarbonImmutable;
@@ -10,7 +11,8 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * Builds an accrual-style reversing entry: a new *draft* journal entry whose lines
- * are the original's with debit and credit swapped, linked back via reverses_entry_id.
+ * are the original's with debit and credit swapped (the foreign-currency memo too,
+ * see {@see JournalLine::reversingAttributes()}), linked back via reverses_entry_id.
  *
  * Unlike {@see JournalPoster::void()} (a correction that voids
  * the original and posts its reversal), this leaves the original posted and untouched
@@ -35,18 +37,7 @@ final class ReverseJournalEntry
             ]);
 
             foreach ($original->lines as $i => $line) {
-                $reversal->lines()->create([
-                    'account_id' => $line->account_id,
-                    'debit_cents' => $line->credit_cents,
-                    'credit_cents' => $line->debit_cents,
-                    'memo' => $line->memo,
-                    'contact_id' => $line->contact_id,
-                    'tax_code_id' => $line->tax_code_id,
-                    'line_order' => $i,
-                    'class_id' => $line->class_id,
-                    'location_id' => $line->location_id,
-                    'fund_id' => $line->fund_id,
-                ]);
+                $reversal->lines()->create($line->reversingAttributes($i));
             }
 
             return $reversal->fresh(['lines']);

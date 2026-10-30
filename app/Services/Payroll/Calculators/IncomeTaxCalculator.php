@@ -20,11 +20,13 @@ use App\Support\Payroll\RoundingPolicy;
  * v1 notes: the provincial low-income tax reduction (factor S) is applied for
  * British Columbia (see taxReduction()); Ontario's factor S — which sits after
  * the surtax and uses a dependant amount (Y) not yet modelled — is still
- * omitted and slightly over-withholds (a safe direction). Both the federal and
- * provincial personal credits honour a TD1 claim above the basic amount but
- * floor a below-basic claim to the basic amount — i.e. a "claim code 0"
- * employee is still credited the basic personal amount (a known, shared
- * limitation that slightly under-withholds for true code-0 second jobs).
+ * omitted and slightly over-withholds (a safe direction).
+ *
+ * Personal credits (K1, K1P, and the Quebec line 10 credit) come from the TD1
+ * total claim the way T4127 Chapter 2 reads it: a $0 claim is claim code 0 (no
+ * credit), the basic amount follows the BPA formula, and any other amount,
+ * including a partial claim below the basic amount, is used as entered. See
+ * federalTotalClaim(), provincialTotalClaim() and quebecPersonalAmount().
  */
 class IncomeTaxCalculator
 {
@@ -61,9 +63,8 @@ class IncomeTaxCalculator
 
         // --- Federal ---
         $t3 = $this->bracketTax($a, $c->federalBrackets());
-        $federalBpa = $this->incomeTestedFederalBpa($c, $a);
-        $federalEffectiveClaim = $federalBpa + max(0, $federalClaimCents - $c->federalBpaMaxCents());
-        $k1 = RoundingPolicy::centsTimesRate($federalEffectiveClaim, $c->federalLowestRate());
+        $tc = $this->federalTotalClaim($c, $federalClaimCents, $this->incomeTestedFederalBpa($c, $a));
+        $k1 = RoundingPolicy::centsTimesRate($tc, $c->federalLowestRate());
         $k2 = RoundingPolicy::centsTimesRate($cppEiCreditBase, $c->federalLowestRate());
         $k4 = RoundingPolicy::centsTimesRate(min($a, $c->canadaEmploymentMaxCents()), $c->federalLowestRate());
         $federalAnnual = max(0, $t3 - $k1 - $k2 - $k4);
@@ -83,25 +84,20 @@ class IncomeTaxCalculator
             $aQc = max(0, $a - $workerDeduction);
             $t4Basic = $this->bracketTax($aQc, $c->provincialBrackets());
             // Quebec non-refundable credits at the lowest Quebec rate (14%): ONLY
-            // the employee's personal amount (line 10 of TP-1015.3-V, floored at the
-            // basic amount). Unlike the federal formula (K2), Quebec's source-
-            // deduction formula does NOT credit QPP/QPIP/EI premiums — the enhanced
-            // QPP (1% + QPP2) is already deducted from income above, and base QPP,
-            // QPIP and EI do not appear in the credit at all (Revenu Québec
-            // TP-1015.TI-V, "Québec income tax" worked example, pp.10–11).
-            $quebecPersonalAmount = max($c->provincialBpaCents(), $provincialClaimCents);
+            // the employee's personal amount (line 10 of TP-1015.3-V, see
+            // quebecPersonalAmount()). Unlike the federal formula (K2), Quebec's
+            // source-deduction formula does NOT credit QPP/QPIP/EI premiums — the
+            // enhanced QPP (1% + QPP2) is already deducted from income above, and
+            // base QPP, QPIP and EI do not appear in the credit at all (Revenu
+            // Québec TP-1015.TI-V, "Québec income tax" worked example, pp.10–11).
+            $quebecPersonalAmount = $this->quebecPersonalAmount($c, $provincialClaimCents);
             $kQc = RoundingPolicy::centsTimesRate($quebecPersonalAmount, $c->provincialLowestRate());
             $provincialAnnual = max(0, $t4Basic - $kQc);
         } else {
             $t4Basic = $this->bracketTax($a, $c->provincialBrackets());
-            // K1P — provincial personal credit. Mirror the federal path above:
-            // honour a TD1 provincial claim above the basic amount (extra
-            // credits/dependants) as an excess on top of the (possibly
-            // income-tested) basic BPA. A claim at or below basic floors to the
-            // basic BPA, matching the federal treatment.
-            $provincialEffectiveClaim = $c->provincialBpaForIncome($a)
-                + max(0, $provincialClaimCents - $c->provincialBpaCents());
-            $k1p = RoundingPolicy::centsTimesRate($provincialEffectiveClaim, $c->provincialLowestRate());
+            // K1P — provincial personal credit, from TCP (provincialTotalClaim()).
+            $tcp = $this->provincialTotalClaim($c, $provincialClaimCents, $c->provincialBpaForIncome($a));
+            $k1p = RoundingPolicy::centsTimesRate($tcp, $c->provincialLowestRate());
             $k2p = RoundingPolicy::centsTimesRate($cppEiCreditBase, $c->provincialLowestRate());
             // Factor S — provincial low-income tax reduction (BC). Subtracted with
             // the credits here, which is correct for provinces with no surtax.
@@ -184,6 +180,94 @@ class IncomeTaxCalculator
         $reduction = RoundingPolicy::roundBcToCents(bcmul((string) ($max - $min), $fraction, 10));
 
         return $max - $reduction;
+    }
+
+    /**
+     * Factor TC, the federal personal amounts claimed, from the TD1 total claim
+     * (line 13). T4127 122nd edition (Jan 2026):
+     *  - Chapter 2: "To determine Total federal Claim (TC), use the total claim
+     *    amount on Form TD1." A partial claim below the basic amount (a newcomer
+     *    or emigrant prorating the BPA) is used as entered.
+     *  - Chapter 2, "Claim Code 0 — This code represents no claim amount
+     *    allowed", and Table 8.9: claim code 0 → TC 0.00, K1 0.00. A $0 total
+     *    claim is claim code 0: the TD1 tells an employee with more than one
+     *    employer at the same time to "enter '0' on line 13" (T4001, Form TD1).
+     *  - The basic amount alone (claim code 1, this year's or an earlier
+     *    year's, see PayrollConstantSet::isFederalBasicClaim()) is the BPAF
+     *    formula, income-tested ("If the employee is only claiming the BPAF,
+     *    use claim code 1"; "If no Form TD1 is on file ... use BPAF").
+     *  - Above the basic amount, the basic part follows the BPAF formula and
+     *    the rest (the employee's other credits) is added in full.
+     */
+    private function federalTotalClaim(PayrollConstantSet $c, int $claimCents, int $incomeTestedBpaCents): int
+    {
+        if ($claimCents <= 0) {
+            return 0;
+        }
+
+        if ($c->isFederalBasicClaim($claimCents)) {
+            return $incomeTestedBpaCents;
+        }
+
+        if ($claimCents > $c->federalBpaMaxCents()) {
+            return $incomeTestedBpaCents + ($claimCents - $c->federalBpaMaxCents());
+        }
+
+        return $claimCents;
+    }
+
+    /**
+     * Factor TCP, the provincial or territorial personal amounts claimed, from
+     * the provincial TD1 total claim: the same rules as federalTotalClaim().
+     * T4127 122nd edition, Chapter 2: "To determine provincial or territorial
+     * total claim (TCP), use the total claim amount on the appropriate
+     * provincial or territorial Form TD1"; Tables 8.10–8.21: claim code 0 →
+     * TCP 0.00, K1P 0.00. The basic amount alone is the province's basic
+     * personal amount (income-tested where the province defines a phase-out,
+     * e.g. Yukon's BPAYT).
+     */
+    private function provincialTotalClaim(PayrollConstantSet $c, int $claimCents, int $basicForIncomeCents): int
+    {
+        if ($claimCents <= 0) {
+            return 0;
+        }
+
+        if ($c->isProvincialBasicClaim($claimCents)) {
+            return $basicForIncomeCents;
+        }
+
+        if ($claimCents > $c->provincialBpaCents()) {
+            return $basicForIncomeCents + ($claimCents - $c->provincialBpaCents());
+        }
+
+        return $claimCents;
+    }
+
+    /**
+     * The Quebec personal amount credited at 14%: line 10 of form TP-1015.3-V.
+     *  - Revenu Québec TP-1015.TI-V (2026-01), p.7: "You must use deduction
+     *    code 'O' to withhold income tax from the remuneration of an individual
+     *    who entered '0' on line 10 of form TP-1015.3-V", so a $0 claim earns no
+     *    credit (TP-1015.G-V (2026-01), s.3.4.1: an individual with more than
+     *    one employer at the same time "can enter '0' on line 10").
+     *  - TP-1015.TI-V p.11 (the formula method): the credit is the "Amount
+     *    entered on line 10 of form TP-1015.3-V" × 14%, so any other amount,
+     *    partial or above the basic amount, is used as entered.
+     *  - The basic amount alone, from this year's form or an earlier one, is
+     *    this year's basic amount: p.11 note 2 adjusts a line 10 amount from
+     *    another year for indexation (see isProvincialBasicClaim()).
+     */
+    private function quebecPersonalAmount(PayrollConstantSet $c, int $claimCents): int
+    {
+        if ($claimCents <= 0) {
+            return 0;
+        }
+
+        if ($c->isProvincialBasicClaim($claimCents)) {
+            return $c->provincialBpaCents();
+        }
+
+        return $claimCents;
     }
 
     /**

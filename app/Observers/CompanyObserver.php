@@ -157,6 +157,7 @@ class CompanyObserver
                 'company_id' => $company->id,
                 'name' => $row['name'],
                 'is_cheque' => $row['is_cheque'],
+                'is_card' => $row['is_card'] ?? false,
                 'is_active' => true,
             ]);
         }

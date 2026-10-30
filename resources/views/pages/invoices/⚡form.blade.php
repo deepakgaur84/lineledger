@@ -597,7 +597,10 @@ new #[Title('Invoice')] class extends Component
     public function saveAsTemplate(): void
     {
         $validated = $this->validate(
-            ['template_name' => ['required', 'string', 'max:255']],
+            [
+                'template_name' => ['required', 'string', 'max:255'],
+                'lines.*.account_id' => ['nullable', 'integer', Rule::exists('accounts', 'id')->where('company_id', $this->company->id)],
+            ],
             attributes: ['template_name' => __('template name')],
         );
 

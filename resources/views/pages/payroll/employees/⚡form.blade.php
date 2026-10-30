@@ -5,7 +5,9 @@ use App\Actions\Payroll\TerminateEmployee;
 use App\Actions\Portal\IssuePortalLoginToken;
 use App\Notifications\Portal\EmployeePortalLoginLinkNotification;
 use App\Enums\AccountSubtype;
+use App\Enums\AccountType;
 use App\Enums\Country;
+use App\Enums\DentalBenefitsCode;
 use App\Enums\PayBasis;
 use App\Enums\RoeReason;
 use App\Enums\VacationPolicy;
@@ -18,11 +20,13 @@ use App\Models\EmployeePayrollProfile;
 use App\Models\PayrollSchedule;
 use App\Models\TimeOffPolicy;
 use App\Rules\MoneyString;
+use App\Rules\ValidSocialInsuranceNumber;
 use App\Support\Money;
 use App\Support\Payroll\Constants\PayrollConstantsRepository;
 use App\Support\Payroll\PayrollItemType;
 use Flux\Flux;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
@@ -76,7 +80,12 @@ new #[Title('Employee payroll setup')] class extends Component {
 
     public bool $qpip_exempt = false;
 
+    /** T4 box 45 for this employee: '' follows the organization's code (Payroll settings), else 1–5. */
+    public string $dental_benefits_code = '';
+
     public bool $income_tax_exempt = false;
+
+    public bool $indian_act_exempt = false;
 
     public bool $workers_comp_exempt = false;
 
@@ -173,6 +182,7 @@ new #[Title('Employee payroll setup')] class extends Component {
             $this->cpp_exempt = $profile->cpp_exempt;
             $this->ei_exempt = $profile->ei_exempt;
             $this->qpip_exempt = $profile->qpip_exempt;
+            $this->dental_benefits_code = (string) ($profile->dental_benefits_code?->value ?? '');
             $this->additional_tax_per_period = Money::fromCents($profile->additional_tax_per_period_cents)->toDecimalString();
             $this->vacation_policy = $profile->vacation_policy->value;
             $this->vacation_rate_pct = $profile->vacation_rate_bp / 100;
@@ -183,6 +193,7 @@ new #[Title('Employee payroll setup')] class extends Component {
             $this->wage_expense_account_id = $profile->wage_expense_account_id;
             $this->is_active = $profile->is_active;
             $this->income_tax_exempt = $profile->income_tax_exempt;
+            $this->indian_act_exempt = (bool) $profile->indian_act_exempt;
             $this->workers_comp_exempt = $profile->workers_comp_exempt;
             $this->workers_comp_rate = $profile->workers_comp_rate_bp !== null ? (string) ((int) $profile->workers_comp_rate_bp / 100) : '';
             $this->cpt30_election_date = $profile->cpt30_election_date?->toDateString() ?? '';
@@ -405,16 +416,35 @@ new #[Title('Employee payroll setup')] class extends Component {
             : Flux::toast(variant: 'danger', text: __('No payroll tables are loaded for that province and date.'));
     }
 
+    /** The box 45 choice that follows the organization's code, naming that code. */
+    #[Computed]
+    public function organizationDentalOption(): string
+    {
+        $code = $this->company->payroll_dental_benefits_code;
+
+        return $code !== null
+            ? __('Same as the organization (:code)', ['code' => $code->label()])
+            : __('Same as the organization (not chosen yet in Payroll settings)');
+    }
+
     public function save(SaveEmployeePayrollProfile $action): void
     {
+        $companyId = $this->company->id;
+
+        // Ids the browser sends must be this organization's, and an account of
+        // the kind the field holds: wages and earnings to an expense, deductions
+        // and contributions owed to a liability.
+        $account = fn (AccountType $type) => Rule::exists('accounts', 'id')->where('company_id', $companyId)->where('type', $type->value);
+
         $validated = $this->validate([
             'province_of_employment' => ['required', 'in:'.implode(',', array_keys($this->provinceOptions))],
             'pay_basis' => ['required', 'in:salary,hourly,commission'],
             'annual_salary' => ['nullable', 'string', 'required_if:pay_basis,salary', new MoneyString],
             'hourly_rate' => ['nullable', 'string', 'required_if:pay_basis,hourly', new MoneyString],
             'default_hours_per_period' => ['nullable', 'numeric', 'min:0'],
-            'payroll_schedule_id' => ['nullable', 'integer', 'exists:payroll_schedules,id'],
-            'sin' => ['nullable', 'string', 'max:20'],
+            'payroll_schedule_id' => ['nullable', 'integer', Rule::exists('payroll_schedules', 'id')->where('company_id', $companyId)],
+            'sin' => ['nullable', 'string', 'max:20', new ValidSocialInsuranceNumber],
+            'dental_benefits_code' => ['nullable', 'in:'.implode(',', array_column(DentalBenefitsCode::cases(), 'value'))],
             'date_of_birth' => ['nullable', 'date'],
             'hire_date' => ['nullable', 'date'],
             'termination_date' => ['nullable', 'date'],
@@ -426,6 +456,7 @@ new #[Title('Employee payroll setup')] class extends Component {
             'authorized_annual_deductions' => ['nullable', 'string', new MoneyString],
             'cpt30_election_date' => ['nullable', 'date'],
             'income_tax_exempt' => ['boolean'],
+            'indian_act_exempt' => ['boolean'],
             'workers_comp_exempt' => ['boolean'],
             'workers_comp_rate' => ['nullable', 'numeric', 'min:0'],
             'vacation_policy' => ['required', 'in:accrue,pay_each_cheque'],
@@ -434,7 +465,7 @@ new #[Title('Employee payroll setup')] class extends Component {
             'banked_overtime_agreement_date' => ['nullable', 'date'],
             'banked_overtime_multiplier' => ['nullable', 'in:,10000,15000,20000'],
             'approver_user_id' => ['nullable', 'integer', 'exists:users,id'],
-            'wage_expense_account_id' => ['nullable', 'integer', 'exists:accounts,id'],
+            'wage_expense_account_id' => ['nullable', 'integer', $account(AccountType::Expense)],
             'is_active' => ['boolean'],
             'has_opening_balances' => ['boolean'],
             'opening_balances_as_of' => ['nullable', 'date'],
@@ -457,8 +488,8 @@ new #[Title('Employee payroll setup')] class extends Component {
             'recurring_items.*.amount' => ['nullable', 'string', new MoneyString],
             'recurring_items.*.percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'recurring_items.*.annual_maximum' => ['nullable', 'string', new MoneyString],
-            'recurring_items.*.expense_account_id' => ['nullable', 'integer', 'exists:accounts,id'],
-            'recurring_items.*.liability_account_id' => ['nullable', 'integer', 'exists:accounts,id'],
+            'recurring_items.*.expense_account_id' => ['nullable', 'integer', $account(AccountType::Expense)],
+            'recurring_items.*.liability_account_id' => ['nullable', 'integer', $account(AccountType::Liability)],
             'recurring_items.*.t4_box' => ['nullable', 'string', 'max:10'],
             'recurring_items.*.is_active' => ['boolean'],
             'recurring_items.*.taxable_federal' => ['boolean'],
@@ -477,7 +508,7 @@ new #[Title('Employee payroll setup')] class extends Component {
             'recurring_items.*.pre_tax_federal' => ['boolean'],
             'recurring_items.*.pre_tax_provincial' => ['boolean'],
             'time_off_policies' => ['array'],
-            'time_off_policies.*.time_off_policy_id' => ['nullable', 'integer', 'exists:time_off_policies,id'],
+            'time_off_policies.*.time_off_policy_id' => ['nullable', 'integer', Rule::exists('time_off_policies', 'id')->where('company_id', $companyId)],
             'time_off_policies.*.opening_balance' => ['nullable', 'numeric', 'min:0'],
         ]);
 
@@ -507,6 +538,7 @@ new #[Title('Employee payroll setup')] class extends Component {
             'cpp_exempt' => $this->cpp_exempt,
             'ei_exempt' => $this->ei_exempt,
             'qpip_exempt' => $this->province_of_employment === 'QC' ? $this->qpip_exempt : false,
+            'dental_benefits_code' => ($validated['dental_benefits_code'] ?? '') !== '' ? (int) $validated['dental_benefits_code'] : null,
             'additional_tax_per_period_cents' => $validated['additional_tax_per_period'] ? Money::fromString($validated['additional_tax_per_period'])->cents : 0,
             'vacation_policy' => $validated['vacation_policy'],
             'vacation_rate_bp' => (int) round($validated['vacation_rate_pct'] * 100),
@@ -517,6 +549,7 @@ new #[Title('Employee payroll setup')] class extends Component {
             'wage_expense_account_id' => $validated['wage_expense_account_id'] ?: null,
             'is_active' => $validated['is_active'],
             'income_tax_exempt' => $this->income_tax_exempt,
+            'indian_act_exempt' => $this->indian_act_exempt,
             'workers_comp_exempt' => $this->workers_comp_exempt,
             'workers_comp_rate_bp' => $this->workers_comp_rate !== '' ? (int) round((float) $this->workers_comp_rate * 100) : null,
             'cpt30_election_date' => $this->province_of_employment === 'QC' ? null : ($validated['cpt30_election_date'] ?: null),
@@ -701,7 +734,7 @@ new #[Title('Employee payroll setup')] class extends Component {
         <div class="rounded-lg border border-border p-5">
             <flux:heading size="lg" class="mb-4">{{ __('Identity') }}</flux:heading>
             <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <flux:input wire:model="sin" :label="__('Social Insurance Number')" :placeholder="$sinLast4 ? '•••• •'.$sinLast4 : '000 000 000'" :description="$sinLast4 ? __('Leave blank to keep the current SIN.') : null" />
+                <flux:input wire:model="sin" :label="__('Social Insurance Number')" :placeholder="$sinLast4 ? '•••• •'.$sinLast4 : '000 000 000'" :description="$sinLast4 ? __('Leave blank to keep the current SIN, or enter 000 000 000 to remove it.') : __('Enter 000 000 000 if the employee hasn’t given you one yet.')" />
                 <flux:input type="date" wire:model="date_of_birth" :label="__('Date of birth')" />
                 <flux:input type="date" wire:model="hire_date" :label="__('Hire date')" />
                 <flux:input type="date" wire:model="termination_date" :label="__('Termination date')" :description="__('Set when the employee leaves (used for ROE).')" />
@@ -745,7 +778,7 @@ new #[Title('Employee payroll setup')] class extends Component {
         {{-- Tax / TD1 --}}
         <div class="rounded-lg border border-border p-5">
             <flux:heading size="lg" class="mb-1">{{ __('Tax credits (TD1)') }}</flux:heading>
-            <flux:text class="mb-4 text-sm text-muted-foreground">{{ __('Total claim amounts from the employee’s federal and provincial TD1 forms.') }}</flux:text>
+            <flux:text class="mb-4 text-sm text-muted-foreground">{{ __('Total claim amounts from the employee’s federal and provincial TD1 forms. Enter 0 when the employee claims no personal amounts with you, for example on a second job (claim code 0).') }}</flux:text>
             <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <flux:input wire:model="td1_federal_claim" :label="__('Federal claim amount')" inputmode="decimal" />
                 <flux:input wire:model="td1_provincial_claim" :label="$province_of_employment === 'QC' ? __('Quebec source-deductions claim (TP-1015.3)') : __('Provincial claim amount')" inputmode="decimal" />
@@ -754,6 +787,12 @@ new #[Title('Employee payroll setup')] class extends Component {
                 @if ($province_of_employment !== 'QC')
                     <flux:input type="date" wire:model="cpt30_election_date" :label="__('CPT30 election date')" :description="__('Set if the employee (65–70) filed CPT30 to stop CPP.')" />
                 @endif
+                <flux:select wire:model="dental_benefits_code" :label="__('Dental benefits (T4 box 45)')" :description="__('Who could use dental coverage you offered on December 31. Change it only when this employee differs from the organization.')" class="md:col-span-2" data-test="employee-dental-benefits-code">
+                    <flux:select.option value="">{{ $this->organizationDentalOption }}</flux:select.option>
+                    @foreach (\App\Enums\DentalBenefitsCode::options() as $value => $label)
+                        <flux:select.option value="{{ $value }}">{{ $label }}</flux:select.option>
+                    @endforeach
+                </flux:select>
             </div>
             <flux:button type="button" variant="ghost" size="sm" icon="sparkles" wire:click="prefillTd1" class="mt-3">{{ __('Use current basic amounts') }}</flux:button>
             <div class="mt-4 flex flex-wrap gap-6">
@@ -762,7 +801,8 @@ new #[Title('Employee payroll setup')] class extends Component {
                 @if ($province_of_employment === 'QC')
                     <flux:switch wire:model="qpip_exempt" :label="__('QPIP exempt')" />
                 @endif
-                <flux:switch wire:model="income_tax_exempt" :label="__('Income tax exempt')" :description="__('No income tax withheld; CPP/EI still apply.')" />
+                <flux:switch wire:model="income_tax_exempt" :label="__('Income tax exempt')" :description="__('No income tax withheld, but the pay is still taxable income (T4 box 14). CPP/EI still apply.')" />
+                <flux:switch wire:model="indian_act_exempt" :label="__('Indian Act exempt income')" :description="$province_of_employment === 'QC' ? __('Employment income exempt under section 87 of the Indian Act: no income tax withheld, and the T4 reports it under code 71. EI and QPIP still apply. QPP applies only if you elected coverage on form RR-2-V; if not, also turn on QPP exempt.') : __('Employment income exempt under section 87 of the Indian Act: no income tax withheld, and the T4 reports it under code 71. EI still applies. CPP applies only if you elected coverage on form CPT124; if not, also turn on CPP exempt.')" />
             </div>
 
             @if ($province_of_employment !== 'QC')

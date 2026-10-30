@@ -8,6 +8,7 @@ use App\Models\Bill;
 use App\Models\BillLine;
 use App\Models\Cheque;
 use App\Models\ChequeLine;
+use App\Models\Company;
 use App\Models\JournalEntry;
 use App\Models\JournalLine;
 
@@ -16,6 +17,10 @@ use App\Models\JournalLine;
  * typically a Bill, Cheque, or Journal Entry line that hits a FixedAsset account.
  *
  * Returns the polymorphic source pair plus pre-fill data for the asset form.
+ *
+ * The line id comes from the form's query string, and the line tables carry no
+ * company_id and no CompanyScope, so every lookup is confined to $company
+ * through the line's parent document.
  */
 class AssetSourcePrefiller
 {
@@ -30,12 +35,12 @@ class AssetSourcePrefiller
      *     cost_cents: ?int
      * }|null
      */
-    public function resolve(string $type, int $id): ?array
+    public function resolve(Company $company, string $type, int $id): ?array
     {
         return match ($type) {
-            'bill_line' => $this->fromBillLine($id),
-            'cheque_line' => $this->fromChequeLine($id),
-            'journal_line' => $this->fromJournalLine($id),
+            'bill_line' => $this->fromBillLine($company, $id),
+            'cheque_line' => $this->fromChequeLine($company, $id),
+            'journal_line' => $this->fromJournalLine($company, $id),
             default => null,
         };
     }
@@ -43,11 +48,14 @@ class AssetSourcePrefiller
     /**
      * @return array<string, mixed>|null
      */
-    protected function fromBillLine(int $id): ?array
+    protected function fromBillLine(Company $company, int $id): ?array
     {
-        $line = BillLine::query()->with(['bill', 'account'])->find($id);
+        $line = BillLine::query()
+            ->whereHas('bill', fn ($q) => $q->where('company_id', $company->id))
+            ->with(['bill', 'account'])
+            ->find($id);
 
-        if (! $line || ! $this->isFixedAssetAccount($line->account_id)) {
+        if (! $line || ! $this->isFixedAssetAccount($company, $line->account_id)) {
             return null;
         }
 
@@ -65,11 +73,14 @@ class AssetSourcePrefiller
     /**
      * @return array<string, mixed>|null
      */
-    protected function fromChequeLine(int $id): ?array
+    protected function fromChequeLine(Company $company, int $id): ?array
     {
-        $line = ChequeLine::query()->with(['cheque', 'account'])->find($id);
+        $line = ChequeLine::query()
+            ->whereHas('cheque', fn ($q) => $q->where('company_id', $company->id))
+            ->with(['cheque', 'account'])
+            ->find($id);
 
-        if (! $line || ! $this->isFixedAssetAccount($line->account_id)) {
+        if (! $line || ! $this->isFixedAssetAccount($company, $line->account_id)) {
             return null;
         }
 
@@ -87,11 +98,14 @@ class AssetSourcePrefiller
     /**
      * @return array<string, mixed>|null
      */
-    protected function fromJournalLine(int $id): ?array
+    protected function fromJournalLine(Company $company, int $id): ?array
     {
-        $line = JournalLine::query()->with(['journalEntry', 'account'])->find($id);
+        $line = JournalLine::query()
+            ->whereHas('journalEntry', fn ($q) => $q->where('company_id', $company->id))
+            ->with(['journalEntry', 'account'])
+            ->find($id);
 
-        if (! $line || ! $this->isFixedAssetAccount($line->account_id)) {
+        if (! $line || ! $this->isFixedAssetAccount($company, $line->account_id)) {
             return null;
         }
 
@@ -106,13 +120,13 @@ class AssetSourcePrefiller
         ];
     }
 
-    protected function isFixedAssetAccount(?int $accountId): bool
+    protected function isFixedAssetAccount(Company $company, ?int $accountId): bool
     {
         if (! $accountId) {
             return false;
         }
 
-        $account = Account::query()->withoutGlobalScopes()->find($accountId);
+        $account = Account::query()->withoutGlobalScopes()->where('company_id', $company->id)->find($accountId);
 
         return $account && $account->subtype === AccountSubtype::FixedAsset;
     }

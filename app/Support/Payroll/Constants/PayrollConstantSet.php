@@ -190,6 +190,21 @@ final readonly class PayrollConstantSet
         return $this->federal['tax']['canada_employment_max_cents'];
     }
 
+    /**
+     * Whether a federal TD1 total claim is the basic personal amount alone
+     * (claim code 1): the BPA of this table or of any earlier loaded one.
+     *
+     * T4127 (122nd ed., Jan 2026), Chapter 2, Option 2: "Once the claim code has
+     * been established, the same code can be used every year. For example, if an
+     * employee was at claim code 1 in 2025, then that employee will remain at
+     * claim code 1 in 2026." A form claiming last year's basic amount is
+     * therefore a basic claim this year too, not a partial one.
+     */
+    public function isFederalBasicClaim(int $claimCents): bool
+    {
+        return in_array($claimCents, FederalConstants::basicPersonalAmountsOnOrBefore($this->payDate), true);
+    }
+
     // --- Provincial tax ----------------------------------------------------
 
     /**
@@ -208,6 +223,26 @@ final readonly class PayrollConstantSet
     public function provincialBpaCents(): int
     {
         return $this->provincial['bpa_cents'];
+    }
+
+    /**
+     * Whether a provincial TD1 (or Quebec TP-1015.3-V line 10) claim is the
+     * basic personal amount alone: the province's basic amount in this table or
+     * in any earlier loaded one, including a prorated mid-year amount. The
+     * same claim-code rule as {@see isFederalBasicClaim()}, plus:
+     *  - T4127 (123rd ed., Jul 2026), p.4, Newfoundland and Labrador: "If an
+     *    employee has submitted a TD1NL prior to July 1, 2026, with the lower
+     *    basic personal amount, employers do not need a new TD1NL to change it
+     *    to the prorated amount."
+     *  - Revenu Québec TP-1015.TI-V (2026-01), p.7: "If the individual did not
+     *    give you a copy of form TP-1015.3-V for the year, you must withhold
+     *    income tax ... using the deduction code for the previous year", and
+     *    p.11 note 2: a line 10 amount from another year is adjusted for the
+     *    current year's indexation.
+     */
+    public function isProvincialBasicClaim(int $claimCents): bool
+    {
+        return in_array($claimCents, ProvincialConstants::basicPersonalAmountsOnOrBefore($this->province, $this->payDate), true);
     }
 
     /**

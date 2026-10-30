@@ -3,6 +3,7 @@
 use App\Actions\Payroll\FinalizeSlipFiling;
 use App\Actions\Payroll\UnlockSlipFiling;
 use App\Enums\SlipType;
+use App\Exceptions\Payroll\Rl1ExportBlockedException;
 use App\Models\Company;
 use App\Models\PayrollSlipFiling;
 use App\Services\Reporting\CsvExporter;
@@ -10,6 +11,7 @@ use App\Services\Reporting\PdfExporter;
 use App\Services\Reporting\Rl1SlipCalculator;
 use App\Services\Reporting\Rl1XmlGenerator;
 use App\Support\Money;
+use Flux\Flux;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
@@ -63,6 +65,16 @@ new #[Title('RL-1 slips')] class extends Component {
             ?? app(Rl1SlipCalculator::class)->summary($this->company, $this->year);
     }
 
+    /**
+     * A filing finalized before the RL-1 carried boxes B.A, B.B and C: its
+     * snapshot keeps the single box B it was issued with, and no box C.
+     */
+    #[Computed]
+    public function legacyBoxes(): bool
+    {
+        return $this->filing !== null && ! array_key_exists('boxBA', (array) $this->summary);
+    }
+
     public function finalize(): void
     {
         app(FinalizeSlipFiling::class)->handle($this->company, SlipType::Rl1, $this->year);
@@ -83,7 +95,7 @@ new #[Title('RL-1 slips')] class extends Component {
 
     private function resetSnapshot(): void
     {
-        unset($this->filing, $this->slips, $this->summary);
+        unset($this->filing, $this->slips, $this->summary, $this->legacyBoxes);
     }
 
     public function money(int $cents): string
@@ -116,7 +128,13 @@ new #[Title('RL-1 slips')] class extends Component {
 
     public function exportXml()
     {
-        $xml = app(Rl1XmlGenerator::class)->generate($this->company, $this->year, $this->slips, $this->summary);
+        try {
+            $xml = app(Rl1XmlGenerator::class)->generate($this->company, $this->year, $this->slips, $this->summary);
+        } catch (Rl1ExportBlockedException $e) {
+            Flux::toast(variant: 'danger', text: $e->getMessage());
+
+            return null;
+        }
 
         return response()->streamDownload(
             fn () => print($xml),
@@ -127,15 +145,21 @@ new #[Title('RL-1 slips')] class extends Component {
 
     public function exportCsv()
     {
+        // A slip finalized before boxes B.A, B.B and C had its one box B: it
+        // goes in the B.A column, and B.B and C stay empty.
         $rows = collect($this->slips)->map(fn ($s) => [
             $s['name'], $s['sin_last4'] ? '•••• '.$s['sin_last4'] : '',
-            CsvExporter::cents($s['boxA']), CsvExporter::cents($s['boxB']), CsvExporter::cents($s['boxE']),
+            CsvExporter::cents($s['boxA']),
+            CsvExporter::cents($s['boxBA'] ?? $s['boxB'] ?? 0),
+            array_key_exists('boxBB', $s) ? CsvExporter::cents($s['boxBB']) : '',
+            array_key_exists('boxC', $s) ? CsvExporter::cents($s['boxC']) : '',
+            CsvExporter::cents($s['boxE']),
             CsvExporter::cents($s['boxG']), CsvExporter::cents($s['boxH']), CsvExporter::cents($s['boxI']),
         ]);
 
         return app(CsvExporter::class)->stream(
             'rl1-slips-'.$this->year.'.csv',
-            ['Employee', 'SIN', 'Box A', 'Box B', 'Box E', 'Box G', 'Box H', 'Box I'],
+            ['Employee', 'SIN', 'Box A', 'Box B.A', 'Box B.B', 'Box C', 'Box E', 'Box G', 'Box H', 'Box I'],
             $rows,
         );
     }
@@ -192,6 +216,12 @@ new #[Title('RL-1 slips')] class extends Component {
         </div>
     @endif
 
+    @if ($this->legacyBoxes)
+        <flux:callout icon="exclamation-triangle" variant="warning" class="mb-4" data-test="rl1-legacy-boxes-note">
+            {{ __('These slips were finalized before LineLedger split box B into boxes B.A and B.B and reported the Employment Insurance premiums in box C. They are shown as issued. Unlock and finalize them again to issue corrected slips; for slips already filed, Revenu Québec asks for amended slips (code A).') }}
+        </flux:callout>
+    @endif
+
     @php($s = $this->summary)
     <div class="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <div class="rounded-lg border border-border p-4">
@@ -207,8 +237,8 @@ new #[Title('RL-1 slips')] class extends Component {
             <div class="font-mono text-lg font-semibold">{{ $this->money($s['boxE']) }}</div>
         </div>
         <div class="rounded-lg border border-border p-4">
-            <div class="text-sm text-muted-foreground">{{ __('QPP + QPIP (Box B/H)') }}</div>
-            <div class="font-mono text-lg font-semibold">{{ $this->money($s['boxB'] + $s['boxH']) }}</div>
+            <div class="text-sm text-muted-foreground">{{ __('QPP + QPIP (boxes B.A, B.B and H)') }}</div>
+            <div class="font-mono text-lg font-semibold">{{ $this->money(($s['boxBA'] ?? $s['boxB'] ?? 0) + ($s['boxBB'] ?? 0) + $s['boxH']) }}</div>
         </div>
     </div>
 
@@ -218,7 +248,9 @@ new #[Title('RL-1 slips')] class extends Component {
                 <tr>
                     <th class="px-3 py-2 text-left">{{ __('Employee') }}</th>
                     <th class="px-3 py-2 text-right">{{ __('A Income') }}</th>
-                    <th class="px-3 py-2 text-right">{{ __('B QPP') }}</th>
+                    <th class="px-3 py-2 text-right">{{ __('B.A QPP') }}</th>
+                    <th class="px-3 py-2 text-right">{{ __('B.B QPP2') }}</th>
+                    <th class="px-3 py-2 text-right">{{ __('C EI') }}</th>
                     <th class="px-3 py-2 text-right">{{ __('E Quebec tax') }}</th>
                     <th class="px-3 py-2 text-right">{{ __('G QPP pens.') }}</th>
                     <th class="px-3 py-2 text-right">{{ __('H QPIP') }}</th>
@@ -231,7 +263,9 @@ new #[Title('RL-1 slips')] class extends Component {
                     <tr>
                         <td class="px-3 py-2 font-medium">{{ $slip['name'] }}</td>
                         <td class="px-3 py-2 text-right font-mono">{{ $this->money($slip['boxA']) }}</td>
-                        <td class="px-3 py-2 text-right font-mono">{{ $this->money($slip['boxB']) }}</td>
+                        <td class="px-3 py-2 text-right font-mono">{{ $this->money($slip['boxBA'] ?? $slip['boxB'] ?? 0) }}</td>
+                        <td class="px-3 py-2 text-right font-mono">{{ array_key_exists('boxBB', $slip) ? $this->money($slip['boxBB']) : '—' }}</td>
+                        <td class="px-3 py-2 text-right font-mono">{{ array_key_exists('boxC', $slip) ? $this->money($slip['boxC']) : '—' }}</td>
                         <td class="px-3 py-2 text-right font-mono">{{ $this->money($slip['boxE']) }}</td>
                         <td class="px-3 py-2 text-right font-mono">{{ $this->money($slip['boxG']) }}</td>
                         <td class="px-3 py-2 text-right font-mono">{{ $this->money($slip['boxH']) }}</td>
@@ -241,7 +275,7 @@ new #[Title('RL-1 slips')] class extends Component {
                         </td>
                     </tr>
                 @empty
-                    <tr><td colspan="8" class="px-3 py-8 text-center text-muted-foreground">{{ __('No posted Quebec payroll for :year.', ['year' => $this->year]) }}</td></tr>
+                    <tr><td colspan="10" class="px-3 py-8 text-center text-muted-foreground">{{ __('No posted Quebec payroll for :year.', ['year' => $this->year]) }}</td></tr>
                 @endforelse
             </tbody>
         </table>

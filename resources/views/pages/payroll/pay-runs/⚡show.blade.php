@@ -3,6 +3,7 @@
 use App\Enums\AccountSubtype;
 use App\Enums\PayrollChequeStatus;
 use App\Enums\PayRunStatus;
+use App\Exceptions\Payroll\MissingPayrollConstantsException;
 use App\Livewire\Attributes\GuardsEditLock;
 use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\Account;
@@ -15,8 +16,10 @@ use App\Services\Payroll\CalculatePayRun;
 use App\Services\Posting\PayrollChequePoster;
 use App\Services\Posting\PayRunPoster;
 use App\Support\Money;
+use App\Support\Payroll\Constants\PayrollConstantsRepository;
 use Flux\Flux;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
@@ -79,11 +82,37 @@ new #[Title('Pay run')] class extends Component {
         return $this->payRun->cheques()->with('payee')->orderBy('cheque_no')->get();
     }
 
+    /**
+     * Why this unposted run can't be calculated or posted, when no loaded tax
+     * table covers its pay date for one of its employees' provinces; else null.
+     */
+    #[Computed]
+    public function missingTablesMessage(): ?string
+    {
+        if (! $this->payRun->status->isEditable()) {
+            return null;
+        }
+
+        foreach ($this->payRun->lines->pluck('province_of_employment')->filter()->unique() as $province) {
+            try {
+                app(PayrollConstantsRepository::class)->resolve((string) $province, $this->payRun->pay_date);
+            } catch (MissingPayrollConstantsException $e) {
+                return $e->userMessage();
+            }
+        }
+
+        return null;
+    }
+
     #[GuardsEditLock]
     public function post(PayRunPoster $poster): void
     {
         try {
             $poster->post($this->payRun);
+        } catch (MissingPayrollConstantsException $e) {
+            Flux::toast(variant: 'danger', text: $e->userMessage());
+
+            return;
         } catch (\Throwable $e) {
             Flux::toast(variant: 'danger', text: $e->getMessage());
 
@@ -99,7 +128,7 @@ new #[Title('Pay run')] class extends Component {
     {
         $this->validate([
             'startingChequeNumber' => ['required', 'integer', 'min:1'],
-            'bankAccountId' => ['required', 'integer', 'exists:accounts,id'],
+            'bankAccountId' => ['required', 'integer', Rule::exists('accounts', 'id')->where('company_id', $this->company->id)->where('subtype', AccountSubtype::Bank->value)],
         ]);
 
         try {
@@ -136,7 +165,16 @@ new #[Title('Pay run')] class extends Component {
     {
         abort_unless($this->payRun->status->isEditable(), 403);
 
-        $calculate->calculate($this->payRun);
+        try {
+            $calculate->calculate($this->payRun);
+        } catch (MissingPayrollConstantsException $e) {
+            // The calculation rolled back; drop anything it left on the loaded models.
+            $this->payRun->refresh()->load('lines.contact');
+            Flux::toast(variant: 'danger', text: $e->userMessage());
+
+            return;
+        }
+
         $this->payRun->refresh()->load('lines.contact');
 
         Flux::toast(variant: 'success', text: __('Pay run recalculated.'));
@@ -280,6 +318,13 @@ new #[Title('Pay run')] class extends Component {
             @endif
         </div>
     </div>
+
+    @if ($this->missingTablesMessage)
+        <flux:callout variant="warning" icon="exclamation-triangle" class="mb-6" data-test="pay-run-missing-tables">
+            <flux:callout.heading>{{ __('This pay run can’t be calculated or posted') }}</flux:callout.heading>
+            <flux:callout.text>{{ $this->missingTablesMessage }}</flux:callout.text>
+        </flux:callout>
+    @endif
 
     {{-- Totals --}}
     <div class="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">

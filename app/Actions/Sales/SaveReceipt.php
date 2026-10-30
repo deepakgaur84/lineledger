@@ -27,6 +27,11 @@ use Illuminate\Support\Facades\DB;
  * payment that has been refunded can't change customer or drop its unapplied
  * credit below what was refunded from it.
  *
+ * Every application is checked before anything is written
+ * (ReceiptPoster::ensureApplicationsPayable()): it must be to a posted invoice
+ * of this organization and this customer, for no more than the invoice still
+ * owes. What the receipt doesn't apply stays on account as customer credit.
+ *
  * Expected $data shape (cents-based, framework-agnostic):
  *   contact_id:            int
  *   receipt_no:            ?string  (null → auto-generated)
@@ -72,20 +77,28 @@ final class SaveReceipt
 
             $previousInvoiceIds = [];
             $previousContactId = null;
+            $existing = $receipt && $receipt->exists ? $receipt : null;
 
-            if ($receipt && $receipt->exists) {
+            if ($existing) {
                 // Lock the row a refund of this payment locks first, so an edit and
                 // a new refund can't both spend the same unapplied credit.
-                CustomerReceipt::query()->lockForUpdate()->find($receipt->id);
+                CustomerReceipt::query()->lockForUpdate()->find($existing->id);
 
-                if ($receipt->isRefund()) {
+                if ($existing->isRefund()) {
                     throw new PostingValidationException(__('A refund can\'t be edited. Remove it and record it again.'));
                 }
 
-                if ((int) $data['contact_id'] !== (int) $receipt->contact_id && $receipt->hasLiveRefunds()) {
+                if ((int) $data['contact_id'] !== (int) $existing->contact_id && $existing->hasLiveRefunds()) {
                     throw new PostingValidationException(__('This payment has been refunded, so it can\'t move to another customer. Remove its refunds first.'));
                 }
+            }
 
+            // Before anything is written: each application must be to a posted
+            // invoice of this organization and this customer, within what it
+            // still owes — whatever the form, the API or any other caller sent.
+            $this->poster->ensureApplicationsPayable((int) $company->id, (int) $data['contact_id'], $data['applications'] ?? [], $existing);
+
+            if ($receipt && $receipt->exists) {
                 $previousInvoiceIds = $receipt->applications()->pluck('invoice_id')->map(fn ($id) => (int) $id)->all();
                 $previousContactId = (int) $receipt->contact_id;
                 $receipt->update($header);

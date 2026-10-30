@@ -43,42 +43,6 @@ parameters:
 			path: app/Actions/Accounting/RecognizeDeferredContribution.php
 
 		-
-			message: '#^Access to an undefined property App\\Models\\JournalLine\:\:\$class_id\.$#'
-			identifier: property.notFound
-			count: 1
-			path: app/Actions/Accounting/ReverseJournalEntry.php
-
-		-
-			message: '#^Access to an undefined property App\\Models\\JournalLine\:\:\$location_id\.$#'
-			identifier: property.notFound
-			count: 1
-			path: app/Actions/Accounting/ReverseJournalEntry.php
-
-		-
-			message: '#^Using nullsafe property access "\?\-\>amount_cents" on left side of \?\? is unnecessary\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Actions/Banking/SaveDeposit.php
-
-		-
-			message: '#^Using nullsafe property access "\?\-\>receipt_no" on left side of \?\? is unnecessary\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Actions/Banking/SaveDeposit.php
-
-		-
-			message: '#^Using nullsafe property access "\?\-\>sales_receipt_no" on left side of \?\? is unnecessary\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Actions/Banking/SaveDeposit.php
-
-		-
-			message: '#^Using nullsafe property access "\?\-\>total_cents" on left side of \?\? is unnecessary\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Actions/Banking/SaveDeposit.php
-
-		-
 			message: '#^Strict comparison using \!\=\= between mixed and null will always evaluate to true\.$#'
 			identifier: notIdentical.alwaysTrue
 			count: 1
@@ -101,18 +65,6 @@ parameters:
 			identifier: return.type
 			count: 1
 			path: app/Actions/Fortify/ResetUserPassword.php
-
-		-
-			message: '#^Cannot access property \$value on string\.$#'
-			identifier: property.nonObject
-			count: 1
-			path: app/Actions/Fundraising/SaveDonation.php
-
-		-
-			message: '#^Cannot call method toDateString\(\) on string\.$#'
-			identifier: method.nonObject
-			count: 1
-			path: app/Actions/Fundraising/SaveDonation.php
 
 		-
 			message: '#^Cannot access property \$value on string\.$#'
@@ -623,12 +575,6 @@ parameters:
 			identifier: ternary.alwaysFalse
 			count: 1
 			path: app/Http/Controllers/Bills/PrintBillController.php
-
-		-
-			message: '#^Cannot access property \$value on string\.$#'
-			identifier: property.nonObject
-			count: 1
-			path: app/Http/Controllers/Charity/PrintDonationReceiptController.php
 
 		-
 			message: '#^Parameter \#2 \$intent of method App\\Http\\Controllers\\Stripe\\WebhookController\:\:handleSucceeded\(\) expects Stripe\\PaymentIntent, Stripe\\StripeObject given\.$#'
@@ -1171,36 +1117,6 @@ parameters:
 			path: app/Models/DocumentFolder.php
 
 		-
-			message: '#^Strict comparison using \=\=\= between string and App\\Enums\\DonationStatus\:\:Draft will always evaluate to false\.$#'
-			identifier: identical.alwaysFalse
-			count: 1
-			path: app/Models/Donation.php
-
-		-
-			message: '#^Strict comparison using \=\=\= between string and App\\Enums\\DonationStatus\:\:Posted will always evaluate to false\.$#'
-			identifier: identical.alwaysFalse
-			count: 1
-			path: app/Models/Donation.php
-
-		-
-			message: '#^Strict comparison using \=\=\= between string and App\\Enums\\DonationReceiptStatus\:\:Draft will always evaluate to false\.$#'
-			identifier: identical.alwaysFalse
-			count: 1
-			path: app/Models/DonationReceipt.php
-
-		-
-			message: '#^Strict comparison using \=\=\= between string and App\\Enums\\DonationReceiptStatus\:\:Issued will always evaluate to false\.$#'
-			identifier: identical.alwaysFalse
-			count: 1
-			path: app/Models/DonationReceipt.php
-
-		-
-			message: '#^Strict comparison using \=\=\= between string and App\\Enums\\GiftType\:\:InKind will always evaluate to false\.$#'
-			identifier: identical.alwaysFalse
-			count: 1
-			path: app/Models/DonationReceipt.php
-
-		-
 			message: '#^Cannot call method isExpirable\(\) on string\.$#'
 			identifier: method.nonObject
 			count: 1
@@ -1615,32 +1531,8 @@ parameters:
 			path: app/Services/Banking/Import/Support/PdfTextStructurer.php
 
 		-
-			message: '#^Cannot access property \$value on string\.$#'
-			identifier: property.nonObject
-			count: 2
-			path: app/Services/Charity/DonationReceiptIssuer.php
-
-		-
-			message: '#^Cannot call method toDateString\(\) on string\.$#'
-			identifier: method.nonObject
-			count: 3
-			path: app/Services/Charity/DonationReceiptIssuer.php
-
-		-
-			message: '#^Strict comparison using \=\=\= between string and App\\Enums\\DonationStatus\:\:Void will always evaluate to false\.$#'
-			identifier: identical.alwaysFalse
-			count: 1
-			path: app/Services/Fundraising/DonationPoster.php
-
-		-
 			message: '#^Cannot call method label\(\) on string\.$#'
 			identifier: method.nonObject
-			count: 1
-			path: app/Services/Fundraising/FundraisingReportCalculator.php
-
-		-
-			message: '#^Method App\\Services\\Fundraising\\FundraisingReportCalculator\:\:donationsByDonor\(\) should return Illuminate\\Support\\Collection\<int, array\{donor\: string, count\: int, total_cents\: int\}\> but returns Illuminate\\Support\\Collection\<int, array\{donor\: string, count\: int\<0, max\>, total_cents\: int\}\>\.$#'
-			identifier: return.type
 			count: 1
 			path: app/Services/Fundraising/FundraisingReportCalculator.php
 
@@ -2257,18 +2149,6 @@ parameters:
 			path: app/Services/Posting/InvoiceReconciler.php
 
 		-
-			message: '#^Access to an undefined property App\\Models\\JournalLine\:\:\$class_id\.$#'
-			identifier: property.notFound
-			count: 1
-			path: app/Services/Posting/JournalPoster.php
-
-		-
-			message: '#^Access to an undefined property App\\Models\\JournalLine\:\:\$location_id\.$#'
-			identifier: property.notFound
-			count: 1
-			path: app/Services/Posting/JournalPoster.php
-
-		-
 			message: '#^Cannot access property \$value on string\.$#'
 			identifier: property.nonObject
 			count: 1
@@ -2879,12 +2759,6 @@ parameters:
 			identifier: nullsafe.neverNull
 			count: 2
 			path: app/Services/Reporting/SalesPurchaseReportBuilder.php
-
-		-
-			message: '#^Using nullsafe property access "\?\-\>first_name" on left side of \?\? is unnecessary\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Services/Reporting/T4XmlGenerator.php
 
 		-
 			message: '#^Cannot call method label\(\) on string\.$#'

@@ -2,12 +2,14 @@
 
 use App\Enums\JurisdictionCapability;
 use App\Enums\RoeReason;
+use App\Exceptions\Payroll\RoeExportBlockedException;
 use App\Models\Company;
 use App\Models\Contact;
 use App\Services\Reporting\PdfExporter;
 use App\Services\Reporting\RoeCalculator;
 use App\Services\Reporting\RoeXmlGenerator;
 use App\Support\Money;
+use Flux\Flux;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
@@ -91,11 +93,19 @@ new #[Title('Record of Employment')] class extends Component {
 
         $employee = Contact::query()->whereKey($this->contactId)->whereHas('payrollProfile')->firstOrFail();
         $roe = app(RoeCalculator::class)->build($this->company, $employee, RoeReason::from($this->reason), $this->lastDay);
-        $xml = app(RoeXmlGenerator::class)->generate($this->company, $employee, $roe);
 
+        try {
+            $xml = app(RoeXmlGenerator::class)->generate($this->company, $employee, $roe);
+        } catch (RoeExportBlockedException $e) {
+            Flux::toast(variant: 'danger', text: $e->getMessage());
+
+            return null;
+        }
+
+        // ROE Web's payroll extract upload takes files named *.BLK.
         return response()->streamDownload(
             fn () => print($xml),
-            'roe-'.$this->contactId.'.xml',
+            'roe-'.$this->contactId.'.blk',
             ['Content-Type' => 'application/xml'],
         );
     }
@@ -170,7 +180,7 @@ new #[Title('Record of Employment')] class extends Component {
     @endif
 
     <div class="mt-4 text-sm text-muted-foreground">
-        <p>{{ __('Transcribe these figures into Service Canada’s ROE Web form, or import the ROE Web XML. Electronic submission is not available here.') }}</p>
+        <p>{{ __('Transcribe these figures into Service Canada’s ROE Web form, or upload the ROE Web XML there with Upload a Payroll Extract File. The ROE arrives in ROE Web as a draft for you to check and submit; LineLedger does not submit it.') }}</p>
         <p class="mt-1">{{ __('Paper ROEs are serial-numbered government stock and must never be reproduced — Service Canada assigns the serial number when the ROE is filed through ROE Web.') }}</p>
     </div>
 </section>

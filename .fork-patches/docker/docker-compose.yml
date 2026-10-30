@@ -25,6 +25,9 @@ services:
       # `docker compose exec app php artisan app:upgrade` by hand.
       MIGRATE_ON_BOOT: ${MIGRATE_ON_BOOT:-true}
     ports:
+      # Behind your own reverse proxy, set TRUSTED_PROXIES in .env to the
+      # address it connects from, and HTTP_PORT=127.0.0.1:8080 so only it can
+      # reach this port (see .env.example).
       - "${HTTP_PORT:-8080}:8080"
       # For direct exposure with automatic HTTPS, set SERVER_NAME to your
       # domain in .env and uncomment:

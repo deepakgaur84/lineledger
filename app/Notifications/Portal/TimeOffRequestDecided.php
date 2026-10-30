@@ -5,6 +5,7 @@ namespace App\Notifications\Portal;
 use App\Enums\TimeOffRequestStatus;
 use App\Models\Company;
 use App\Models\TimeOffRequest;
+use App\Support\Http\CanonicalUrl;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -58,6 +59,6 @@ class TimeOffRequestDecided extends Notification implements ShouldQueue
                 'outcome' => $outcome,
             ]))
             ->when($note, fn (MailMessage $m) => $m->line(__('Comment: ":note"', ['note' => $note])))
-            ->action(__('View in your portal'), route('employee-portal.time-off', ['company' => $this->company->slug]));
+            ->action(__('View in your portal'), CanonicalUrl::route('employee-portal.time-off', ['company' => $this->company->slug]));
     }
 }

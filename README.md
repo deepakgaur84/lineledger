@@ -14,11 +14,13 @@ the GL.
 
 ## Status
 
-LineLedger is at **1.3.1**, released October 24, 2026, a patch that stops a new site
-admin's "Set up email" link from dead-ending at two-factor authentication. It follows
-1.3.0 (October 22), which added a one-click install on a DigitalOcean Droplet and email
-settings you set up from inside the app, 1.2.2 (also October 22, a one-command deploy
-to DigitalOcean App Platform), 1.2.1
+LineLedger is at **1.4.0**, released October 29, 2026, which adds statutory accounts
+for UK companies and an Airy invoice layout, and fixes security, foreign-currency,
+payroll year-end filing and restore problems. It follows 1.3.1 (October 24), a patch
+that stops a new site admin's "Set up email" link from dead-ending at two-factor
+authentication, 1.3.0 (October 22), which added a one-click install on a DigitalOcean
+Droplet and email settings you set up from inside the app, 1.2.2 (also October 22, a
+one-command deploy to DigitalOcean App Platform), 1.2.1
 (October 19) and 1.2.0 (October 18), which added French and United Kingdom
 organizations; 1.1.0 shipped September 18 and 1.0.0 August 15, 2026 (see
 [`CHANGELOG.md`](CHANGELOG.md)). Running an existing install? Read
@@ -53,7 +55,7 @@ Pick the route that fits; each links to its full guide further down.
 
    ```bash
    #!/bin/bash
-   curl -fsSL https://raw.githubusercontent.com/lineledger/lineledger/v1.3.1/docker/digitalocean/droplet/install.sh | bash
+   curl -fsSL https://raw.githubusercontent.com/lineledger/lineledger/v1.4.0/docker/digitalocean/droplet/install.sh | bash
    ```
 
 2. A few minutes after it boots, open `http://<droplet-ip>` and register. The first
@@ -235,7 +237,7 @@ database restored without it can't read them. Upgrading later? Read
 | Layer | Choice |
 | --- | --- |
 | Runtime | PHP 8.5+ with `intl` |
-| Framework | Laravel 13 (`laravel/framework` 13.37 as of 1.3.1) |
+| Framework | Laravel 13 (`laravel/framework` 13.37 as of 1.4.0) |
 | UI | Livewire 4 + Flux UI Free + Tailwind CSS 4 (Vite) |
 | Charts | Chart.js 4 (`chart.js`) for the dashboard and report chart panels (`resources/js/charts.js`) |
 | Auth | Laravel Fortify + passkeys (WebAuthn, configured in `config/fortify.php`); OAuth2 via Laravel Passport (MCP); optional Cloudflare Turnstile on the auth forms (`config/turnstile.php`) |
@@ -429,11 +431,13 @@ unlock specific subsystems. Set the same keys in production via Forge → Site �
 | Key | Purpose | Local | Production |
 | --- | --- | --- | --- |
 | `APP_NAME` | App name shown in UI & emails | `LineLedger` | `LineLedger` |
-| `APP_URL` | Absolute base URL (links, passkey RP ID, Stripe redirects) | `http://localhost:8000` | `https://books.lineledger.ca` |
+| `APP_URL` | Absolute base URL (links, passkey RP ID, Stripe redirects). Every link in an email is built on it, and its host is the one the app answers on: outside local development, a request for any other host gets **400 Bad Request** unless it's in `TRUSTED_HOSTS` | `http://localhost:8000` | `https://books.lineledger.ca` |
+| `TRUSTED_HOSTS` | Other host names this installation answers on, comma-separated (a second domain, App Platform's `.ondigitalocean.app` address once a custom domain is primary). Subdomains of `APP_URL` aren't included. The project's sibling sites in `APP_URL_CA` / `_US` / `_GB` are separate installations, so they don't belong here | empty | empty, or your extra host names |
+| `TRUSTED_PROXIES` | The load balancers or reverse proxies whose `X-Forwarded-For` / `-Proto` / `-Port` headers count, as comma-separated IPs or CIDR ranges, or `*` where the app can only be reached through the platform's balancer. From anyone else those headers are ignored and the connecting peer is the client, so nobody can pick the IP the sign-in throttle and the security log see. `X-Forwarded-Host` is never honoured, so a proxy must pass the `Host` header through. **Behind a balancer, CDN or proxy, set it**, or every visitor looks like the proxy and HTTPS goes undetected | empty | empty when nginx serves the site itself; the balancer's address, [Cloudflare's ranges](https://www.cloudflare.com/ips/) behind its proxy, `*` on App Platform |
 | `APP_KEY` | Encryption key | `php artisan key:generate` | generated once, kept secret |
 | `APP_LOCALE` | Language (`en` / `fr`) of signed-out pages, and of documents when neither the customer nor the organization has one. Each user, organization and customer can choose their own in the app | `en` | `en` |
 | `APP_REGION` | Country this deployment serves (`CA` / `US` / `GB`). Picks which marketing site the footer's legal links point at. Leave **unset in production** to derive it from the request host (`.ca` → CA, `.uk` → GB, anything else → US); set it explicitly on host-agnostic environments like local dev | `CA` (`.env.example` ships it blank) | unset (derived from host) |
-| `APP_URL_CA` / `APP_URL_US` / `APP_URL_GB` | The project's sibling app deployments. The guest country-switcher banner offers a visitor the other ones, and **renders only on these hosts** — so a self-hosted instance on its own domain never shows it, whatever `APP_REGION` says. An empty URL leaves that twin out of the banner | `https://books.lineledger.ca` / `https://books.lineledger.com` / empty | your sibling app hosts |
+| `APP_URL_CA` / `APP_URL_US` / `APP_URL_GB` | Sibling deployments, for an operator who runs one per country. The guest country-switcher banner offers a visitor the other ones, and **renders only on these hosts** — so an instance whose host isn't listed never shows it, whatever `APP_REGION` says. An empty URL leaves that country out of the banner | empty | your sibling app hosts |
 | `MARKETING_URL_CA` / `MARKETING_URL_US` / `MARKETING_URL_GB` | Marketing sites hosting the legal documents linked from the footer, chosen by region. A region left empty links to the US site | `https://lineledger.ca` / `https://lineledger.com` / empty | your marketing sites |
 | `BRAND_LOGO` / `BRAND_LOGO_DARK` | The mark on the sign-in, registration and onboarding screens, and in the sidebar until an organization uploads its own. Any path the browser can fetch: a file under `public/`, a `/storage/…` path (which survives a deploy), or an absolute URL. The dark variant is optional — unset, the one logo serves both themes. The name beside it is `APP_NAME` | `/logo/line-ledger-logo.png` / unset | your logo |
 | `BRAND_FOOTER_OWNER` | Who operates this deployment — the name in the footer's copyright line | `Local Foundry Inc.` | your company |
@@ -500,13 +504,18 @@ you need the full set of knobs; the keys below are the ones that turn the featur
 | **Bot challenge on auth forms** | `TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET_KEY` (see the [Environment](#environment) table); `TURNSTILE_ENABLED=false` kills it regardless of keys | `config/turnstile.php` |
 | **Content-Security-Policy** | Always emitted by `SecurityHeaders`; `CSP_MODE` picks `report-only` (default — observe, don't block), `enforce`, or `off` (the escape hatch for a self-host with customized assets). `CSP_REPORTING` / `CSP_REPORT_SAMPLE` control the `POST /csp-report` violation log in `storage/logs/csp.log` | `config/security.php` |
 | **Cheque print alignment** | No env vars. `config/cheque.php` holds the Intuit voucher-stock grid — every field's `[x, y]` baseline, font sizes, the `Ymd` date comb, the payee address block and the voucher columns — plus `offset_x` / `offset_y` to nudge the whole page for a printer. It is a config file, so a change needs `php artisan config:cache` (or a redeploy) to take | `config/cheque.php` |
-| **Security-alert thresholds** | `SECURITY_ALERT_WINDOW_MINUTES`, `SECURITY_ALERT_FAILED_LOGIN_THRESHOLD`, `SECURITY_ALERT_API_KEY_REVOCATION_THRESHOLD` (defaults 60 / 10 / 5) | `config/services.php` |
+| **Security-alert thresholds** | `SECURITY_ALERT_WINDOW_MINUTES`, `SECURITY_ALERT_FAILED_LOGIN_THRESHOLD` (counted per IP and, separately, per email address tried), `SECURITY_ALERT_API_KEY_REVOCATION_THRESHOLD` (defaults 60 / 10 / 5) | `config/services.php` |
 
-> **Filing payroll slips needs your transmitter identity.** The T4 / T4A XML carries a
-> CRA transmitter number and the RL-1 XML carries Revenu Québec preparer numbers. The
-> defaults are **placeholders** (`MM000000`, `NP000000`) that CRA and RQ will reject —
-> set `CRA_TRANSMITTER_NUMBER`, `CRA_TRANSMITTER_TYPE`, `CRA_TRANSMITTER_LANGUAGE`,
-> and (for Quebec) `RQ_TRANSMITTER_NUMBER`, `RQ_PREPARER_NUMBER`,
+> **Filing T4 / T4A slips needs each organization's payroll account.** The CRA XML is
+> filed under the payroll (RP) account, payroll contact and dental benefits code (T4
+> box 45) set in **Settings → Payroll**, and the download is refused until they are
+> set. The CRA's 2027 T619 has no transmitter number, so `CRA_TRANSMITTER_NUMBER` and
+> `CRA_TRANSMITTER_TYPE` are no longer read; `CRA_TRANSMITTER_LANGUAGE` (`E` or `F`)
+> only overrides the organization's language.
+>
+> **Filing RL-1 slips needs your transmitter identity.** The RL-1 XML carries Revenu
+> Québec preparer numbers. The defaults are **placeholders** (`NP000000`) that RQ will
+> reject — set `RQ_TRANSMITTER_NUMBER`, `RQ_PREPARER_NUMBER`,
 > `RQ_AUTHORIZATION_NUMBER`, `RQ_RL1_SLIP_TYPE` before you file. See
 > `config/payroll.php`.
 
@@ -521,7 +530,7 @@ long-running `schedule:work` process (the Docker `scheduler` container):
 | `payroll:accrue-time-off` | daily 01:00 | Accrue time-off balances per each organization's policies |
 | `recurring:generate` | daily 02:00 | Generate due recurring invoices/bills/journal entries as **drafts** |
 | `depreciation:generate` | daily 02:30 | Draft the period's depreciation entries for due fixed assets |
-| `integrity:check` | daily 04:00 | Five checks per organization — audit hash chain, double-entry balance, account-balance cache, invoice/bill paid caches, and tax on control-account cheque lines; email ops on failure |
+| `integrity:check` | daily 04:00 | Six checks per organization — audit hash chain, double-entry balance, account-balance cache, invoice/bill paid caches, tax on control-account cheque lines, and foreign-currency units a void left behind; email ops on failure |
 | `insights:generate` | daily 05:00 | Compute each organization's daily "Did you know?" dashboard insight (one queued job per organization; idempotent per day) |
 | `rates:fetch` | daily 06:00 | Pull the day's FX rates (multi-currency) |
 | `reports:send-scheduled` | daily 07:00 | Email memorized reports on their schedules |
@@ -550,9 +559,9 @@ Not scheduled — run these by hand when you need them:
 
 | Command | Does |
 | --- | --- |
-| `app:upgrade [--dry-run] [--verify] [--company=]` | **The upgrade command.** Runs pending migrations, then the post-upgrade data steps a release needs (`banking:backfill-line-memos` and `banking:backfill-reconciliation-stamps`), and with `--verify` finishes with `integrity:check` (without alert emails). `--dry-run` reports what would run; `--company=` scopes the post-migration steps to one organization. The Docker entrypoint runs it on every boot unless `MIGRATE_ON_BOOT=false`, and the Forge deploy script calls it in place of `migrate --force`. See [`UPGRADING.md`](UPGRADING.md). |
+| `app:upgrade [--dry-run] [--verify] [--company=]` | **The upgrade command.** Runs pending migrations, then the post-upgrade data steps a release needs (`banking:backfill-line-memos`, `banking:backfill-reconciliation-stamps`, `backup:repair-encrypted-columns` and `currency:backfill-reversal-memos`), and with `--verify` finishes with `integrity:check` (without alert emails). `--dry-run` reports what would run; `--company=` scopes the post-migration steps to one organization. The Docker entrypoint runs it on every boot unless `MIGRATE_ON_BOOT=false`, and the Forge deploy script calls it in place of `migrate --force`. See [`UPGRADING.md`](UPGRADING.md). |
 | `audit:verify {company?} [--full] [--no-alert]` | Verify the accounting audit-log **hash chain**; checks one organization, or all when omitted. A normal run resumes from the last saved checkpoint — pass `--full` to re-verify from genesis when you suspect tampering; `--no-alert` reports without logging or emailing. (Also runs nightly as part of `integrity:check`.) |
-| `integrity:check {company?} [--fix] [--no-alert]` | The nightly reconciliation check, on demand: hash chain, double-entry balance, account-balance cache, invoice/bill paid caches, and tax on control-account cheque lines. `--fix` recomputes drifted account-balance **and** document paid caches in place (the cheque-tax check is report-only: open the cheque and save it); `--no-alert` reports without emailing. |
+| `integrity:check {company?} [--fix] [--no-alert]` | The nightly reconciliation check, on demand: hash chain, double-entry balance, account-balance cache, invoice/bill paid caches, tax on control-account cheque lines, and voids that leave foreign-currency units behind. `--fix` recomputes drifted account-balance **and** document paid caches in place (the cheque-tax check is report-only: open the cheque and save it; so is the void check: run `currency:backfill-reversal-memos`); `--no-alert` reports without emailing. |
 | `ops:monitor-failed-jobs [--window=] [--no-alert]` | Run the hourly failed-jobs digest by hand over a custom look-back window (minutes). |
 | `backup:export --company=<id> [--sync]` | Produce a ZIP backup of one organization on the configured backup disk; `--sync` runs in-process so exceptions surface in the shell (handy for smoke tests). |
 | `backup:import <file> --user=<id> [--sync] [--dry-run]` | Restore a backup ZIP into a **new** organization owned by the given user. `--dry-run` inspects the bundle without writing. |
@@ -563,6 +572,8 @@ Not scheduled — run these by hand when you need them:
 | `proof:generate {test?} [--per-year=]` | Rebuild the public `/verification` proofs — all three scenarios, or `test-1` / `test-2` / `test-3`. See [Verification](#verification). |
 | `banking:backfill-line-memos {company?} [--dry-run]` | Append each posted document's own memo to its bank journal line, so the bank register reads "Deposit: August rent" instead of a bare "Deposit"; wording only, amounts untouched. Idempotent. `app:upgrade` runs it. |
 | `banking:backfill-reconciliation-stamps {company?} [--dry-run]` | Un-clear the service-charge and interest lines a completed reconciliation replaced or left unticked, so the register's cleared balance matches the reconciliation; reconciliations whose ticked lines no longer line up (e.g. after a restore) are skipped and listed. `app:upgrade` runs it. |
+| `backup:repair-encrypted-columns {company?} [--dry-run]` | Encrypt, with this server's key, the employee SINs that a restore made before restores encrypted them stored unencrypted, so they read back exactly as they were stored. Values that are already encrypted are never touched; SINs that none of this server's keys decrypt (a database restored under another `APP_KEY`) are counted and reported per organization, not changed, and have to be entered again. Covers every encrypted column a backup carries, which today is only the SIN. Idempotent. `app:upgrade` runs it. |
+| `currency:backfill-reversal-memos {company?} [--dry-run]` | Copy each original line's foreign-currency amount and rate onto the void and Reverse reversal lines written without it, so a voided foreign document leaves no foreign units for revaluation to find, then re-open the invoices and bills Close settled balance had closed against a since-voided credit. Home amounts untouched; reversals edited since are skipped and listed. Idempotent. `app:upgrade` runs it. |
 | `payroll:verify-slip-templates {year?}` | Verify the official T4 / T4A / RL-1 PDF templates still import, map, and render. Run it alongside the two `payroll:verify-*` commands after a year-end update. |
 
 Two older one-off data backfills also ship for upgrading data from before 1.0.0 and
@@ -633,7 +644,9 @@ them into `PayrollVerificationDataset`).
 
 `PayrollConstantsRepository` **refuses** to compute for a date or province with no
 loaded table — the pay-run UI blocks payroll rather than withhold wrong amounts —
-so a missing update fails loudly instead of quietly producing bad numbers.
+so a missing update fails loudly instead of quietly producing bad numbers. A table
+covers pay dates until the next one and never past December 31 of its own year, so
+from January 1 every pay run is refused until that year's tables are appended.
 
 ## Testing
 
@@ -703,7 +716,7 @@ No clone needed — fetch the compose bundle for the release, configure, and sta
 
 ```bash
 mkdir lineledger && cd lineledger
-base=https://raw.githubusercontent.com/lineledger/lineledger/v1.3.1/docker
+base=https://raw.githubusercontent.com/lineledger/lineledger/v1.4.0/docker
 curl -fsSLO "$base/docker-compose.yml"
 curl -fsSL  "$base/.env.example" -o .env
 curl -fsSLO "$base/backup.sh"
@@ -718,7 +731,7 @@ docker compose run --rm --no-deps app php artisan key:generate --show
 docker compose up -d
 ```
 
-Fetch from the tag you are deploying (`v1.3.1` above), not `main` — the compose
+Fetch from the tag you are deploying (`v1.4.0` above), not `main` — the compose
 file, entrypoint and scripts on `main` may already describe the next release.
 
 **Set up mail before anyone else registers.** Email verification is enforced: a new
@@ -756,21 +769,22 @@ Release notes and anything a specific version needs are in
 
 ```bash
 ./backup.sh                                # 1. DB dump + storage volume + .env into ./backups
-# 2. in .env, pin the release:  LINELEDGER_VERSION=1.3.1
+# 2. in .env, pin the release:  LINELEDGER_VERSION=1.4.0
 docker compose pull && docker compose up -d   # 3. new image; app:upgrade runs on boot
 docker compose exec app php artisan app:upgrade --verify   # 4. confirm, and prove the books
 ```
 
 The app container's entrypoint runs `php artisan app:upgrade` on every boot —
 pending migrations, then the post-upgrade data steps the releases ship (since 1.1.0,
-the two `banking:backfill-*` commands; 1.2.0 through 1.3.1 add none) — and the workers wait for it to become
+the two `banking:backfill-*` commands; 1.2.0 through 1.3.1 add none; 1.4.0 adds
+`backup:repair-encrypted-columns` and `currency:backfill-reversal-memos`) — and the workers wait for it to become
 healthy. Set `MIGRATE_ON_BOOT=false` in `.env` if you would rather the container
 boot on the old schema and run `docker compose exec app php artisan app:upgrade`
 yourself once the backup is confirmed. Step 4 is idempotent: with nothing left to
 migrate it just runs `integrity:check` and exits non-zero if the ledger doesn't
 reconcile, which is the moment to reach for `restore.sh`.
 
-Image tags: `1.3.1` (exact release), `1.3` (moves with patch releases on the 1.3
+Image tags: `1.4.0` (exact release), `1.4` (moves with patch releases on the 1.4
 line — the pin most self-hosters want), `latest` (newest tagged release, never
 `main`), and `edge` (`main`, amd64-only, if you want to live dangerously). Release
 tags are multi-arch, so a Raspberry Pi or Graviton host pulls the arm64 image with
@@ -838,10 +852,16 @@ off-host too.
 
 Three ways to serve it, from most to least common:
 
-1. **Behind your reverse proxy** (Traefik, nginx, Caddy, …): keep the default
-   `HTTP_PORT=8080`, terminate TLS at the proxy, and make sure it forwards
-   `X-Forwarded-Proto` (proxies are already trusted). Without that header,
-   secure cookies break under HTTPS and logins fail.
+1. **Behind your reverse proxy** (Traefik, nginx, Caddy, …): terminate TLS at
+   the proxy and set `TRUSTED_PROXIES` in `.env` to the address it connects
+   from. A proxy on the same Docker host arrives from a Docker network, which
+   `172.16.0.0/12` covers; publish the app on loopback only
+   (`HTTP_PORT=127.0.0.1:8080`) so nothing else reaches that port. The proxy
+   must send `X-Forwarded-Proto` and pass the original `Host` header through
+   (nginx: `proxy_set_header Host $host;`, Apache: `ProxyPreserveHost On`);
+   `X-Forwarded-Host` is ignored. Without the proxy trusted, the app can't tell
+   the request was HTTPS: signed links (email verification, file uploads) fail
+   and every visitor shows up with the proxy's IP.
 2. **Direct exposure with automatic HTTPS**: set `SERVER_NAME=books.example.com`
    in `.env` and uncomment the 80/443 ports on the `app` service — FrankenPHP's
    built-in Caddy obtains and renews certificates automatically (persisted in
@@ -850,7 +870,10 @@ Three ways to serve it, from most to least common:
    HTTPS (or localhost).
 
 In every case `APP_URL` must match the URL users actually visit, scheme
-included.
+included. The app answers only on its host (any other gets 400 Bad Request),
+so list any other names it's reached by in `TRUSTED_HOSTS`. Leave
+`TRUSTED_PROXIES` empty in cases 2 and 3: with the app reached directly, a
+forwarding header from a client is just client input.
 
 ### Optional services
 
@@ -904,7 +927,7 @@ There is nothing to configure before the first visit.
 
    ```bash
    #!/bin/bash
-   curl -fsSL https://raw.githubusercontent.com/lineledger/lineledger/v1.3.1/docker/digitalocean/droplet/install.sh | bash
+   curl -fsSL https://raw.githubusercontent.com/lineledger/lineledger/v1.4.0/docker/digitalocean/droplet/install.sh | bash
    ```
 
    Pick a size with at least 2 GB of memory, and turn on **Backups** while
@@ -920,7 +943,9 @@ There is nothing to configure before the first visit.
 4. **Use your own domain** for HTTPS: point an `A` record at the Droplet's IP,
    then over SSH run `lineledger domain books.example.com`. The certificate
    is issued and renewed automatically. Until you do this, traffic isn't
-   encrypted, and passkeys (which need HTTPS) aren't available.
+   encrypted, and passkeys (which need HTTPS) aren't available. LineLedger
+   answers only on that address (the IP until then); to reach it by another
+   name as well, run `lineledger config TRUSTED_HOSTS other.example.com`.
 
 Everything lives in `/opt/lineledger` (the compose bundle, its `.env` holding
 `APP_KEY`, and `backups/`). Over SSH:
@@ -956,7 +981,7 @@ The only questions are your mail settings. You need [`doctl`](https://docs.digit
 brew install doctl jq        # or your platform's package manager
 doctl auth init              # paste a DigitalOcean API token with write access
 
-base=https://raw.githubusercontent.com/lineledger/lineledger/v1.3.1/docker/digitalocean
+base=https://raw.githubusercontent.com/lineledger/lineledger/v1.4.0/docker/digitalocean
 curl -fsSLO "$base/deploy.sh"
 curl -fsSLO "$base/app.yaml"
 chmod +x deploy.sh
@@ -982,7 +1007,11 @@ containers. Resize any of them in the control panel. App Platform has no
 persistent disk, so nothing is kept in `storage/`: files live in Spaces, logs go
 to the platform (`doctl apps logs <app-id> web`), and the OAuth signing keys are
 env vars rather than files. Add your own domain under the app's Settings →
-Domains; `APP_URL` follows it on the next deploy.
+Domains; `APP_URL` follows it on the next deploy, and from then on the
+`.ondigitalocean.app` address answers 400 Bad Request unless you add it to
+`TRUSTED_HOSTS`. The spec sets `TRUSTED_PROXIES=*`: App Platform's load
+balancer is the only way to reach the containers, and it is what tells the
+app the visitor's IP and that the request was HTTPS.
 
 **Upgrading.** Back up first (each organization's Settings → Backup & Export,
 or a database backup in the control panel), then run `./deploy.sh` again. With the app already
@@ -1032,6 +1061,11 @@ enforced, so mail must send before the first user can create an organization),
 `PASSKEYS_USER_HANDLE_SECRET`, the three alert addresses, and `DB_QUEUE_RETRY_AFTER`
 (step 6). Add the `STRIPE_*` keys for portal card payments and the `TURNSTILE_*`
 keys if the signup form is public. Set `APP_ENV=production` and `APP_DEBUG=false`.
+Leave `TRUSTED_PROXIES` empty while the site's own nginx faces the internet. If
+the domain is proxied by Cloudflare or sits behind a load balancer, set it to
+[Cloudflare's IP ranges](https://www.cloudflare.com/ips/) or the balancer's
+address, or every visitor shows up with the proxy's IP. A site that answers on
+more than one domain lists the others in `TRUSTED_HOSTS`.
 
 **5. Set the deploy script (Forge → Site → Deployment → Deploy Script).**
 
@@ -1222,7 +1256,7 @@ things around it — take a backup before you click, and read
 [`UPGRADING.md`](UPGRADING.md) for anything the release needs beyond what
 `app:upgrade` does on its own. To upgrade by tag rather than by whatever is on
 `main`, swap the `git pull` line for
-`git fetch --tags origin && git checkout v1.3.1` (or point the Forge site at a
+`git fetch --tags origin && git checkout v1.4.0` (or point the Forge site at a
 release branch), so a deploy always lands on a version you chose. After the deploy,
 `php artisan app:upgrade --verify` proves the ledger still reconciles, and
 `proof:generate` refreshes `/verification` if you publish it.
@@ -1269,6 +1303,15 @@ release branch), so a deploy always lands on a version you chose. After the depl
   until `config:cache` is re-run.
 - **Stripe payments fail silently** — the webhook secret is wrong or the endpoint
   URL doesn't match `APP_URL`; check Stripe → **Developers → Webhooks → Logs**.
+- **Every page is "400 Bad Request"** — the address in the browser isn't
+  `APP_URL`'s host. Correct `APP_URL`, or add the other name to `TRUSTED_HOSTS`,
+  then `php artisan config:cache`. Behind a proxy, also check that it passes the
+  original `Host` header through rather than its own upstream name.
+- **Every visitor has the same IP in Admin → Security, HSTS is missing, or email
+  verification links and file uploads fail behind a proxy** — the app doesn't
+  trust the proxy, so it sees the proxy's address and plain HTTP. Set
+  `TRUSTED_PROXIES` to the proxy's address (Cloudflare's ranges for a
+  Cloudflare-proxied domain).
 - **MCP OAuth connect fails with a 500 on the authorize or token step** and the log
   shows `Key path ".../storage/oauth-private.key" does not exist or is not
   readable` — Passport keys weren't generated. Run `php artisan passport:keys` once

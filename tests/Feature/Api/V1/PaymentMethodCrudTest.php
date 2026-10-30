@@ -35,6 +35,26 @@ it('creates, lists, shows, updates and deletes a payment method', function () {
     $this->getJson("/api/v1/payment-methods/{$id}", $this->h)->assertStatus(404);
 });
 
+it('reads and writes the card flag', function () {
+    $id = $this->postJson('/api/v1/payment-methods', ['name' => 'PayPal', 'is_card' => true], $this->h)
+        ->assertStatus(201)
+        ->assertJsonPath('data.is_card', true)
+        ->assertJsonPath('data.is_cheque', false)
+        ->json('data.id');
+
+    $this->patchJson("/api/v1/payment-methods/{$id}", ['name' => 'PayPal'], $this->h)
+        ->assertStatus(200)
+        ->assertJsonPath('data.is_card', true); // omitted on update: left as it was
+
+    $this->patchJson("/api/v1/payment-methods/{$id}", ['name' => 'PayPal', 'is_card' => false], $this->h)
+        ->assertStatus(200)
+        ->assertJsonPath('data.is_card', false);
+
+    $this->postJson('/api/v1/payment-methods', ['name' => 'Cash'], $this->h)
+        ->assertStatus(201)
+        ->assertJsonPath('data.is_card', false);
+});
+
 it('returns 404 for another company\'s payment method', function () {
     $other = Company::factory()->create();
     ['plaintext' => $otherPlain] = CompanyApiKey::mint($other, 'Other');

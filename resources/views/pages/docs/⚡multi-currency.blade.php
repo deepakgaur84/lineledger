@@ -87,6 +87,27 @@ new #[Title('Documentation — Multi-currency')] class extends Component {}; ?>
             <a class="underline" href="{{ route('docs.banking') }}" wire:navigate>{{ __('Banking') }}</a>{{ __('.') }}
         </flux:text>
 
+        <flux:heading size="md" class="mt-6">{{ __('Journal entries on a foreign account') }}</flux:heading>
+        <flux:text>
+            {{ __('A journal entry line on a foreign-currency account — a foreign bank or credit-card account, or a currency’s receivable or payable account — is entered in that account’s currency. Choose the account and a row opens under the line with the Debit and Credit in that currency, such as Debit (USD), and an Exchange rate filled in with the rate in force on the entry date: the rate a foreign document dated that day would lock. The line’s own Debit and Credit then show the home-currency equivalent, read-only, and those home amounts are what has to balance. If your bank used another rate, type it instead. A filled-in rate follows the Date if you change it; a rate you type, or one already saved with the entry, stays put.') }}
+        </flux:text>
+
+        <p><strong>{{ __('To record a foreign account’s opening balance:') }}</strong></p>
+        <ol class="list-decimal ps-6 space-y-1">
+            <li>{{ __('Open Accounting → Journal, select New entry, and set the Date to the day the balance was carried over.') }}</li>
+            <li>{{ __('On the first line, choose the foreign account — USD Chequing, say — and type its balance under Debit (USD), for example 10,000.00. Check the Exchange rate; at 1.35 the line shows 13,500.00 as its home equivalent.') }}</li>
+            <li>{{ __('On the second line, choose Opening Balance Equity and type the same home amount, 13,500.00, under Credit.') }}</li>
+            <li>{{ __('Select Post entry. The account now holds 10,000.00 USD, carried at 13,500.00 CAD, and period-end revaluation restates exactly those 10,000.00 USD.') }}</li>
+        </ol>
+
+        <x-docs.callout type="note" heading="{{ __('The foreign amount stays with the line') }}">
+            {{ __('Each line keeps its foreign amount and rate. The entry’s page shows them under the account, editing the entry shows them as saved, and saving it unchanged leaves them exactly as they were. Rounding each converted line to the cent can leave an entry that balances in the foreign currency a cent out in home currency; when it does, the cent goes onto the largest converted line, as on a foreign document. A journal entry template or recurring schedule holds home amounts only, so a line from one on a foreign account works its foreign amount out at the entry date’s rate — check it before you post.') }}
+        </x-docs.callout>
+
+        <flux:text>
+            {{ __('To write off part of a foreign invoice with a journal entry, credit the currency’s receivable account in that currency at the invoice’s own rate, the one beside Home equivalent on the invoice, so the receivable comes off at the value it was booked at. The customer’s balance in their currency drops by the amount written off, and Close settled balance on the invoice can then close it. A payable works the same way against a bill.') }}
+        </flux:text>
+
         <x-docs.callout type="note" heading="{{ __('One person edits a record at a time') }}">
             {{ __('If a teammate already has an account, customer, vendor, or transfer open for editing, you see who is editing instead of the form, and Owners and Admins can take over. See') }}
             <a class="underline" href="{{ route('docs.settings') }}" wire:navigate>{{ __('Settings → Edit locks') }}</a>
@@ -154,6 +175,9 @@ new #[Title('Documentation — Multi-currency')] class extends Component {}; ?>
         <flux:text>
             {{ __('What a foreign customer or vendor already owed when you started using LineLedger is entered in their own currency. In the Opening Balances workspace, the row for a foreign contact carries a currency badge, you type the balance in that currency, and the footer totals everything as “Entered (home currency)”. The opening document locks its exchange rate exactly like a normal invoice or bill. See') }}
             <a class="underline" href="{{ route('docs.opening-balances') }}" wire:navigate>{{ __('Opening balances') }}</a>{{ __('.') }}
+        </flux:text>
+        <flux:text>
+            {{ __('A foreign bank or credit-card account’s opening balance is a journal entry in its own currency, as described under Journal entries on a foreign account above. The workspace’s draft trial balance can hold a target for the account, but it never posts one: the trial balance has the home-currency value and not the balance in the account’s currency.') }}
         </flux:text>
 
         {{-- ──────────────────────── Realized gain/loss ──────────────────────── --}}

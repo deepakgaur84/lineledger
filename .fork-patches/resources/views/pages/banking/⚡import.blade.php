@@ -8,6 +8,7 @@ use App\Enums\BankStatementImportStatus;
 use App\Enums\BillType;
 use App\Enums\StatementLineMatchStatus;
 use App\Enums\StatementSuggestionSource;
+use App\Exceptions\Posting\PostingValidationException;
 use App\Jobs\ProcessBankStatementImport;
 use App\Livewire\Concerns\ManagesStatementLineContacts;
 use App\Livewire\Concerns\ManagesStatementLineTax;
@@ -22,6 +23,7 @@ use App\Services\AttachmentService;
 use App\Services\Banking\Import\BankRuleEngine;
 use App\Services\Banking\Import\OpenBillMatcher;
 use App\Services\Banking\Import\StatementImportCommitter;
+use App\Services\Banking\StatementLineCategoryGuard;
 use App\Services\Classification\CategorySuggester;
 use App\Services\EditLocks\EditLockManager;
 use App\Support\Banking\LastBankAccount;
@@ -436,6 +438,17 @@ new #[Title('Import statement')] class extends Component {
             ])->save();
             unset($this->lineHint[$line->id]);
         } else {
+            // The id comes from the browser: another organization's account, or
+            // a control account, is refused and the line keeps its category.
+            try {
+                app(StatementLineCategoryGuard::class)->assertUsable($line, [(int) $value]);
+            } catch (PostingValidationException $e) {
+                $this->lineCategory[$line->id] = $line->suggested_account_id ?? '';
+                Flux::toast(variant: 'danger', text: $e->getMessage());
+
+                return;
+            }
+
             // A pick is a decision: the line is confirmed as an "Add".
             $line->forceFill([
                 'match_status' => StatementLineMatchStatus::Created->value,

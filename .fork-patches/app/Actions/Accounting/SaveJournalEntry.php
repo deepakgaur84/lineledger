@@ -3,48 +3,79 @@
 namespace App\Actions\Accounting;
 
 use App\Exceptions\Posting\LinkedJournalEntryException;
+use App\Models\Account;
+use App\Models\Company;
 use App\Models\JournalEntry;
+use App\Services\Currency\ExchangeRateService;
+use App\Services\Currency\MissingExchangeRateException;
 use App\Services\Posting\EntryNumberGenerator;
+use App\Services\Posting\JournalPoster;
+use App\Support\Accounting\ForeignJournalLines;
+use App\Support\Currency;
 use Carbon\CarbonImmutable;
+use Illuminate\Http\Client\HttpClientException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Builds or rebuilds a journal entry header and its lines. Shared by the
- * Livewire journal form and the API. Does NOT post — balance enforcement,
+ * Livewire journal form, the API, the MCP write tools and the generators
+ * (recurring entries, depreciation, …). Does NOT post — balance enforcement,
  * period locking and the draft → posted flip stay in JournalPoster.
  *
- * Zero/zero lines (no debit and no credit) are dropped, matching the form.
+ * Lines with nothing on them (no home and no foreign amount) are dropped,
+ * matching the form.
  *
  * Expected $data shape (cents-based, framework-agnostic):
  *   entry_no:   ?string  (null → auto-generated JE-xxxxxx)
  *   entry_date: string
  *   memo:       ?string
  *   lines: array<int, array{
- *     account_id: int, debit_cents: int, credit_cents: int,
+ *     account_id: int, debit_cents?: int, credit_cents?: int,
  *     memo: ?string, contact_id: ?int, tax_code_id: ?int,
- *     class_id: ?int, location_id: ?int,
- *     currency_code: ?string, fx_rate: ?string,
- *     foreign_debit_cents: ?int, foreign_credit_cents: ?int
+ *     class_id: ?int, location_id: ?int, fund_id: ?int,
+ *     currency_code?: ?string, fx_rate?: ?string,
+ *     foreign_debit_cents?: ?int, foreign_credit_cents?: ?int
  *   }>
  *
  * tax_code_id is a reporting tag only — no tax amounts are derived from it.
  *
- * debit_cents / credit_cents are always HOME cents (the entry balances in home).
- * The optional currency_code / fx_rate / foreign_* fields are a memo of the
- * original foreign amount on a foreign-account line; they do not affect balancing.
+ * debit_cents / credit_cents are HOME cents, and the entry balances in home. A
+ * line on a foreign-currency account (foreign bank or credit card, per-currency
+ * AR/AP) also records its foreign amount, rate and currency — always the
+ * account's own — and any two of home, foreign and rate give the third; a
+ * missing rate is the one in force on the entry date. See
+ * {@see ForeignJournalLines}. So a caller that only knows the home amount still
+ * leaves foreign units on the account, and the period-end revaluation only ever
+ * revalues real foreign exposure. Nothing is worked out for a line on a
+ * home-currency account; it keeps a memo only when one comes complete (the kind
+ * a foreign document puts on every leg, copied by a reversal). Anything
+ * inconsistent is a ValidationException keyed to the line field
+ * (lines.N.fx_rate, …).
+ *
+ * Every line must be on one of the current organization's accounts, checked
+ * here as well as at posting, because this also rewrites a posted entry in place.
  */
 final class SaveJournalEntry
 {
-    public function __construct(protected EntryNumberGenerator $numbers) {}
+    public function __construct(
+        protected EntryNumberGenerator $numbers,
+        protected JournalPoster $poster,
+        protected ExchangeRateService $exchangeRates,
+    ) {}
 
     /**
      * @param  array<string, mixed>  $data
+     *
+     * @throws ValidationException
      */
     public function handle(array $data, ?JournalEntry $entry = null): JournalEntry
     {
         return DB::transaction(function () use ($data, $entry): JournalEntry {
             $company = app('current_company');
             $entryDate = CarbonImmutable::parse($data['entry_date'])->toDateString();
+            $lines = array_values($data['lines']);
+            $amounts = $this->resolveLines($lines, $entryDate);
 
             $header = [
                 'entry_date' => $entryDate,
@@ -68,17 +99,13 @@ final class SaveJournalEntry
             $entry->lines()->delete();
 
             $order = 0;
-            foreach (array_values($data['lines']) as $line) {
-                $debit = (int) ($line['debit_cents'] ?? 0);
-                $credit = (int) ($line['credit_cents'] ?? 0);
+            foreach ($lines as $i => $line) {
+                $money = $amounts[$i];
 
-                if ($debit === 0 && $credit === 0) {
+                if ($money['debit_cents'] === 0 && $money['credit_cents'] === 0
+                    && $money['foreign_debit_cents'] === 0 && $money['foreign_credit_cents'] === 0) {
                     continue;
                 }
-
-                $currencyCode = ! empty($line['currency_code']) && ! $company->isHomeCurrency($line['currency_code'])
-                    ? mb_strtoupper((string) $line['currency_code'])
-                    : null;
 
                 $entry->lines()->create([
                     'account_id' => $line['account_id'],
@@ -99,6 +126,8 @@ final class SaveJournalEntry
                     ] : []),
                 ]);
             }
+
+            $this->poster->ensureLineAccountsInCompany($entry);
 
             $entry->refresh();
 

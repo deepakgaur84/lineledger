@@ -18,7 +18,7 @@ it('runs cleanly on a fresh install that has no organizations yet', function () 
 it('treats no organizations at all as nothing to backfill, but a named one that is missing as an error', function (string $command) {
     $this->artisan($command)->expectsOutputToContain('No companies yet')->assertSuccessful();
     $this->artisan($command, ['company' => 'no-such-organization'])->assertFailed();
-})->with(['banking:backfill-line-memos', 'banking:backfill-reconciliation-stamps']);
+})->with(['banking:backfill-line-memos', 'banking:backfill-reconciliation-stamps', 'backup:repair-encrypted-columns', 'currency:backfill-reversal-memos']);
 
 it('reports the data steps instead of running them while migrations are pending', function () {
     $dir = sys_get_temp_dir().'/app-upgrade-pending-'.uniqid();

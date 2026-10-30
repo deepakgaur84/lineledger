@@ -4,10 +4,12 @@ namespace App\Actions\Banking;
 
 use App\Enums\BankRuleMatchType;
 use App\Enums\StatementSuggestionSource;
+use App\Exceptions\Posting\PostingValidationException;
 use App\Models\BankRule;
 use App\Models\BankStatementLine;
 use App\Models\Contact;
 use App\Services\Banking\Import\BankRuleEngine;
+use App\Services\Banking\StatementLineCategoryGuard;
 use App\Services\Classification\Support\MerchantKey;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -25,6 +27,7 @@ final class CreateBankRuleFromLine
     public function __construct(
         private readonly SaveBankRule $save,
         private readonly BankRuleEngine $engine,
+        private readonly StatementLineCategoryGuard $categories,
     ) {}
 
     /**
@@ -37,7 +40,8 @@ final class CreateBankRuleFromLine
     }
 
     /**
-     * @throws ValidationException when the description is too generic to key a rule on
+     * @throws ValidationException when the description is too generic to key a rule on,
+     *                             or the account is not a category the line could be recorded against
      */
     public function handle(BankStatementLine $line, int $accountId, ?int $contactId = null, bool $applyToImport = true): BankRule
     {
@@ -45,6 +49,14 @@ final class CreateBankRuleFromLine
 
         if (! MerchantKey::isUsable($key)) {
             throw ValidationException::withMessages(['rule' => __('This description is too short to build a rule from.')]);
+        }
+
+        // The rule would pre-fill this account on every matching line, so it
+        // is held to the same check as recording the line itself.
+        try {
+            $this->categories->assertUsable($line, [$accountId]);
+        } catch (PostingValidationException $e) {
+            throw ValidationException::withMessages(['rule' => $e->getMessage()]);
         }
 
         $contact = $contactId !== null

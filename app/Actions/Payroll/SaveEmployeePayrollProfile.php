@@ -2,6 +2,7 @@
 
 namespace App\Actions\Payroll;
 
+use App\Enums\DentalBenefitsCode;
 use App\Enums\PayBasis;
 use App\Enums\TimeOffAccrualMethod;
 use App\Enums\TimeOffCategory;
@@ -12,6 +13,7 @@ use App\Models\EmployeeTimeOffPolicy;
 use App\Models\TimeOffPolicy;
 use App\Support\Payroll\BankedOvertimeRules;
 use App\Support\Payroll\PayrollItemType;
+use App\Support\Payroll\SocialInsuranceNumber;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -20,11 +22,14 @@ use Illuminate\Validation\ValidationException;
  * deduction templates. Shared by the Livewire setup UI and the API.
  *
  * The SIN is written through {@see EmployeePayrollProfile::setSin()} so it is
- * encrypted at rest and only the last four digits are kept in cleartext.
+ * encrypted at rest and only the last four digits are kept in cleartext. It
+ * must be nine digits that pass the SIN check digit; 000 000 000 — the CRA's
+ * value for "the employee has not given a SIN" — saves as no SIN.
  *
  * Expected $data shape (cents-based):
  *   contact_id:                       int
  *   sin:                              ?string  (raw; only applied when present)
+ *   dental_benefits_code:             ?int     (T4 box 45 override, 1–5; null = the organization's code; only applied when present)
  *   date_of_birth, hire_date, termination_date: ?string (Y-m-d)
  *   province_of_employment:           string (2-letter; 'QC' enables QPP/QPIP/Quebec tax)
  *   pay_basis:                        string (PayBasis value)
@@ -32,11 +37,13 @@ use Illuminate\Validation\ValidationException;
  *   hourly_rate_cents:                ?int
  *   default_hours_per_period:         ?string|float
  *   payroll_schedule_id:              ?int
- *   td1_federal_claim_cents:          int
+ *   td1_federal_claim_cents:          int (the TD1 line 13 total; 0 = claim code 0)
  *   td1_federal_code:                 ?string
- *   td1_provincial_claim_cents:       int
+ *   td1_provincial_claim_cents:       int (0 = claim code 0; Quebec: TP-1015.3-V line 10)
  *   td1_provincial_code:              ?string
  *   cpp_exempt, ei_exempt, qpip_exempt: bool
+ *   income_tax_exempt:                bool (no income tax withheld; still T4 box 14)
+ *   indian_act_exempt:                bool (Indian Act s.87 exempt; T4 code 71)
  *   additional_tax_per_period_cents:  int
  *   vacation_policy:                  string (VacationPolicy value)
  *   vacation_rate_bp:                 int
@@ -56,6 +63,12 @@ final class SaveEmployeePayrollProfile
      */
     public function handle(array $data, ?EmployeePayrollProfile $profile = null): EmployeePayrollProfile
     {
+        if (array_key_exists('sin', $data) && ! SocialInsuranceNumber::isAcceptableEntry(is_string($data['sin']) ? $data['sin'] : null)) {
+            throw ValidationException::withMessages([
+                'sin' => __('Enter a valid 9-digit Social Insurance Number, or 000 000 000 if the employee hasn’t given you one yet.'),
+            ]);
+        }
+
         return DB::transaction(function () use ($data, $profile): EmployeePayrollProfile {
             $payBasis = $data['pay_basis'] instanceof PayBasis
                 ? $data['pay_basis']
@@ -84,6 +97,7 @@ final class SaveEmployeePayrollProfile
                 'ei_exempt' => (bool) ($data['ei_exempt'] ?? false),
                 'qpip_exempt' => (bool) ($data['qpip_exempt'] ?? false),
                 'income_tax_exempt' => (bool) ($data['income_tax_exempt'] ?? false),
+                'indian_act_exempt' => (bool) ($data['indian_act_exempt'] ?? false),
                 'workers_comp_exempt' => (bool) ($data['workers_comp_exempt'] ?? false),
                 'workers_comp_rate_bp' => isset($data['workers_comp_rate_bp']) && $data['workers_comp_rate_bp'] !== ''
                     ? (int) $data['workers_comp_rate_bp']
@@ -113,6 +127,19 @@ final class SaveEmployeePayrollProfile
 
             if (array_key_exists('opening_balances_as_of', $data)) {
                 $attributes['opening_balances_as_of'] = $data['opening_balances_as_of'] ?: null;
+            }
+
+            // The T4 box 45 override merges only when sent, so a caller that
+            // doesn't know about it never clears an employee's code.
+            if (array_key_exists('dental_benefits_code', $data)) {
+                $code = $data['dental_benefits_code'];
+                $dental = $code instanceof DentalBenefitsCode ? $code : DentalBenefitsCode::tryFrom((int) $code);
+
+                if ($dental === null && $code !== null && $code !== '') {
+                    throw ValidationException::withMessages(['dental_benefits_code' => __('Choose a dental benefits code from 1 to 5.')]);
+                }
+
+                $attributes['dental_benefits_code'] = $dental;
             }
 
             // Banked-overtime fields merge only when sent (like the openings),
@@ -173,7 +200,7 @@ final class SaveEmployeePayrollProfile
             }
 
             if (array_key_exists('sin', $data)) {
-                $profile->setSin($data['sin']);
+                $profile->setSin(SocialInsuranceNumber::isNotProvided($data['sin']) ? null : $data['sin']);
             }
 
             $profile->save();

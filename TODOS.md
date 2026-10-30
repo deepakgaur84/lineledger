@@ -2,46 +2,6 @@
 
 ## Deployment
 
-### Stand up the US app deployment at books.lineledger.com
-
-**What:** A second Forge site with its own database, queue worker, and scheduler.
-
-**Why:** The app ships with a multi-region model, and the country-switcher banner links
-guests to `APP_URL_US`. Until that host exists the banner is a dead link.
-
-**Context:** The application side is already done — `APP_REGION`, `APP_URL_CA`,
-`APP_URL_US`, and `APP_URL_GB` all ship in `.env.example` and the banner reads them.
-What's left is purely the Forge site. Set `APP_URL=https://books.lineledger.com` and
-leave `APP_REGION` unset so the region derives from the host (`.ca` → Canada, `.uk` →
-United Kingdom, otherwise US). It needs its own `DB_*`, its own Stripe webhook
-endpoint, and its own SSL. Canada is the primary market, so this is
-optional-but-linked: if you'd rather defer it, point `APP_URL_US` at the Canadian
-host instead so the banner degrades gracefully. Full env table is in README →
-Environment.
-
-**Effort:** M
-**Priority:** P1
-**Depends on:** None
-
-### Stand up the UK app deployment at books.lineledger.co.uk
-
-**What:** A third Forge site with its own database, queue worker, and scheduler,
-plus a marketing twin at `lineledger.co.uk`.
-
-**Why:** The application side already supports `Country::UnitedKingdom` (`GB`),
-`BritishDefaults` (VAT / HMRC / GBP), and a three-sibling country switcher. Until
-the `.co.uk` host exists, UK visitors stay on the CA/US twins.
-
-**Context:** Set `APP_URL=https://books.lineledger.co.uk` and leave `APP_REGION`
-unset (host derives GB). Own `DB_*`, Stripe Connect + webhook for GBP, and object
-storage in `eu-west-2`. Put `APP_URL_GB` / `MARKETING_URL_GB` on **all three**
-app hosts so the banner can link every direction. Point
-`MARKETING_URL_GB=https://lineledger.co.uk` once the marketing twin exists.
-
-**Effort:** M
-**Priority:** P1
-**Depends on:** None
-
 ### Point both marketing builds at one feature-requests database
 
 **What:** Build the Astro site twice (`PUBLIC_REGION=ca` and `PUBLIC_REGION=us`) with
@@ -129,7 +89,8 @@ cross-origin link meaningfully. The banner and its Alpine block are
 
 **Effort:** M
 **Priority:** P2
-**Depends on:** Stand up the US app deployment at books.lineledger.com
+**Depends on:** A decision on keeping the country-switcher banner; no sibling
+deployments are planned since books.lineledger.ca was shut down.
 
 ### Add the new in-app docs pages to the marketing site's docs-nav slug test
 

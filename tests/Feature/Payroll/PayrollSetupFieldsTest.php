@@ -41,11 +41,17 @@ it('saves an employee job title, employee ID and address', function () {
 });
 
 it('prefills the TD1 basic amounts when setting up a new employee', function () {
+    // A date the loaded tables cover: from each January 1 the prefill is refused
+    // until that year's tables are appended (see UnloadedTaxYearTest).
+    $this->travelTo('2026-06-15 12:00');
+
     Livewire::test('pages::payroll.employees.form', ['company' => $this->company, 'contact' => $this->employee])
         ->assertSet('td1_federal_claim', fn ($v) => $v !== '' && (float) $v > 0);
 });
 
 it('fills TD1 amounts via the prefill button', function () {
+    $this->travelTo('2026-06-15 12:00');
+
     Livewire::test('pages::payroll.employees.form', ['company' => $this->company, 'contact' => $this->employee])
         ->set('td1_federal_claim', '0')
         ->set('td1_provincial_claim', '0')

@@ -2390,6 +2390,9 @@ class XlsxExporter
     // ───────────────────────── Bank reconciliation ─────────────────────────
 
     /**
+     * Each detail line carries `reconcile_amount_cents`, its amount in the
+     * account's currency; $currency names that currency when it isn't the home one.
+     *
      * @param  array{payments: Collection, deposits: Collection, payments_total_cents: int, deposits_total_cents: int}  $detail
      */
     public function bankReconciliation(
@@ -2399,8 +2402,9 @@ class XlsxExporter
         array $detail,
         int $clearedBalanceCents,
         int $differenceCents,
+        ?string $currency = null,
     ): BinaryFileResponse {
-        return $this->buildAndStream($filename, function (Writer $writer) use ($company, $rec, $detail, $clearedBalanceCents, $differenceCents) {
+        return $this->buildAndStream($filename, function (Writer $writer) use ($company, $rec, $detail, $clearedBalanceCents, $differenceCents, $currency) {
             $sheet = $writer->getCurrentSheet();
             $sheet->setName('Reconciliation');
 
@@ -2413,6 +2417,7 @@ class XlsxExporter
                 ($rec->account?->code ?? '').' — '.($rec->account?->name ?? ''),
                 'Statement date: '.$rec->statement_date->toDateString(),
                 'Status: '.$rec->status->label(),
+                $currency !== null ? 'Amounts in '.$currency : null,
             ], totalColumns: 4);
 
             $boldFill = $this->makeStyle(bold: true, backgroundColor: self::HEADER_FILL);
@@ -2453,11 +2458,11 @@ class XlsxExporter
 
             $writer->addRow(Row::fromValues([]));
 
-            $this->writeReconciliationSection($writer, 'Deposits and Other Credits', $detail['deposits'], 'debit_cents', $detail['deposits_total_cents']);
+            $this->writeReconciliationSection($writer, 'Deposits and Other Credits', $detail['deposits'], 'reconcile_amount_cents', $detail['deposits_total_cents']);
 
             $writer->addRow(Row::fromValues([]));
 
-            $this->writeReconciliationSection($writer, 'Cheques and Payments', $detail['payments'], 'credit_cents', $detail['payments_total_cents']);
+            $this->writeReconciliationSection($writer, 'Cheques and Payments', $detail['payments'], 'reconcile_amount_cents', $detail['payments_total_cents']);
         });
     }
 

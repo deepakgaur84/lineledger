@@ -1,22 +1,43 @@
 <?php
 
+use App\Concerns\BelongsToCompany;
 use App\Models\AccountingAuditLog;
+use App\Models\Company;
 use App\Models\JournalEntry;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Collection;
+use Livewire\Attributes\Locked;
 use Livewire\Component;
 
 new class extends Component {
+    /**
+     * The organization the host page is for — the one bound when it mounted
+     * this trail. Holding it also makes BindCurrentCompanyHook re-bind that
+     * organization on this component's own Livewire requests.
+     */
+    public Company $company;
+
+    // Locked: a client could otherwise rewrite either one to read any
+    // record's trail.
+    #[Locked]
     public string $auditableType;
 
+    #[Locked]
     public int $auditableId;
 
     public string $title = 'Audit trail';
 
     public function mount(string $auditableType, int $auditableId, string $title = 'Audit trail'): void
     {
+        abort_unless(app()->bound('current_company'), 404);
+
+        $this->company = app('current_company');
         $this->auditableType = $auditableType;
         $this->auditableId = $auditableId;
         $this->title = $title;
+
+        abort_unless($this->auditableBelongsToCompany(), 404);
     }
 
     /**
@@ -25,7 +46,9 @@ new class extends Component {
     public function entries(): Collection
     {
         return AccountingAuditLog::query()
-            ->withoutGlobalScopes()
+            // Constrained explicitly: CompanyScope is inert whenever no
+            // organization is bound.
+            ->whereBelongsTo($this->company)
             ->with('actor')
             ->where(function ($q) {
                 $q->where(function ($q) {
@@ -50,6 +73,23 @@ new class extends Component {
 
         return $this->auditableType === $journalEntryMorph
             || $this->auditableType === JournalEntry::class;
+    }
+
+    /**
+     * Whether the trail's record is one of this organization's own.
+     */
+    protected function auditableBelongsToCompany(): bool
+    {
+        $class = Relation::getMorphedModel($this->auditableType) ?? $this->auditableType;
+
+        if (! is_a($class, Model::class, true) || ! in_array(BelongsToCompany::class, class_uses_recursive($class), true)) {
+            return false;
+        }
+
+        return $class::query()
+            ->where('company_id', $this->company->id)
+            ->whereKey($this->auditableId)
+            ->exists();
     }
 }; ?>
 

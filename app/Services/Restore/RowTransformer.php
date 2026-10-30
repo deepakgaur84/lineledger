@@ -2,8 +2,12 @@
 
 namespace App\Services\Restore;
 
+use App\Enums\McpProposalStatus;
+use App\Services\Backup\BackupTableRegistry;
 use App\Services\Backup\ReferencedUsersExporter;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Str;
+use Throwable;
 
 /**
  * Transforms one decoded `.jsonl` row from the bundle into the row payload the
@@ -28,7 +32,10 @@ use Illuminate\Support\Str;
  *     translated by resolving the FQCN to its Eloquent table and looking up
  *     the new id in `IdMapper`. Unknown types are passed through untouched.
  *  6. Per-table quirks (`companies`, `attachments`, `company_api_keys`,
- *     `company_members`) are applied last.
+ *     `company_invitations`, `customer_receipts`, `mcp_write_proposals`,
+ *     `document_folders`, `company_members`) are applied last. They include
+ *     the handling {@see self::GLOBALLY_UNIQUE_COLUMNS} lists, so a copy
+ *     restored next to its source never repeats an instance-wide unique value.
  *
  * JSON columns: arrays remain as arrays in the returned row. The orchestrator
  * `json_encode()`s array values right before the `DB::table()->insert()` call.
@@ -758,6 +765,56 @@ final class RowTransformer
     public const USER_ID_EXACT = ['created_by', 'uploaded_by_id', 'invited_by', 'user_id'];
 
     /**
+     * Columns UNIQUE across the whole instance on the tables
+     * {@see BackupTableRegistry::tables()} exports, and what a restore does
+     * with each. Copied verbatim, any one of them fails a restore next to the
+     * organization it came from (a copy on the same instance) on the
+     * constraint, as company_api_keys.token_hash did in #158:
+     *
+     *  - `fresh`: the copy gets a new working value.
+     *  - `drop`: the copy gets null.
+     *  - `deactivate`: the row is kept, its value is replaced by one nobody
+     *    holds, and the row comes back inactive (revoked, expired).
+     *
+     * A value is never kept just because it happens to be free on this
+     * instance: that would make a restore's outcome depend on, and reveal,
+     * what other organizations hold. An index that includes `company_id`, or a
+     * parent FK remapped onto the copy's own rows, is already unique per copy
+     * and is not listed.
+     *
+     * @var array<string, array<string, 'fresh'|'drop'|'deactivate'>>
+     *
+     * @internal Exposed for the arch test that fails when an exported table
+     *           gains a globally unique column this map does not list.
+     */
+    public const GLOBALLY_UNIQUE_COLUMNS = [
+        'companies' => [
+            // The copy's own URL: CompanyImporter mints one from the name.
+            'slug' => 'fresh',
+            // Stripe Connect never crosses instances; the owner reconnects the copy.
+            'stripe_account_id' => 'drop',
+            // The original's forwarding address; the copy comes back with inbox email off.
+            'inbound_email_token' => 'drop',
+        ],
+        'company_api_keys' => [
+            // The secret never leaves the instance; the key comes back revoked.
+            'token_hash' => 'deactivate',
+        ],
+        'company_invitations' => [
+            // The emailed link opens the original's invitation; an open one comes back expired.
+            'code' => 'deactivate',
+        ],
+        'customer_receipts' => [
+            // Stripe's id for a payment the original already recorded; the copy has no Stripe account.
+            'stripe_payment_intent_id' => 'drop',
+        ],
+        'mcp_write_proposals' => [
+            // The agent holds the original's confirm token; a pending proposal comes back expired.
+            'idempotency_key' => 'deactivate',
+        ],
+    ];
+
+    /**
      * @param  array<int, int>  $userIdMap  oldUserId => newUserId, including fallback entries.
      */
     public function __construct(
@@ -984,7 +1041,7 @@ final class RowTransformer
     {
         try {
             $instance = new $fqcn;
-        } catch (\Throwable) {
+        } catch (Throwable) {
             return null;
         }
 
@@ -1028,6 +1085,12 @@ final class RowTransformer
                         unset($row[$key]);
                     }
                 }
+
+                // Inbound email finds the organization by this token, and the
+                // copy must not receive the original's mail. Restore it as never
+                // enabled: turning inbox email on mints a new address.
+                $row['inbound_email_token'] = null;
+                $row['inbound_email_enabled'] = false;
                 break;
 
             case 'attachments':
@@ -1056,6 +1119,39 @@ final class RowTransformer
                     if (array_key_exists($secretColumn, $row)) {
                         $row[$secretColumn] = null;
                     }
+                }
+                break;
+
+            case 'company_invitations':
+                // The emailed link carries the original's code, so the copy's
+                // invitation gets one nobody holds. One still open comes back
+                // expired: it can never be accepted, and an expired invitation
+                // doesn't stop the owner inviting that person again. Accepted
+                // and lapsed invitations keep their dates.
+                $row['code'] = Str::random(64);
+
+                if (($row['accepted_at'] ?? null) === null && ! $this->isPast($row['expires_at'] ?? null)) {
+                    $row['expires_at'] = now();
+                }
+                break;
+
+            case 'customer_receipts':
+                // Stripe webhooks find the organization by its connected
+                // account, which the copy doesn't have, so it could never act
+                // on the PaymentIntent id. The receipt's reference still
+                // names the payment.
+                $row['stripe_payment_intent_id'] = null;
+                break;
+
+            case 'mcp_write_proposals':
+                // The agent holds the original's confirm token, so the copy's
+                // proposal gets one nobody holds. One still pending comes back
+                // expired, since nothing can confirm it; confirmed, rejected
+                // and expired proposals keep their history.
+                $row['idempotency_key'] = (string) Str::ulid();
+
+                if (($row['status'] ?? McpProposalStatus::Pending->value) === McpProposalStatus::Pending->value) {
+                    $row['status'] = McpProposalStatus::Expired->value;
                 }
                 break;
 
@@ -1113,5 +1209,22 @@ final class RowTransformer
             'old_id' => $oldId,
             'skip' => $skip,
         ];
+    }
+
+    /**
+     * Whether a bundle timestamp (the exporter's ISO-8601 string) has passed.
+     * Null or unreadable counts as not passed.
+     */
+    private function isPast(mixed $timestamp): bool
+    {
+        if (! is_string($timestamp) || $timestamp === '') {
+            return false;
+        }
+
+        try {
+            return CarbonImmutable::parse($timestamp)->isPast();
+        } catch (Throwable) {
+            return false;
+        }
     }
 }

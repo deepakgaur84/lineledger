@@ -84,7 +84,7 @@ class BritishDefaults implements CompanyDefaults
             ['name' => 'Faster Payments', 'is_cheque' => false],
             ['name' => 'Direct Debit', 'is_cheque' => false],
             ['name' => 'Wire', 'is_cheque' => false],
-            ['name' => 'Credit card', 'is_cheque' => false],
+            ['name' => 'Credit card', 'is_cheque' => false, 'is_card' => true],
         ];
     }
 

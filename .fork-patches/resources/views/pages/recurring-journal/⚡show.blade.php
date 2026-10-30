@@ -8,6 +8,7 @@ use App\Models\RecurringJournalEntry;
 use App\Services\Recurring\RecurringJournalEntryGenerator;
 use Flux\Flux;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
@@ -53,6 +54,12 @@ new #[Title('Recurring journal entry')] class extends Component {
             $entries = $generator->generateAllDue($this->recurring);
         } catch (RuntimeException $e) {
             Flux::toast(variant: 'danger', text: $e->getMessage());
+
+            return;
+        } catch (ValidationException $e) {
+            // The draft could not be built, e.g. a foreign-currency line with no
+            // exchange rate on file for the date.
+            Flux::toast(variant: 'danger', text: (string) (collect($e->errors())->flatten()->first() ?? $e->getMessage()));
 
             return;
         }

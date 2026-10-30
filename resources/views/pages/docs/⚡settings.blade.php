@@ -420,6 +420,12 @@ new #[Title('Documentation — Settings')] class extends Component {}; ?>
         <flux:text>
             {{ __('API keys come back revoked. A backup never holds a key’s secret, so the restored keys only record which integrations you had; create new ones in the API keys panel of Settings → Security and update those integrations.') }}
         </flux:text>
+        <flux:text>
+            {{ __('Employee SINs are encrypted again with this server’s key as they are restored, so they come back readable whichever server made the backup. If a SIN could not be read when the backup was made, the preview says so and that employee comes back without one; enter it again on their payroll profile.') }}
+        </flux:text>
+        <flux:text>
+            {{ __('Inbox email comes back switched off, so mail sent to the original organization’s forwarding address never reaches the restored one; turn on Accept documents by email in Settings → Inbox email for a new address. Invitations that were never accepted come back expired, as do proposals from an AI assistant still waiting to be confirmed, so invite those people or ask the assistant again. The restored organization is not connected to Stripe, and card payments taken through Stripe keep the Stripe payment id in their reference.') }}
+        </flux:text>
 
         <p><strong>{{ __('To restore a backup into a new organization:') }}</strong></p>
         <ol class="list-decimal ps-6 space-y-1">

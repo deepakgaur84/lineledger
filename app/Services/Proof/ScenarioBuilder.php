@@ -78,9 +78,9 @@ class ScenarioBuilder
             ],
         );
 
-        /** @var list<array{id: int, date: CarbonImmutable, total: int}> $openInvoices */
+        /** @var list<array{id: int, contact_id: int, date: CarbonImmutable, total: int}> $openInvoices */
         $openInvoices = [];
-        /** @var list<array{id: int, date: CarbonImmutable, total: int}> $openBills */
+        /** @var list<array{id: int, contact_id: int, date: CarbonImmutable, total: int}> $openBills */
         $openBills = [];
 
         foreach (self::YEARS as $year) {
@@ -109,7 +109,7 @@ class ScenarioBuilder
                         ]],
                     ]);
                     app(InvoicePoster::class)->post($invoice);
-                    $openInvoices[] = ['id' => $invoice->id, 'date' => $date, 'total' => (int) $invoice->fresh()->total_cents];
+                    $openInvoices[] = ['id' => $invoice->id, 'contact_id' => (int) $invoice->contact_id, 'date' => $date, 'total' => (int) $invoice->fresh()->total_cents];
                 } elseif ($type <= 5) {
                     // 20% — post a vendor bill (recognises expense).
                     $amount = 20_000 + ($i % 7) * 1_500;
@@ -124,13 +124,13 @@ class ScenarioBuilder
                         ]],
                     ]);
                     app(BillPoster::class)->post($bill);
-                    $openBills[] = ['id' => $bill->id, 'date' => $date, 'total' => (int) $bill->fresh()->total_cents];
+                    $openBills[] = ['id' => $bill->id, 'contact_id' => (int) $bill->contact_id, 'date' => $date, 'total' => (int) $bill->fresh()->total_cents];
                 } elseif ($type <= 7 && $openInvoices !== []) {
-                    // 20% — collect the oldest open invoice in full.
+                    // 20% — collect the oldest open invoice in full, from its customer.
                     $open = array_shift($openInvoices);
                     $payDate = $date->greaterThan($open['date']) ? $date : $open['date']->addDays(10);
                     $receipt = app(SaveReceipt::class)->handle([
-                        'contact_id' => $customers[$i % count($customers)]->id,
+                        'contact_id' => $open['contact_id'],
                         'receipt_date' => $payDate->toDateString(),
                         'deposit_to_account_id' => $bank->id,
                         'amount_cents' => $open['total'],
@@ -138,11 +138,11 @@ class ScenarioBuilder
                     ]);
                     app(ReceiptPoster::class)->post($receipt);
                 } elseif ($type === 8 && $openBills !== []) {
-                    // 10% — pay the oldest open bill in full.
+                    // 10% — pay the oldest open bill in full, to its vendor.
                     $open = array_shift($openBills);
                     $payDate = $date->greaterThan($open['date']) ? $date : $open['date']->addDays(10);
                     $payment = app(SaveBillPayment::class)->handle([
-                        'contact_id' => $vendors[$i % count($vendors)]->id,
+                        'contact_id' => $open['contact_id'],
                         'payment_date' => $payDate->toDateString(),
                         'paid_from_account_id' => $bank->id,
                         'amount_cents' => $open['total'],

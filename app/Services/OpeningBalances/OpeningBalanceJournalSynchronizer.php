@@ -43,6 +43,14 @@ use RuntimeException;
  * targets are satisfied by opening documents instead, and the status panel
  * shows the variance. Inventory flows through the stock sub-ledger only.
  *
+ * Foreign-currency accounts (a USD bank or credit card) are excluded too. A
+ * target is a home-currency figure, but the account's balance also has to be
+ * held in its own currency, or the period-end revaluation books the whole
+ * balance away as an unrealized loss — and the foreign amount is not something
+ * the trial balance knows. Their targets are met by a journal entry in the
+ * account's currency (which records the foreign amount and rate), dated on or
+ * before the as-of date, and the status panel shows the variance until then.
+ *
  * Targets change continuously, so the entry is REPOSTED IN PLACE (the
  * DepositPoster::repost idiom) rather than voided and recreated.
  */
@@ -140,7 +148,7 @@ class OpeningBalanceJournalSynchronizer
      */
     public function computedLines(OpeningBalanceState $state): array
     {
-        $state->loadMissing('rows.account');
+        $state->loadMissing('rows.account', 'company');
 
         $obe = $this->openingBalanceAccounts->resolve((int) $state->company_id);
         $excluded = array_map(fn (AccountSubtype $s) => $s->value, self::EXCLUDED_SUBTYPES);
@@ -151,6 +159,10 @@ class OpeningBalanceJournalSynchronizer
             $account = $row->account;
 
             if (! $account || in_array($account->subtype->value, $excluded, true)) {
+                continue;
+            }
+
+            if ($account->currency_code !== null && ! $state->company->isHomeCurrency($account->currency_code)) {
                 continue;
             }
 
@@ -328,6 +340,8 @@ class OpeningBalanceJournalSynchronizer
         if (! $entry->isBalanced()) {
             throw UnbalancedJournalException::from($entry->totalDebitsCents(), $entry->totalCreditsCents());
         }
+
+        $this->journalPoster->ensureLineAccountsInCompany($entry);
 
         $this->journalPoster->recomputeAccounts(array_unique([...$oldAccountIds, ...$entry->lines->pluck('account_id')->all()]));
 

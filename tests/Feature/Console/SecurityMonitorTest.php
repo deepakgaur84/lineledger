@@ -3,6 +3,7 @@
 use App\Enums\SecurityEvent;
 use App\Models\SecurityLog;
 use App\Notifications\SecurityAnomalyAlert;
+use App\Services\Security\SecurityAnomalyScanner;
 use Illuminate\Support\Facades\Notification;
 
 /**
@@ -97,4 +98,41 @@ it('does not email when --no-alert is set', function () {
     $this->artisan('security:monitor', ['--no-alert' => true])->assertExitCode(1);
 
     Notification::assertNothingSent();
+});
+
+it('flags failed logins against one account spread across many IPs', function () {
+    Notification::fake();
+
+    foreach (['203.0.113.1', '203.0.113.2', '203.0.113.3'] as $ip) {
+        logEvent(SecurityEvent::LoginFailed, ['ip_address' => $ip, 'attempted_email' => 'victim@example.com']);
+    }
+
+    $this->artisan('security:monitor')->assertExitCode(1);
+
+    Notification::assertSentOnDemand(SecurityAnomalyAlert::class, fn (SecurityAnomalyAlert $alert): bool => $alert->anomalies === [
+        'Failed-login spike for victim@example.com: 3 attempts from 3 IP addresses in window.',
+    ]);
+});
+
+it('groups an account\'s failed logins whatever the case of the address', function () {
+    foreach (['Victim@Example.com', 'victim@example.com', 'VICTIM@EXAMPLE.COM'] as $i => $email) {
+        logEvent(SecurityEvent::LoginFailed, ['ip_address' => "203.0.113.{$i}", 'attempted_email' => $email]);
+    }
+
+    expect(app(SecurityAnomalyScanner::class)->failedLoginSpikesByEmail(now()->subHour()))
+        ->toBe(['Failed-login spike for victim@example.com: 3 attempts from 3 IP addresses in window.']);
+});
+
+it('does not let an attempted address put a link or formatting in the alert', function () {
+    foreach (range(1, 3) as $i) {
+        logEvent(SecurityEvent::LoginFailed, ['ip_address' => "203.0.113.{$i}", 'attempted_email' => '[Reset your password](https://evil.example/reset) **now**']);
+    }
+
+    $findings = app(SecurityAnomalyScanner::class)->failedLoginSpikesByEmail(now()->subHour());
+
+    expect($findings)->toHaveCount(1)
+        ->and($findings[0])->not->toContain('[')
+        ->not->toContain('](')
+        ->not->toContain('https://')
+        ->not->toContain('**');
 });

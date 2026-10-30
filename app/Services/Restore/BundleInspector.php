@@ -4,6 +4,7 @@ namespace App\Services\Restore;
 
 use App\Models\User;
 use App\Services\Backup\BackupTableRegistry;
+use App\Services\Backup\JsonlTableWriter;
 use App\Services\Restore\Exceptions\BundleValidationException;
 use App\Support\Currency;
 use JsonException;
@@ -15,10 +16,11 @@ use ZipArchive;
  *
  * Pure / read-only — does no DB writes. Throws `BundleValidationException`
  * for any condition that should outright reject the upload (unopenable ZIP,
- * missing/malformed manifest, schema-version mismatch). Soft conditions
- * (app-version drift, unknown tables, missing attachment files reported in
- * the manifest) surface as `warnings` so the UI can show a yellow banner
- * without blocking the restore.
+ * missing/malformed manifest, schema-version mismatch, encrypted columns in an
+ * encoding this version doesn't know). Soft conditions (app-version drift,
+ * unknown tables, missing attachment files reported in the manifest, encrypted
+ * values the source couldn't decrypt) surface as `warnings` so the UI can show
+ * a yellow banner without blocking the restore.
  */
 final class BundleInspector
 {
@@ -107,6 +109,8 @@ final class BundleInspector
                 $group = $registryTables[$tableName]['group'];
                 $rowCountsByGroup[$group] = ($rowCountsByGroup[$group] ?? 0) + $rows;
             }
+
+            array_push($warnings, ...$this->encryptedColumnWarnings($manifestTables));
 
             // Users + remap preview.
             $bundleUsers = $this->readUsers($zip, $prefix);
@@ -233,6 +237,69 @@ final class BundleInspector
                 $targetSchema,
             ));
         }
+    }
+
+    /**
+     * Check how the bundle encodes its encrypted columns, and warn about values
+     * the source instance could not decrypt when it made the backup (the writer
+     * exported those as null, so they restore empty).
+     *
+     * A table entry without `encrypted_columns` comes from a bundle made before
+     * the manifest recorded it, and holds plaintext like the current encoding.
+     * Any encoding other than {@see JsonlTableWriter::ENCRYPTED_COLUMN_ENCODING}
+     * is refused: restoring a newer format's ciphertext as if it were the value
+     * would store something that decrypts to garbage.
+     *
+     * @param  array<string, mixed>  $manifestTables
+     * @return list<string>
+     *
+     * @throws BundleValidationException
+     */
+    private function encryptedColumnWarnings(array $manifestTables): array
+    {
+        $warnings = [];
+
+        foreach ($manifestTables as $tableName => $tableMeta) {
+            if (! is_array($tableMeta) || ! array_key_exists('encrypted_columns', $tableMeta)) {
+                continue;
+            }
+
+            $columns = $tableMeta['encrypted_columns'];
+
+            if (! is_array($columns)) {
+                throw $this->unknownEncryptedColumnEncoding();
+            }
+
+            foreach ($columns as $column => $meta) {
+                if (! is_array($meta) || ($meta['encoding'] ?? null) !== JsonlTableWriter::ENCRYPTED_COLUMN_ENCODING) {
+                    throw $this->unknownEncryptedColumnEncoding();
+                }
+
+                $unreadable = (int) ($meta['unreadable'] ?? 0);
+
+                if ($unreadable > 0) {
+                    $warnings[] = $this->unreadableWarning((string) $tableName, (string) $column, $unreadable);
+                }
+            }
+        }
+
+        return $warnings;
+    }
+
+    private function unknownEncryptedColumnEncoding(): BundleValidationException
+    {
+        return new BundleValidationException(
+            __('This backup stores encrypted values in a format this version of LineLedger cannot read. Upgrade LineLedger, then try the restore again.')
+        );
+    }
+
+    private function unreadableWarning(string $table, string $column, int $count): string
+    {
+        if ($table === 'employee_payroll_profiles' && $column === 'sin_encrypted') {
+            return trans_choice(':count employee SIN could not be read when this backup was made, so that employee will be restored without a SIN. Re-enter it on their payroll profile.|:count employee SINs could not be read when this backup was made, so those employees will be restored without a SIN. Re-enter them on each payroll profile.', $count);
+        }
+
+        return trans_choice(':count encrypted value in :table could not be read when this backup was made, so it will be restored empty.|:count encrypted values in :table could not be read when this backup was made, so they will be restored empty.', $count, ['table' => $table]);
     }
 
     /**

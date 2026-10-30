@@ -14,7 +14,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'company_id', 'pay_run_id', 'contact_id', 'employee_payroll_profile_id',
     'province_of_employment', 'pay_basis', 'hours_worked', 'insurable_hours',
     'hourly_rate_cents', 'annual_salary_cents', 'regular_earnings_cents', 'gross_cents',
-    'cpp_pensionable_cents', 'ei_insurable_cents', 'qpip_insurable_cents',
+    'cpp_pensionable_cents', 'ei_insurable_cents', 'roe_insurable_earnings_cents', 'qpip_insurable_cents',
     'cpp_employee_computed_cents', 'cpp_employee_override_cents',
     'cpp_employer_computed_cents', 'cpp_employer_override_cents',
     'cpp2_employee_computed_cents', 'cpp2_employee_override_cents',
@@ -38,6 +38,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'ytd_cpp2_employee_cents', 'ytd_ei_employee_cents', 'ytd_gross_cents', 'ytd_tax_cents',
     'ytd_qpp_employee_cents', 'ytd_qpp2_employee_cents',
     'ytd_qpip_employee_cents', 'ytd_qpip_insurable_cents',
+    'ytd_basis_hash', 'indian_act_exempt',
 ])]
 class PayRunLine extends Model
 {
@@ -309,11 +310,12 @@ class PayRunLine extends Model
             'pay_basis' => PayBasis::class,
             'hours_worked' => 'decimal:2',
             'insurable_hours' => 'decimal:2',
+            'indian_act_exempt' => 'boolean',
         ];
 
         foreach ([
             'hourly_rate_cents', 'annual_salary_cents', 'regular_earnings_cents', 'gross_cents',
-            'cpp_pensionable_cents', 'ei_insurable_cents', 'qpip_insurable_cents',
+            'cpp_pensionable_cents', 'ei_insurable_cents', 'roe_insurable_earnings_cents', 'qpip_insurable_cents',
             'qhsf_employer_computed_cents', 'cnesst_employer_computed_cents', 'wc_employer_computed_cents',
             'vacation_accrued_cents', 'vacation_paid_cents',
             'total_deductions_cents', 'net_cents', 'ytd_pensionable_cents', 'ytd_insurable_cents',

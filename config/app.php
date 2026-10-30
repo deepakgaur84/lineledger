@@ -56,24 +56,42 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Trusted Hosts
+    |--------------------------------------------------------------------------
+    |
+    | Outside local and testing the app answers only on APP_URL's host and the
+    | hosts listed here (comma-separated; a full URL works too). A request for
+    | any other host is refused with 400 Bad Request. List every other name this
+    | installation is reached by, such as a second domain or App Platform's
+    | .ondigitalocean.app address once a custom domain is primary. Links in
+    | email always use APP_URL. See App\Support\Http\TrustedHosts.
+    |
+    */
+
+    'trusted_hosts' => array_values(array_filter(array_map(trim(...), explode(',', (string) env('TRUSTED_HOSTS', ''))))),
+
+    /*
+    |--------------------------------------------------------------------------
     | Country Region
     |--------------------------------------------------------------------------
     |
     | Which country this deployment serves (CA / US / GB). In production this is
-    | normally derived from the request host (books.lineledger.ca vs .com vs
-    | .co.uk), but setting APP_REGION forces it — useful on host-agnostic
-    | environments like local dev (localhost). Legal links use this region; the
-    | guest country-switcher banner only appears on the sibling hosts listed in
+    | normally derived from the request host (.ca → CA, .uk → GB, otherwise US),
+    | but setting APP_REGION forces it — useful on host-agnostic environments
+    | like local dev (localhost). Legal links use this region; the guest
+    | country-switcher banner only appears on the sibling hosts listed in
     | "app_urls".
     |
     */
 
     'region' => env('APP_REGION'),
 
+    // Sibling deployments, for an operator who runs one per country. Empty by
+    // default: an empty URL keeps that country out of the banner, so with none
+    // set the banner never appears.
     'app_urls' => [
-        'CA' => env('APP_URL_CA', 'https://books.lineledger.ca'),
-        'US' => env('APP_URL_US', 'https://books.lineledger.com'),
-        // Empty until the UK twin is live: an empty URL keeps it out of the banner.
+        'CA' => env('APP_URL_CA', ''),
+        'US' => env('APP_URL_US', ''),
         'GB' => env('APP_URL_GB', ''),
     ],
 

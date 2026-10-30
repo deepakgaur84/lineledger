@@ -1,13 +1,17 @@
 <?php
 
+use App\Exceptions\EditLocks\RecordEditLockedException;
 use App\Livewire\Attributes\GuardsEditLock;
 use App\Livewire\Concerns\ShowsEditLock;
 use App\Models\Company;
 use App\Models\Donation;
+use App\Models\User;
+use App\Services\EditLocks\EditLockManager;
 use App\Services\Fundraising\DonationPoster;
 use App\Support\Money;
 use Flux\Flux;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Auth;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
@@ -51,16 +55,40 @@ new #[Title('Donation')] class extends Component {
     #[GuardsEditLock]
     public function void(): void
     {
+        // Voiding also voids the donation's official receipt, so it waits while
+        // someone else has that receipt open, and an editor who opened it
+        // earlier can't save over it afterwards.
+        $receipt = $this->donation->donationReceipt;
+        $voidsReceipt = $receipt !== null && ! $receipt->isVoid();
+        $locks = app(EditLockManager::class);
+
+        if ($voidsReceipt) {
+            try {
+                $locks->assertWritable($receipt, Auth::user() instanceof User ? Auth::user() : null);
+            } catch (RecordEditLockedException $e) {
+                Flux::toast(variant: 'danger', text: $e->getMessage());
+
+                return;
+            }
+        }
+
         try {
             app(DonationPoster::class)->void($this->donation);
         } catch (\Throwable $e) {
             Flux::toast(variant: 'danger', text: $e->getMessage());
 
             return;
+        } finally {
+            if ($voidsReceipt) {
+                $locks->touch($receipt);
+            }
         }
 
-        $this->donation->refresh();
-        Flux::toast(variant: 'success', text: __('Donation voided.'));
+        $this->donation->refresh()->load('donationReceipt');
+
+        Flux::toast(variant: 'success', text: $voidsReceipt
+            ? __('Donation voided, and its receipt :number with it.', ['number' => $receipt->receipt_no])
+            : __('Donation voided.'));
     }
 }; ?>
 
@@ -84,7 +112,7 @@ new #[Title('Donation')] class extends Component {
                 <flux:button variant="ghost" icon="pencil" :href="route('donations.edit', ['company' => $company, 'donation' => $donation])" wire:navigate data-test="donation-edit-button">{{ __('Edit') }}</flux:button>
                 <flux:button variant="primary" icon="check" wire:click="post" data-test="donation-post-button">{{ __('Post') }}</flux:button>
             @elseif ($donation->isPosted())
-                <flux:button variant="danger" icon="x-mark" wire:click="void" wire:confirm="{{ __('Void this donation? Its journal entry will be reversed.') }}" data-test="donation-void-button">{{ __('Void') }}</flux:button>
+                <flux:button variant="danger" icon="x-mark" wire:click="void" wire:confirm="{{ $donation->donationReceipt && ! $donation->donationReceipt->isVoid() ? __('Void this donation? Its journal entry will be reversed and its official receipt :number voided.', ['number' => $donation->donationReceipt->receipt_no]) : __('Void this donation? Its journal entry will be reversed.') }}" data-test="donation-void-button">{{ __('Void') }}</flux:button>
             @endif
         </div>
     </div>

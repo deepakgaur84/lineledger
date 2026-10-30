@@ -424,7 +424,10 @@ class CalculatePayRun
             array_map(fn (array $d) => ['amount_cents' => $d['amount_cents'], 'reduces_taxable' => $d['reduces_taxable']], $deductions),
         );
 
-        $ytd = $this->ytd->priorYtd((int) $line->contact_id, $payDate, $profile);
+        // Year-to-date from every run that counts before this one (posted runs,
+        // and calculated runs earlier by pay date then id); its fingerprint is
+        // stored below so posting can refuse a calculation that went stale.
+        $ytd = $this->ytd->priorYtd((int) $line->contact_id, $payDate, $profile, (int) $line->pay_run_id);
 
         $context = $this->buildContext($profile, $line, $periods, $payDate);
 
@@ -536,9 +539,15 @@ class CalculatePayRun
         );
 
         $line->forceFill([
+            'ytd_basis_hash' => $ytd->fingerprint(),
+            'indian_act_exempt' => (bool) $profile->indian_act_exempt,
             'regular_earnings_cents' => $regular,
             'cpp_pensionable_cents' => $result->taxablePensionableUsedCents,
             'ei_insurable_cents' => $result->insurableUsedCents,
+            // Every insurable dollar, before the EI maximum: the ROE reports all
+            // of it (Blocks 15B/15C); ei_insurable_cents stays capped for the
+            // premium and T4 box 24. Nothing is insurable when EI doesn't apply.
+            'roe_insurable_earnings_cents' => $context->eiExempt ? 0 : max(0, $breakdown->insurableCents),
             'qpip_insurable_cents' => $result->qpipInsurableUsedCents,
             'insurable_hours' => $insurableHours,
             'cpp_employee_computed_cents' => $result->cppEmployeeCents,
@@ -587,7 +596,9 @@ class CalculatePayRun
             additionalTaxPerPeriodCents: (int) $profile->additional_tax_per_period_cents,
             annualDeductionsCents: (int) $profile->authorized_annual_deductions_cents,
             qpipExempt: (bool) $profile->qpip_exempt,
-            incomeTaxExempt: (bool) $profile->income_tax_exempt,
+            // Indian Act exempt employment income has no income tax withheld
+            // either; the T4 reports it under code 71 (T4SlipCalculator).
+            incomeTaxExempt: (bool) $profile->income_tax_exempt || (bool) $profile->indian_act_exempt,
             dateOfBirth: $profile->date_of_birth,
             cpt30ElectionDate: $profile->cpt30_election_date,
         );

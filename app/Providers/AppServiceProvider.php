@@ -2,6 +2,12 @@
 
 namespace App\Providers;
 
+use App\Http\Middleware\EnforceTwoFactor;
+use App\Http\Middleware\EnsureCompanyMembership;
+use App\Http\Middleware\EnsurePortalAudience;
+use App\Http\Middleware\EnsureSectionAccess;
+use App\Http\Middleware\EnsureSectionEnabled;
+use App\Http\Middleware\EnsureSiteAdmin;
 use App\Http\Middleware\ResolvePortalCompany;
 use App\Listeners\Security\NotifyNewDeviceLogin;
 use App\Listeners\Security\SecurityLogListener;
@@ -18,7 +24,10 @@ use App\Support\DateDisplay;
 use App\Support\MailSettings;
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Events\Login;
+use Illuminate\Auth\Notifications\ResetPassword;
+use Illuminate\Auth\Notifications\VerifyEmail;
 use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Contracts\Auth\CanResetPassword;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
@@ -73,11 +82,27 @@ class AppServiceProvider extends ServiceProvider
         $this->configureRouteBindings();
         $this->configurePassport();
 
-        // Livewire re-runs only "persistent" route middleware on /livewire/update.
-        // The customer guard (Authenticate) is persistent by default, so the
-        // portal company must be too, or a portal component's updates resolve the
-        // session's Contact before the company is bound (see bootstrap/app.php).
-        Livewire::addPersistentMiddleware([ResolvePortalCompany::class]);
+        // Livewire's update endpoint does not run a page's route middleware: it
+        // re-runs only the "persistent" ones, against the page route recorded in
+        // each component's checksummed snapshot. So every gate that authorizes a
+        // page must be listed, or updates skip it, including a snapshot replayed
+        // after the user lost access:
+        //  - the tenant gates: membership and minimum role, the section kill
+        //    switch, section access and the company's 2FA policy;
+        //  - the portals: the portal company must be bound before the customer
+        //    guard (persistent by default) resolves the session's Contact (see
+        //    bootstrap/app.php), then the audience is checked;
+        //  - the site-admin portal.
+        // BindCurrentCompanyHook then checks the company each component carries.
+        Livewire::addPersistentMiddleware([
+            ResolvePortalCompany::class,
+            EnsurePortalAudience::class,
+            EnsureCompanyMembership::class,
+            EnsureSectionEnabled::class,
+            EnsureSectionAccess::class,
+            EnforceTwoFactor::class,
+            EnsureSiteAdmin::class,
+        ]);
 
         Company::observe(CompanyObserver::class);
 
@@ -170,6 +195,26 @@ class AppServiceProvider extends ServiceProvider
                 ->uncompromised()
             : null,
         );
+    }
+
+    /**
+     * Build the password-reset and email-verification links on APP_URL. Both
+     * notifications are sent inline, and Laravel's defaults build their links on
+     * the request's host, so a forged Host would carry the reset token or the
+     * signed verification link to another site.
+     */
+    protected function configureEmailLinks(): void
+    {
+        ResetPassword::createUrlUsing(fn (CanResetPassword $user, string $token): string => CanonicalUrl::route('password.reset', [
+            'token' => $token,
+            'email' => $user->getEmailForPasswordReset(),
+        ]));
+
+        VerifyEmail::createUrlUsing(fn (User $user): string => CanonicalUrl::temporarySignedRoute(
+            'verification.verify',
+            now()->addMinutes((int) config('auth.verification.expire', 60)),
+            ['id' => $user->getKey(), 'hash' => sha1($user->getEmailForVerification())],
+        ));
     }
 
     /**

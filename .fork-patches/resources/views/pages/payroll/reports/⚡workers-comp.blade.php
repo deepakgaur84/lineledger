@@ -15,6 +15,7 @@ use App\Services\Reporting\WorkersCompRemittanceCalculator;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
 use Flux\Flux;
+use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
@@ -125,7 +126,7 @@ new #[Title("Workers' compensation remittance")] class extends Component {
     public function record(RecordPayrollRemittance $action): void
     {
         $validated = $this->validate([
-            'f_bank_account_id' => ['required', 'integer', 'exists:accounts,id'],
+            'f_bank_account_id' => ['required', 'integer', Rule::exists('accounts', 'id')->where('company_id', $this->company->id)->where('subtype', AccountSubtype::Bank->value)],
             'f_payment_date' => ['required', 'date'],
             'f_reference' => ['nullable', 'string', 'max:255'],
         ]);
