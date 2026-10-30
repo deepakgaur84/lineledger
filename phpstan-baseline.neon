@@ -1537,12 +1537,6 @@ parameters:
 			path: app/Services/Fundraising/FundraisingReportCalculator.php
 
 		-
-			message: '#^Method App\\Services\\Fundraising\\FundraisingReportCalculator\:\:donationsByDonor\(\) should return Illuminate\\Support\\Collection\<int, array\{donor\: string, count\: int, total_cents\: int\}\> but returns Illuminate\\Support\\Collection\<int, array\{donor\: string, count\: int\<0, max\>, total_cents\: int\}\>\.$#'
-			identifier: return.type
-			count: 1
-			path: app/Services/Fundraising/FundraisingReportCalculator.php
-
-		-
 			message: '#^Method App\\Services\\Fundraising\\FundraisingReportCalculator\:\:grantsSummary\(\) should return Illuminate\\Support\\Collection\<int, array\{grant_no\: string, name\: string, funder\: string, award_cents\: int, recognized_cents\: int, deferred_cents\: int, status\: string\}\> but returns Illuminate\\Support\\Collection\<int, array\{grant_no\: string, name\: string, funder\: string, award_cents\: int, recognized_cents\: int, deferred_cents\: int, status\: mixed\}\>\.$#'
 			identifier: return.type
 			count: 1
