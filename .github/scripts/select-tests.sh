@@ -23,7 +23,7 @@ if [ -z "$base" ]; then
   exit 0
 fi
 
-changed="$(git diff --name-only --diff-filter=ACMR "$base" HEAD || true)"
+changed="$(git -c core.quotepath=off diff --name-only --diff-filter=ACMR "$base" HEAD || true)"
 
 js=false
 if printf '%s\n' "$changed" | grep -qE '^(resources/js/|package(-lock)?\.json|vite\.config|.*\.test\.(js|ts)$)'; then js=true; fi

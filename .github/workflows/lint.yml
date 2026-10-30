@@ -44,7 +44,7 @@ jobs:
             vendor/bin/pint --test
             exit 0
           fi
-          files="$(git diff --name-only --diff-filter=ACMR "$base" HEAD -- '*.php' | grep -v '\.blade\.php$' | grep -v '^\.fork-patches/' || true)"
+          files="$(git -c core.quotepath=off diff --name-only --diff-filter=ACMR "$base" HEAD -- '*.php' | grep -v '\.blade\.php$' | grep -v '^\.fork-patches/' || true)"
           if [ -z "$files" ]; then
             echo "No PHP files changed; nothing to lint."
           else
