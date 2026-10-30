@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Number;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 use Livewire\WithFileUploads;
@@ -24,7 +25,12 @@ new #[Layout('layouts.onboarding'), Title('Restore from backup')] class extends 
     /** Temporary uploaded file (Livewire managed). */
     public $upload = null;
 
-    /** Populated once the bundle is inspected and the CompanyRestore row exists. */
+    /**
+     * Populated once the bundle is inspected and the CompanyRestore row exists.
+     * Locked, and every read goes through ownRestore(): restores belong to a
+     * user, not an organization, so no scope stands behind a client-set id.
+     */
+    #[Locked]
     public ?int $restoreId = null;
 
     /** State machine: 'upload' → 'preview' → 'status'. */
@@ -105,8 +111,8 @@ new #[Layout('layouts.onboarding'), Title('Restore from backup')] class extends 
     {
         abort_if($this->restoreId === null, 422);
 
-        $restore = CompanyRestore::findOrFail($this->restoreId);
-        abort_unless($restore->requested_by_user_id === auth()->id(), 403);
+        $restore = $this->ownRestore();
+        abort_if($restore === null, 404);
         abort_unless($restore->status === CompanyRestoreStatus::Ready, 409);
 
         $restore->update([
@@ -126,7 +132,7 @@ new #[Layout('layouts.onboarding'), Title('Restore from backup')] class extends 
     public function cancel(): void
     {
         if ($this->restoreId !== null) {
-            $restore = CompanyRestore::find($this->restoreId);
+            $restore = $this->ownRestore();
 
             if ($restore !== null) {
                 if ($restore->file_path !== null && Storage::disk($restore->storageDisk())->exists($restore->file_path)) {
@@ -148,9 +154,17 @@ new #[Layout('layouts.onboarding'), Title('Restore from backup')] class extends 
     #[Computed]
     public function restore(): ?CompanyRestore
     {
-        return $this->restoreId !== null
-            ? CompanyRestore::find($this->restoreId)
-            : null;
+        return $this->ownRestore();
+    }
+
+    /**
+     * The restore row, only when the signed-in user is the one who uploaded it.
+     */
+    private function ownRestore(): ?CompanyRestore
+    {
+        return $this->restoreId === null
+            ? null
+            : CompanyRestore::query()->where('requested_by_user_id', auth()->id())->find($this->restoreId);
     }
 
     /**

@@ -117,7 +117,7 @@ class CanadianDefaults implements CompanyDefaults
             ['name' => 'E-transfer', 'is_cheque' => false],
             ['name' => 'EFT', 'is_cheque' => false],
             ['name' => 'Wire', 'is_cheque' => false],
-            ['name' => 'Credit card', 'is_cheque' => false],
+            ['name' => 'Credit card', 'is_cheque' => false, 'is_card' => true],
         ];
     }
 

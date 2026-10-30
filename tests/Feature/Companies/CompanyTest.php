@@ -90,13 +90,13 @@ test('owners can save branding fields and upload a logo', function () {
     Storage::fake('public');
 
     $user = User::factory()->create();
-    $company = Company::factory()->create(['name' => 'Just Cremation']);
+    $company = Company::factory()->create(['name' => 'Juniper Lane']);
     $company->members()->attach($user, ['role' => CompanyRole::Owner->value]);
 
     $this->actingAs($user);
 
     Livewire::test('pages::companies.edit', ['company' => $company])
-        ->set('brandName', 'Just Cremation')
+        ->set('brandName', 'Juniper Lane')
         ->set('brandInitials', 'jc')
         ->set('brandTextColor', '#ffffff')
         ->set('brandBackgroundColor', '#00aa55')
@@ -106,7 +106,7 @@ test('owners can save branding fields and upload a logo', function () {
 
     $company->refresh();
 
-    expect($company->brand_name)->toEqual('Just Cremation');
+    expect($company->brand_name)->toEqual('Juniper Lane');
     expect($company->brand_initials)->toEqual('JC');
     expect($company->brand_text_color)->toEqual('#ffffff');
     expect($company->brand_background_color)->toEqual('#00aa55');
@@ -143,14 +143,14 @@ test('owners can set and clear the legal name', function () {
 
     Livewire::test('pages::companies.edit', ['company' => $company])
         ->assertSet('legalName', '')
-        ->set('legalName', 'Personal Alternative Funeral Services Limited')
+        ->set('legalName', 'Cedar Point Holdings Limited')
         ->call('updateCompany')
         ->assertHasNoErrors();
 
-    expect($company->refresh()->legal_name)->toEqual('Personal Alternative Funeral Services Limited');
+    expect($company->refresh()->legal_name)->toEqual('Cedar Point Holdings Limited');
 
     Livewire::test('pages::companies.edit', ['company' => $company])
-        ->assertSet('legalName', 'Personal Alternative Funeral Services Limited')
+        ->assertSet('legalName', 'Cedar Point Holdings Limited')
         ->set('legalName', '   ')
         ->call('updateCompany')
         ->assertHasNoErrors();
@@ -556,7 +556,7 @@ test('guests cannot access companies', function () {
 test('user companies are listed alphabetically by display name', function () {
     $user = User::factory()->create();
 
-    foreach (['Zebra Holdings', 'acme Supplies', 'Pacific Crematorium Limited'] as $name) {
+    foreach (['Zebra Holdings', 'acme Supplies', 'Harborview Services Limited'] as $name) {
         Company::factory()->create(['name' => $name])
             ->members()->attach($user, ['role' => CompanyRole::Owner->value]);
     }
@@ -564,6 +564,6 @@ test('user companies are listed alphabetically by display name', function () {
     $names = $user->toUserCompanies(includeCurrent: true)->pluck('displayName');
 
     expect($names->all())->toBe($names->sortBy(fn (string $name) => Str::lower($name), SORT_NATURAL)->values()->all())
-        ->and($names->intersect(['Zebra Holdings', 'acme Supplies', 'Pacific Crematorium Limited'])->values()->all())
-        ->toBe(['acme Supplies', 'Pacific Crematorium Limited', 'Zebra Holdings']);
+        ->and($names->intersect(['Zebra Holdings', 'acme Supplies', 'Harborview Services Limited'])->values()->all())
+        ->toBe(['acme Supplies', 'Harborview Services Limited', 'Zebra Holdings']);
 });

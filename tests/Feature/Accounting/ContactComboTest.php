@@ -58,12 +58,12 @@ it('creates a new customer inline when posting an invoice', function () {
 
 it('carries the typed name into the create-customer input', function () {
     Livewire::test('pages::invoices.form', ['company' => $this->company])
-        ->set('contact_query', 'Pacific Crematorium Limited')
+        ->set('contact_query', 'Harborview Services Limited')
         ->call('startNewContact')
         ->assertSet('contact_creating', true)
-        ->assertSet('new_contact_name', 'Pacific Crematorium Limited')
+        ->assertSet('new_contact_name', 'Harborview Services Limited')
         // The create input must render the typed name, not an empty placeholder.
-        ->assertSeeHtml('value="Pacific Crematorium Limited"');
+        ->assertSeeHtml('value="Harborview Services Limited"');
 });
 
 it('clears a creating-state customer back to search', function () {

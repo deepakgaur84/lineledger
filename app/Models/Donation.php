@@ -5,6 +5,8 @@ namespace App\Models;
 use App\Concerns\BelongsToCompany;
 use App\Enums\DonationStatus;
 use App\Enums\GiftType;
+use App\Services\Charity\DonationReceiptSynchronizer;
+use Carbon\CarbonInterface;
 use Database\Factories\DonationFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -18,6 +20,10 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  *   DR deposit account / CR deferred-restricted liability (restricted, deferral method), or
  *   DR deposit account / CR donation revenue tagged with the fund (restricted fund method).
  * The official CRA receipt is a separate artifact, linked via donation_receipt_id.
+ *
+ * @property DonationStatus $status
+ * @property GiftType $gift_type
+ * @property CarbonInterface $donation_date
  */
 #[Fillable([
     'company_id', 'contact_id', 'donation_no', 'status', 'gift_type', 'donation_date',
@@ -79,6 +85,31 @@ class Donation extends Model
     public function isPosted(): bool
     {
         return $this->status === DonationStatus::Posted;
+    }
+
+    public function isVoid(): bool
+    {
+        return $this->status === DonationStatus::Void;
+    }
+
+    /**
+     * What an official receipt spawned from this donation takes from it, as
+     * receipt save data. The donation owns the gift; the receipt adds only what
+     * the CRA asks of the receipt itself (advantage, property description,
+     * appraisal). See {@see DonationReceiptSynchronizer}.
+     *
+     * @return array{contact_id: ?int, gift_type: string, gift_date: string, amount_cents: int, currency_code: ?string, revenue_account_id: ?int}
+     */
+    public function receiptFields(): array
+    {
+        return [
+            'contact_id' => $this->contact_id,
+            'gift_type' => $this->gift_type->value,
+            'gift_date' => $this->donation_date->toDateString(),
+            'amount_cents' => (int) $this->amount_cents,
+            'currency_code' => $this->currency_code,
+            'revenue_account_id' => $this->revenue_account_id,
+        ];
     }
 
     /**

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-29
+
+**Highlights.** UK companies get **statutory accounts** (FRS 102 Section 1A or
+FRS 105) as a PDF to file or a Word document to edit, and invoices get a second,
+**Airy** layout. The rest is fixes. **Security:** an open page re-checks your
+access on every action, the accounts, payments and deposits a form sends are
+checked against your organization on the server, and outside local development
+the app answers only on `APP_URL` and the new `TRUSTED_HOSTS` and trusts
+forwarded addresses only from the new `TRUSTED_PROXIES`. **Foreign currency:**
+bank-feed lines and journal entries on a foreign-currency account keep their
+foreign amount, those accounts reconcile in their own currency, and a void takes
+its foreign amount off too. **Payroll:** the T4, T4A, RL-1 and ROE files follow
+the current CRA, Revenu Québec and Service Canada formats, TD1 claims, annual
+maximums, vacation pay and Indian Act exempt income are handled correctly, and a
+pay date past the loaded tax tables is refused. Restores keep employee SINs
+readable and no longer collide with the organization they came from, and the
+1099 Summary uses the $2,000 threshold for 2026. The late-October dependency
+updates are in too, among them `laravel/mcp` 1.1.1, which limits what MCP's open
+client registration accepts. Nine migrations and two new `app:upgrade` steps;
+behind a load balancer, CDN or reverse proxy, set `TRUSTED_PROXIES` before you
+upgrade, and on Forge or bare metal check `.env` for an unclosed double quote.
+See `UPGRADING.md`.
+
 ### Added
 
 - **Statutory accounts (UK)** — year-end accounts for small companies as one PDF,
@@ -50,6 +73,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   running balance after each line, always worked out in date order, so it stays
   correct whatever the sort, page or Show cleared setting. Long registers page
   50 rows at a time instead of loading every line at once.
+- **No built-in sibling deployments.** `APP_URL_CA` and `APP_URL_US` no longer
+  default to `books.lineledger.ca` and `books.lineledger.com`, which aren't run any
+  more, so the guest country-switcher banner stays off unless you list your own
+  sibling deployments. `SECURITY.md` now scopes reports to the source code; running
+  deployments, including the public demo, are out of scope.
+- Dependency updates: `laravel/framework` 13.39, `livewire/flux` 2.21,
+  `resend/resend-php` 1.17, Guzzle 8.3.1, Carbon 3.15.1, `vlucas/phpdotenv` 5.8
+  (see the upgrade notes), Larastan 3.13.1, Vite 8.3.5,
+  `@rollup/rollup-linux-x64-gnu` 4.64.12 and the CodeQL SARIF upload action
+  4.39.1.
+  ([#145](https://github.com/lineledger/lineledger/pull/145)–[#152](https://github.com/lineledger/lineledger/pull/152))
 
 ### Fixed
 
@@ -79,9 +113,337 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `backup:import`. The keys now come back revoked, still linked to the audit
   entries they made, and the owner creates new ones. A restore that fails
   partway also no longer leaves an empty organization behind. Reported in #158.
+- **Employee SINs survive a restore.** A restore wrote each SIN into the new
+  organization unencrypted, where the app expects it encrypted, so every SIN in
+  a restored organization was unreadable and sat unencrypted in the database.
+  The T4 filed 000000000 in its place, the T4 PDF printed only the last four
+  digits, the RL-1 and ROE exports failed, and the organization could never be
+  backed up again. Nothing flagged it: `integrity:check` and `audit:verify`
+  still passed. A restore now encrypts SINs with the server's own key, so they
+  come back readable whichever server made the backup, with the same `APP_KEY`
+  or another. Organizations restored before this release are repaired by
+  `app:upgrade`, which now runs `backup:repair-encrypted-columns`: it encrypts
+  the SINs a restore left unencrypted and lists any that this `APP_KEY` cannot
+  decrypt, which have to be entered again (`--dry-run` shows both without
+  changing anything). A SIN that can't be decrypted no longer stops a backup
+  either: it is left out, and the restore preview says how many employees come
+  back without one.
+- **RL-1 and ROE exports file the unknown-SIN placeholder.** When a SIN can't be
+  decrypted, for example after a database is restored under a different
+  `APP_KEY`, the RL-1 and ROE XML exports failed. They now file 000000000,
+  while the T4 XML export refuses such a SIN and names the employee.
+- **Backups restore next to the organization they came from.** On the server
+  that made it, a restore stopped with a database error for any organization
+  that had ever invited a teammate, turned on inbox email, taken a card payment
+  through Stripe or had an AI assistant propose a write, because it copied
+  values no two organizations may share. The restored organization now gets
+  its own: invitations never accepted, and an assistant's proposals still
+  waiting to be confirmed, come back expired; inbox email comes back off, so
+  mail to the original's forwarding address never reaches the copy; card
+  payments keep the Stripe payment id in their reference. The same kind of
+  failure as #158.
+- **Voiding a foreign-currency document takes its foreign amount off too.** A
+  void reversed each line in your home currency but not its foreign amount and
+  rate, so a voided USD invoice, bill, credit memo, receipt, payment, deposit,
+  cheque or transfer stayed on its accounts in USD. Every period-end revaluation
+  then booked an unrealized gain or loss on that phantom balance, and voiding a
+  credit memo or vendor credit that had closed an invoice or bill (Close settled
+  balance) never re-opened it. Voids now carry the foreign amount and rate onto
+  the reversing entry, and so does the draft Reverse creates from a journal
+  entry. `app:upgrade` repairs earlier voids with a new step,
+  `currency:backfill-reversal-memos`: it copies each original line's foreign
+  amount onto the reversal, re-opens what a voided credit had kept closed, and
+  lists any reversal edited since, which it leaves alone. `integrity:check` now
+  reports a void that leaves foreign units behind. Revaluations already posted
+  are not changed; see `UPGRADING.md`.
+- **Foreign-currency bank lines post at their home value.** On a bank or
+  credit-card account in a foreign currency, a line added from For Review or
+  the statement import without a vendor or tax code (every deposit, and most
+  fees and charges) was booked at the statement's foreign amount as if it were
+  home currency, with no foreign amount kept: 100.00 USD went in as 100.00 CAD
+  instead of 135.00 at a 1.35 rate. Home balances, exchange gains and losses
+  and the period-end revaluation were then off by the exchange rate. These
+  lines are now converted at the rate for the transaction date and keep the
+  foreign amount, as expenses, deposits and transfers already did, so a line
+  posts the same home value however it is recorded. Paying a bill from an
+  account in the bill's own currency now also lowers that account's foreign
+  balance, not only its home balance. A line with no rate for its date is
+  refused until you enter one, and a line can't be categorized to an account
+  in a third currency; record a transfer instead. Entries posted before this
+  fix keep their amounts.
+- **Foreign-currency accounts reconcile in their own currency.** A bank or
+  credit-card account in a foreign currency could not be reconciled: the
+  reconcile screen added up each transaction's home value, so a USD statement
+  showing 1,000.00 never agreed with a 1,000 USD deposit booked at 1,400.00
+  CAD, and the Difference reached 0.00 only if you typed a made-up balance in
+  your home currency. Statement import compared the same home values, so it
+  never matched the account's existing transactions and offered them to be
+  added again. The reconcile screen, completed reconciliations and their CSV,
+  Excel and PDF downloads, statement matching and the bank register now all
+  work in the account's own currency, the one its statements are in. A
+  service charge or interest entered when you reconcile is posted at its home
+  value at that day's rate and keeps its foreign amount, instead of being
+  booked as if it were home currency. A customer payment deposited straight
+  into an account in the payment's own currency now raises that account's
+  foreign balance too, so it reconciles and the period-end revaluation no
+  longer counts it as a loss. A transaction recorded before its foreign amount
+  was kept counts at the amount it was booked at when that was the
+  statement's own figure (a line added from the statement feed, or a service
+  charge or interest from an earlier reconciliation); any other counts as zero
+  and is marked on the screen. If you reconciled a foreign account before by
+  entering home-currency figures, correct the beginning balance of its next
+  reconciliation with Edit details.
+- **Journal entries on foreign-currency accounts record the foreign amount.** A
+  journal line on a foreign bank or credit-card account, or a currency's
+  receivable or payable account, kept only its home amount. So the documented
+  way to open a USD bank account — a journal entry at the right exchange rate —
+  left no US dollars behind its balance, and the next period-end revaluation
+  wrote the whole balance off as an unrealized loss, even at an unchanged rate.
+  A journal entry writing off part of a foreign invoice didn't reduce what the
+  customer owed in their currency either, so Close settled balance couldn't
+  close it. The journal form now takes such a line in the account's currency at
+  an exchange rate filled in for the entry date (the rate a document would
+  lock), shows its home equivalent read-only, and the entry's page shows the
+  foreign amount and rate. The API takes and returns `currency_code`, `fx_rate`,
+  `foreign_debit_cents` and `foreign_credit_cents` on journal lines and works out
+  whichever is missing; a line that sends only home cents, like a recurring or
+  template line, gets its foreign amount at the entry date's rate. The Opening
+  Balances workspace no longer posts a draft trial balance target on a
+  foreign-currency account: record that balance with a journal entry in the
+  account's currency. Lines saved before the upgrade keep no foreign amount;
+  `UPGRADING.md` says how to find and correct them.
+- **An in-kind receipt created from a donation no longer books the gift
+  twice.** Such a receipt can't be issued until the property is described, and
+  the receipt form that takes the description also offered an Asset / expense
+  account to debit. Picking one made Issue receipt post the gift a second time,
+  doubling donation revenue and the asset in the statements and the T3010. A
+  receipt created from a donation now never posts, whatever its draft says: its
+  form shows the donation's donor, gift type, date and amount read-only and asks
+  only for the receipt's own details, and saving or issuing drops any debit
+  account. A stand-alone in-kind receipt still posts as before. An issued
+  receipt that shows both a View donation and a View journal entry link was
+  booked twice: Reissue it to reverse the extra entry, then issue the corrected
+  draft and send it to the donor.
+- **A receipt created from a donation stays in step with it.** Correcting a
+  draft donation left its draft receipt at the amount, date, donor and gift type
+  first keyed, and voiding a donation (a returned cheque) left its receipt
+  issued and counted on the T3010. Saving a draft donation now updates its draft
+  receipt, and voiding a donation voids its receipt, issued or draft, keeping
+  the number. Issue receipt waits until the donation is posted — a draft may
+  still be a pledge — and takes the donation's figures as they then stand. An
+  issued receipt is never edited: if its donation still changes, which only a
+  receipt issued before its donation was posted allows, it is voided and
+  replaced by a corrected draft, as Reissue does. Reissue keeps the corrected
+  draft linked to the donation.
+- **The 1099 Summary uses the $2,000 threshold for 2026 and leaves out card
+  payments.** It held every year to $600, so a vendor paid $600 to $1,999.99
+  in 2026 showed as needing a 1099-NEC. The IRS threshold is $2,000 for
+  payments made in 2026 and stays $600 for earlier years. The threshold now
+  follows the report's year on screen, in the PDF and in the MCP
+  `form1099-tool`, and a later year whose inflation-adjusted figure the IRS
+  has not published yet says so and uses the latest published one. The report
+  also counted card payments, which the card company reports on Form 1099-K
+  and which don't belong on a 1099-NEC. It now leaves out bill payments and
+  expenses paid from a credit card account, or made with a payment method
+  marked **Card or payment app** (new in Settings → Lists → Payment methods
+  for US organizations), such as a debit card or PayPal paid from the bank.
+  Credit card starts marked, as does any existing method with "card" in its
+  name; mark PayPal, Venmo and the like yourself. Cheques, ACH and wire
+  payments always count. New `payment_methods.is_card` column, also on the
+  payment methods API.
+- **Taking accrued vacation settles Vacation Payable.** Under Accrue to
+  liability, the default, vacation pay is expensed as Vacation Pay Expense as
+  it is earned. But when an employee then took that vacation, the pay was
+  expensed again as wages, Vacation Payable was never reduced, and the vacation
+  pay balance on their setup page and in the employee portal didn't go down.
+  Payroll expense was overstated by every dollar of vacation paid, and
+  Vacation Payable only ever grew. Posting a run now charges the part of the
+  vacation pay that the employee's accrued balance covers to Vacation Payable
+  (or a Dollars policy's own liability account) instead of wages, and lowers
+  the balance by the same amount. This applies to time off on a policy whose
+  code is `vacation`, or on a Dollars policy. A salaried employee's salary
+  keeps paying through vacation, so the hours they take count at their hourly
+  rate. Pay beyond what has accrued is still paid and stays wage expense, and a
+  Dollars policy no longer draws down an hours balance it doesn't have. Gross
+  pay, source deductions, remittances and T4s are unchanged, voiding a run
+  puts everything back, and runs posted earlier are left as they were (see
+  `UPGRADING.md` to correct them). New `pay_run_line_earnings.accrual_relief_cents`
+  column.
+- **Pay runs dated past the loaded tax tables are refused.** A pay run dated
+  in a year with no tables yet was calculated on the previous year's: a January
+  2027 run reused the July 2026 CPP, EI and income-tax figures, although base
+  CPP drops to 4.75% on January 1, 2027. A table now covers pay dates only to
+  December 31 of its own year, so from January 1 a run can't be calculated or
+  posted until that year's tables are added. The run stays a draft and says
+  why, in English or French, instead of showing an error, and Use current basic
+  amounts on the employee form no longer fills in last year's amounts. A run
+  calculated on the old tables before this release can't be posted either. Pay
+  dates through December 31, 2026 are unchanged.
+- **Payroll withholds the right tax for TD1 claims of $0 and partial claims.**
+  A TD1 total claim of $0 (claim code 0, for an employee with a second job) and
+  a partial claim below the basic personal amount (a newcomer's prorated
+  claim) were both credited the full basic amount, so too little tax was
+  withheld: about $2,960 a year for an Ontario second job paid $1,500 every two
+  weeks. The federal and provincial credits now use the claim as entered, as
+  CRA's T4127 says, and a Quebec TP-1015.3-V line 10 of $0 gets no Quebec
+  credit (deduction code O). A claim of an earlier year's basic amount still
+  counts as this year's. Three hand-worked T4127 cases join
+  `payroll:verify-calculations`.
+- **Two pay runs can no longer both take the last of the CPP and EI room.** A
+  regular run and a bonus run on the same pay date, or a run calculated before
+  an earlier one was posted, each took the full room left under the annual
+  CPP, CPP2, EI, QPP, QPP2 and QPIP maximums, so the employee and the employer
+  paid too much. The year-to-date now counts every posted pay run and every
+  calculated one that comes before it (by pay date, then the order the runs
+  were created). Posting stops while an earlier calculated run for the same
+  employee is unposted (post it, or save it back as a draft), asks for a
+  recalculation when another run was calculated, posted or voided after this
+  one was calculated, and refuses an adjustment that would go past a maximum.
+  A run calculated before this release is recalculated before it posts. New
+  `pay_run_lines.ytd_basis_hash` column.
+- **Indian Act exempt income goes in T4 code 71, not box 14.** A new **Indian
+  Act exempt income** switch on the Tax credits (TD1) card withholds no income
+  tax and reports the pay under code 71 with box 14 at zero, and RPP
+  contributions and union dues on it under codes 94 and 95; the T4 XML files
+  them as `indn_empe_amt`, `indn_xmpt_rpp_amt` and `indn_xmpt_unn_amt`. EI
+  still applies, and CPP or QPP only where you elected coverage on form CPT124
+  (RR-2-V in Quebec), so without that election also turn on CPP exempt.
+  **Income tax exempt** is unchanged: no tax withheld, but the pay is still
+  taxable in box 14. If you used it for a status Indian employee, turn on the
+  new switch for them: pay runs calculated before this release follow it, so
+  their 2026 T4 moves to code 71. New `employee_payroll_profiles` and
+  `pay_run_lines` `indian_act_exempt` columns.
+- **T4 and T4A XML follow the CRA's current schema.** The CRA would have
+  rejected every T4 and T4A file the app produced: they used the retired T619
+  transmittal (an "MM" transmitter number, a hyphenated submission reference),
+  element names the CRA doesn't define (`cpp2_cntrb_amt`, `ei_insur_ern_amt`,
+  `fees_srvc_amt`, `tot_cpp_cntrb_amt`…) and no box 24, box 45 or summary
+  contact. Both now follow the CRA's 2027 XML specifications (T619 2027V1,
+  T4 2027V2, T4A 2027V1) and pass its schema package 1-27-1, which the tests
+  check every generated file against. The T4 reports employer CPP and CPP2
+  apart, QPP and QPIP rather than CPP for Quebec employees, and amounts tagged
+  with an other-information code (30–99) or box 20, 44, 46 or 52, moving any
+  past six onto an additional slip as the CRA asks. A T4A names an individual
+  by name and SIN, or a business by its corporation name and business number.
+- **T4 and T4A files carry the payroll (RP) account, not the GST/HST number.**
+  Slips, summaries and the transmittal now use the Business Number and Payroll
+  (RP) account from Settings → Payroll. The CRA XML download is refused, with
+  what to fix listed on the T4 and T4A pages, until that account, the payroll
+  contact (name, a 10-digit phone, email) and the new **Employer-offered dental
+  benefits (T4 box 45)** code are set; an employee's payroll setup can override
+  the code. An optional **Representative ID** covers a representative filing
+  through Represent a Client. `CRA_TRANSMITTER_NUMBER` and
+  `CRA_TRANSMITTER_TYPE` are no longer read, and `CRA_TRANSMITTER_LANGUAGE`
+  now defaults to each organization's language. New
+  `companies.payroll_dental_benefits_code` and `payroll_cra_rep_id`, and
+  `employee_payroll_profiles.dental_benefits_code` columns.
+- **Employee SINs are checked when entered.** Payroll setup accepts nine digits
+  that pass the SIN check digit, or 000 000 000 when the employee hasn't given
+  one yet (saved as no SIN). A SIN already on file that fails the check or no
+  longer decrypts blocks the T4 XML and names the employee, instead of filing
+  a bad number or 000000000, which the CRA allows only when no SIN was given.
+  An employee with no SIN still files as 000000000, with a warning.
+- **RL-1 slips report every box they compute the way Revenu Québec asks.**
+  Box A left out taxable benefits given in kind (an employer-paid group life
+  premium, say), so it came out lower than T4 box 14; box B added the second
+  additional QPP contribution to the first; and the Employment Insurance
+  premiums withheld from Quebec employees appeared nowhere. Following the RL-1
+  guide (RL-1.G-V, 2026-10), box A now includes those benefits, box B is split
+  into B.A (base and first additional QPP) and B.B (second additional QPP), and
+  box C reports the EI premiums, on the RL-1 page, in the slips CSV, the slip
+  and summary PDFs and the XML; boxes the guide leaves blank stay blank, and
+  the summary splits the employer QPP contribution into its lines 22 and 24.
+  The XML now files the slips under your Revenu Québec identification number
+  and file number (for example 1234567890 and RS0001), set in a new Revenu
+  Québec source deductions block in Settings → Payroll, instead of the GST/HST
+  number, and waits until both are set. Slips finalized before this fix are
+  shown as issued, with a note to unlock and finalize them again (and to file
+  amended slips for any already filed). Official paper RL-1 slips still need a
+  Revenu Québec authorization number, and Revenu Québec takes RL-slip XML only
+  from software it has certified. New `companies.payroll_rq_identification_number`
+  and `payroll_rq_file_number` columns.
+- **The ROE Web XML is a file ROE Web accepts.** The download used made-up
+  element names and numbered the blocks wrongly (the SIN as Block 14, the
+  employee as Block 19), so it failed Service Canada's schema. It is now the
+  ROE Web payroll extract, version 2.0, checked against that schema: Block 5
+  carries your CRA payroll account (the Business Number and RP account from
+  Settings → Payroll, never the GST/HST number), Block 6 the pay period type,
+  Block 8 the SIN, Block 9 the employee's name and address, Block 15A the
+  insurable hours rounded up to whole hours, Block 15C every consecutive pay
+  period (0.00 for one with no pay), and Block 16 the three-character reason
+  code with your payroll contact. It downloads as a `.BLK` file to upload in ROE
+  Web with Upload a Payroll Extract File, where it arrives as a draft to check
+  and submit. Without a payroll account or payroll contact, or before any pay
+  is posted for the employee, the page says what to fix instead of downloading
+  a file ROE Web would refuse.
+- **The ROE reports all insurable earnings.** Each pay period on the ROE
+  showed only the earnings under the EI maximum insurable earnings ($68,900
+  for 2026), so a high earner's last pay periods looked like periods with no
+  pay and their EI benefit rate came out too low. The ROE now reports every
+  insurable dollar, as Service Canada requires, and the worksheet's Block 15B
+  totals the last 14 biweekly (27 weekly, 13 semi-monthly, 7 monthly) pay
+  periods, as the ROE guide counts them. T4 box 24 stays capped. New
+  `pay_run_lines.roe_insurable_earnings_cents` column; pay runs calculated
+  before it are read from their earning lines, so there is nothing to backfill.
 
 ### Security
 
+- **Losing access now applies to pages already open.** Buttons, forms and
+  searches on an open page checked that you were signed in, but not that you
+  could still use the page, so someone removed from an organization, moved to a
+  role or sections without that page, or no longer a site admin could keep
+  working in it. Each action now re-checks what loading the page does:
+  membership and role, section access, sections switched off for the platform,
+  the organization's two-factor requirement, the portal audience and site-admin
+  status. The organization the page works in must also still be yours,
+  including in search and navigation on settings pages; the site admin area and
+  the customer and employee portals keep their own rules.
+- **Every account a form sends is checked against your organization.** Some
+  forms took an account id from the page and used it as it came, so a tampered
+  request could name an account of another organization. Each of these now
+  accepts only your organization's own accounts, of the kind the field holds (a
+  bank account to pay from, an expense to charge, a liability to owe): the
+  journal entry form, including Save changes on a posted entry and Save as
+  template, and the invoice form's Save as template; the penalty, interest and
+  commission accounts on a tax-return payment; the service charge and interest
+  accounts on a reconciliation; the For Review feed (Accept, bulk categorize,
+  Split and Always do this) and the statement import wizard; and the payroll
+  pages: pay runs, payroll cheques, the PD7A, Revenu Québec and workers'
+  compensation remittances, and the wage, earning, deduction, pay schedule and
+  time-off policy fields of an employee's setup. A bank-feed category also can't
+  be the Accounts Receivable, Accounts Payable or Undeposited Funds control
+  account, which the category picker already leaves out. Behind the forms,
+  the ledger itself now refuses to post, repost or save a journal line on
+  another organization's account, whichever form, API call or job built it.
+  The API already checked these ids.
+- **Payments and deposits are checked on the server before they are saved.**
+  Receive payment, Pay bills (one payee or the batch page), Make deposit and
+  the API now check every invoice or bill a payment is applied to, and every
+  receipt on a deposit, against the database instead of trusting the copy the
+  page or the request carried. A payment applies only to posted invoices (or
+  bills) of the same organization and the same customer (or payee, and the
+  same kind: vendor bill or reimbursement), for no more than each still owes.
+  A deposit takes only posted receipts of the same organization that were
+  received into Undeposited Funds, each once, not already on another deposit
+  that hasn't been voided, and for the receipt's own amount. On the forms only
+  the amounts you type and the receipts you tick come from the browser; which
+  document a row names, and its open balance, stay with the server. Posting a
+  draft payment or deposit later checks it again, in case the invoice was paid
+  or the receipt deposited meanwhile. A refused line shows as a form error, or
+  a 422 from the API, naming the document. Overpayments still stay on account
+  as credit, and card refunds still net out of a deposit. **Self-hosters with
+  more than one organization should upgrade.**
+- **Pages stay within the organization you're working in.** The audit trail on
+  a journal entry, the bank register, and the summary in the account, customer
+  and vendor merge dialogs could be made to show another organization's audit
+  events, bank and card balances, or record counts. Each now reads only the
+  current organization's records, and the register answers another
+  organization's account with "not found". Likewise, creating a fixed asset
+  from a transaction line prefills only from your own organization's lines,
+  the restore page shows and cancels only restores you uploaded, and removing
+  a member acts only on a non-owner member of that organization. A new test
+  fails the build when a page lets an id sent by the browser reach a query the
+  organization filter doesn't cover.
 - **`symfony/mime` 8.1.10** (from 8.1.7) fixes an email header injection through
   MIME parameter names that contain non-token characters
   ([CVE-2026-45070](https://symfony.com/cve-2026-45070)). LineLedger never takes a
@@ -90,6 +452,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   also escapes quotes and backslashes in quoted parameter values, such as
   attachment filenames.
   ([#160](https://github.com/lineledger/lineledger/pull/160))
+- **`laravel/mcp` 1.1.1** (from 1.0.2) caps MCP's dynamic client registration
+  at 10 redirect URIs of up to 1,024 characters each. MCP clients call that
+  endpoint without signing in, and until now one registration could store any
+  number of redirect URIs of any length.
+  ([#145](https://github.com/lineledger/lineledger/pull/145))
+- **Links in email always point at `APP_URL`, and the app answers only on its
+  own host names.** Password-reset, email-verification, invitation and portal
+  sign-in links were built on whatever host name the request that sent them
+  arrived with, so a genuine email could carry its link to a site that isn't
+  yours. Every link in an email is now built on `APP_URL`. Outside local
+  development, a request for any host other than `APP_URL`'s, or one listed in
+  the new `TRUSTED_HOSTS`, is refused with 400 Bad Request, and
+  `X-Forwarded-Host` is no longer honoured from anyone.
+- **Forwarded client addresses count only from proxies you name.** Every peer's
+  `X-Forwarded-For`, `-Proto` and `-Port` headers were trusted, so on an install
+  reached directly (the one-click Droplet, Docker publishing ports 80/443) a
+  client could choose the IP address the sign-in throttle, the security monitor
+  and the security and audit logs saw. The new `TRUSTED_PROXIES` lists the load
+  balancers and proxies that may set them; it is empty by default, which trusts
+  none, and the App Platform spec sets it to `*`.
+- **The sign-in throttle also counts per account.** Besides five attempts a
+  minute for one email address from one IP, an address now gets ten a minute in
+  all, however many IPs they come from. `security:monitor` and Admin → Security
+  also flag failed sign-ins grouped by the address tried, so guessing spread
+  across many IPs still raises an alert.
+
+### Upgrade notes
+
+- **`APP_URL` must be the address people use.** Requests for any other host get
+  400 Bad Request; list the other names an installation answers on, including
+  any that Stripe's webhook or an inbound-email provider calls, in
+  `TRUSTED_HOSTS`.
+- **Behind a load balancer, CDN or reverse proxy, set `TRUSTED_PROXIES`** to the
+  address it connects from, and have it pass the `Host` header through.
+  Otherwise every visitor shows up with the proxy's IP, HTTPS goes undetected,
+  and signed links (email verification, file uploads) fail. On **App Platform**,
+  add `TRUSTED_PROXIES=*` to an existing app's environment before redeploying:
+  `deploy.sh` doesn't update an existing app's spec. On **Forge** with a
+  Cloudflare-proxied domain, use Cloudflare's IP ranges. The Droplet and Docker
+  reached directly need nothing.
+- **On Forge or bare metal, check `.env` for an unclosed double quote.**
+  `vlucas/phpdotenv` 5.8 refuses to start the app ("The environment file is
+  invalid!") where 5.7 silently ignored that setting and every line after it.
+  Docker, the Droplet and App Platform pass settings as environment variables
+  and aren't affected.
+- See `UPGRADING.md` for the step-by-step.
 
 ## [1.3.1] - 2026-10-24
 
@@ -1073,7 +1481,8 @@ general ledger as the single source of truth.
   set them only if you're moving to object storage, then run
   `php artisan storage:check`. See the README's **Object storage** section.
 
-[Unreleased]: https://github.com/lineledger/lineledger/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/lineledger/lineledger/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/lineledger/lineledger/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/lineledger/lineledger/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/lineledger/lineledger/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/lineledger/lineledger/compare/v1.2.1...v1.2.2

@@ -2,7 +2,9 @@
 
 namespace App\Actions\Payroll;
 
+use App\Enums\AccountSubtype;
 use App\Enums\PayrollChequeStatus;
+use App\Models\Account;
 use App\Models\PayrollCheque;
 use App\Models\PayRun;
 use App\Services\Posting\PayrollChequePoster;
@@ -14,7 +16,8 @@ use RuntimeException;
  * Issues and posts one payroll cheque per positive-net employee of a posted pay
  * run, numbering them sequentially from the given starting number. Employees
  * with zero/negative net get no cheque. Idempotent per line: a line that already
- * has a cheque is skipped.
+ * has a cheque is skipped. The cheques are drawn on a bank account of the pay
+ * run's own organization — the one given, else the run's.
  */
 final class IssuePayrollCheques
 {
@@ -34,7 +37,12 @@ final class IssuePayrollCheques
 
             $bankAccountId ??= $payRun->bank_account_id;
 
-            if ($bankAccountId === null) {
+            $bank = $bankAccountId === null ? null : Account::query()
+                ->where('company_id', $payRun->company_id)
+                ->where('subtype', AccountSubtype::Bank->value)
+                ->find($bankAccountId);
+
+            if ($bank === null) {
                 throw new RuntimeException('Select a bank account before writing cheques.');
             }
 
@@ -50,7 +58,7 @@ final class IssuePayrollCheques
                 $cheque = PayrollCheque::create([
                     'pay_run_id' => $payRun->id,
                     'pay_run_line_id' => $line->id,
-                    'bank_account_id' => $bankAccountId,
+                    'bank_account_id' => $bank->id,
                     'cheque_no' => (string) $number,
                     'cheque_date' => $payRun->pay_date,
                     'payee_contact_id' => $line->contact_id,

@@ -12,10 +12,10 @@ newest first.
 - **Back up first, every time.** A release can carry a migration that cannot be undone,
   and restoring a backup is the only supported way back. How to take one is under each
   release's *Before you start*.
-- **One release at a time.** Go 1.0.0 → 1.1.0 → 1.2.0 → 1.3.0, running each release's
-  steps in turn. Skipping a release skips its backfills and its behaviour notes.
-- **Docker tags.** The image is `ghcr.io/lineledger/lineledger`. `1.3.0` is one exact
-  release; `1.3` follows the newest 1.3.x patch; `latest` follows the newest tagged
+- **One release at a time.** Go 1.0.0 → 1.1.0 → 1.2.0 → 1.3.0 → 1.4.0, running each
+  release's steps in turn. Skipping a release skips its backfills and its behaviour notes.
+- **Docker tags.** The image is `ghcr.io/lineledger/lineledger`. `1.4.0` is one exact
+  release; `1.4` follows the newest 1.4.x patch; `latest` follows the newest tagged
   release; `edge` follows `main` between releases. Release tags are built for
   linux/amd64 and linux/arm64; `edge` and other `main` builds are amd64 only. Pin
   `LINELEDGER_VERSION` in `.env` to the exact release, so an upgrade happens when you
@@ -23,7 +23,8 @@ newest first.
 - **`php artisan app:upgrade` is the post-deploy step, everywhere.** It runs the pending
   migrations, then every backfill the release needs (since 1.1.0:
   `banking:backfill-line-memos` and `banking:backfill-reconciliation-stamps`; 1.2.0 through
-  1.3.1 add none). Each
+  1.3.1 add none; 1.4.0 adds `backup:repair-encrypted-columns` and
+  `currency:backfill-reversal-memos`). Each
   backfill is idempotent, so a second run changes nothing. `--dry-run` runs the same
   steps without writing anything; `--verify` ends with an `integrity:check` that reports
   but never emails; `--company=<id-or-slug>` limits the backfills to one organization.
@@ -34,6 +35,381 @@ newest first.
   `APP_KEY` decrypts every stored secret and session; `PASSKEYS_USER_HANDLE_SECRET`
   anchors every registered passkey. Both stay exactly as they were, and both are in
   every backup you take.
+
+## 1.3.1 → 1.4.0
+
+Released 2026-10-29. A minor release that adds statutory accounts for UK companies and an
+Airy invoice layout, with fixes to security, foreign currency, payroll year-end filing and
+restores. PHP `^8.5` and Laravel 13 are unchanged (Laravel moves from 13.37 to 13.39);
+`phpoffice/phpword` is new (the statutory accounts' Word download), `symfony/mime` moves
+from 8.1.7 to 8.1.10, and `vlucas/phpdotenv` 5.8 refuses an unclosed double quote in
+`.env` (see below).
+**Nine migrations and two new `app:upgrade` steps** (`backup:repair-encrypted-columns`,
+then `currency:backfill-reversal-memos`), all run by `app:upgrade`. **New settings:**
+`TRUSTED_HOSTS` and `TRUSTED_PROXIES`; behind a load balancer, CDN or reverse proxy, set
+`TRUSTED_PROXIES` before you upgrade. `CRA_TRANSMITTER_NUMBER` and `CRA_TRANSMITTER_TYPE`
+are no longer read, `CRA_TRANSMITTER_LANGUAGE` now defaults to each organization's
+language, and `APP_URL_CA` and `APP_URL_US` now default to empty.
+`docker/digitalocean/app.yaml` gains `TRUSTED_PROXIES`, `docker-compose.yml` changes only
+in comments, and `backup.sh` and `restore.sh` are unchanged from 1.3.1. **The `1.3` tag
+stays on 1.3.1:** if `.env` pins `LINELEDGER_VERSION=1.3`, change it to `1.4.0` (or `1.4`).
+Take a backup first; with these migrations it is the supported way back to 1.3.1. Coming
+from 1.3.0 or earlier, do the earlier steps below first. Each subsection below covers one
+change that asks something of an operator.
+
+### Trusted hosts and proxies
+
+Two security fixes change what the app accepts from the network, and both can need a
+setting before you upgrade. Links in email (password reset, email verification,
+invitations, portal sign-in, and every other notification) are now always built on
+`APP_URL`; outside local development the app answers only on `APP_URL`'s host and the
+new `TRUSTED_HOSTS`, and refuses any other with **400 Bad Request**. Forwarded client
+addresses (`X-Forwarded-For`, `-Proto`, `-Port`) now count only from the proxies in
+the new `TRUSTED_PROXIES`, which is empty by default; until now every peer was trusted.
+`X-Forwarded-Host` is no longer honoured at all. **No migrations, no backfills.**
+`docker/digitalocean/app.yaml` gains `TRUSTED_PROXIES`, and `docker-compose.yml`
+changes only in a comment.
+
+#### Before you start
+
+Take a backup as usual. Then answer two questions for your installation:
+
+1. **Is `APP_URL` the address people type?** It must be, host and scheme. If people
+   (or Stripe's webhook, the inbound-email provider, an MCP client) also reach it by
+   another name, list those names in `TRUSTED_HOSTS`, comma-separated. Anything else
+   gets 400 after the upgrade. Subdomains of `APP_URL` are not included.
+2. **Does a load balancer, CDN or reverse proxy sit in front of the app?** If so, set
+   `TRUSTED_PROXIES` to the address it connects from, and make sure it passes the
+   original `Host` header through. Without it the app sees every visitor as the
+   proxy's IP, can't tell the request was HTTPS, and rejects signed links (email
+   verification, file uploads). If nothing sits in front, leave it empty.
+
+#### Docker
+
+Reached directly (`SERVER_NAME` with ports 80/443, or plain HTTP on a LAN): nothing
+to set, provided `APP_URL` is the address you use. Behind your own reverse proxy, add
+`TRUSTED_PROXIES` to `.env` first. For a proxy on the same Docker host,
+`172.16.0.0/12` covers the Docker networks it connects from; publish the app on
+loopback (`HTTP_PORT=127.0.0.1:8080`) so nothing else can reach that port. The proxy
+must pass `Host` through (nginx: `proxy_set_header Host $host;`, Apache:
+`ProxyPreserveHost On`). Then upgrade as usual:
+
+```bash
+./backup.sh
+# In .env, set LINELEDGER_VERSION=1.4.0 (or 1.4), plus TRUSTED_PROXIES / TRUSTED_HOSTS if you need them.
+docker compose pull && docker compose up -d
+docker compose exec app php artisan app:upgrade --verify
+```
+
+#### DigitalOcean Droplet
+
+Run `lineledger upgrade`. The Droplet serves the app itself, so `TRUSTED_PROXIES`
+stays empty. It answers on its domain (or its IP, before `lineledger domain`); to
+reach it by another name too, `lineledger config TRUSTED_HOSTS other.example.com`.
+
+#### DigitalOcean App Platform
+
+**This release changes `app.yaml`, and `./deploy.sh` doesn't update an existing
+app's spec.** Before you redeploy, open the app in the control panel → **Settings →
+App-Level Environment Variables → Edit**, add `TRUSTED_PROXIES` with the value `*`,
+and save. (Saving redeploys the app; releases before this one ignore the setting.)
+The load balancer is the only way to reach the containers, so trusting whatever
+connects is safe there, and without it email verification and uploads fail. Then
+run `./deploy.sh` again as usual. If your own domain is the primary one, the
+`.ondigitalocean.app` address now answers 400; add it to `TRUSTED_HOSTS` if anyone
+still uses it.
+
+#### Forge / bare metal
+
+If the site's own nginx faces the internet, nothing to set. If the domain is proxied
+by Cloudflare (the orange cloud) or the server sits behind a load balancer, set
+`TRUSTED_PROXIES` in Forge → Site → Environment first: the balancer's private
+address, or Cloudflare's published ranges (<https://www.cloudflare.com/ips/>), IPv4
+and IPv6 joined with commas. This prints that list:
+
+```bash
+{ curl -fsS https://www.cloudflare.com/ips-v4; echo; curl -fsS https://www.cloudflare.com/ips-v6; } | grep . | paste -sd, -
+```
+
+A site serving more than one domain lists the others in `TRUSTED_HOSTS`. Then deploy
+with the unchanged deploy script (its `config:cache` picks the settings up), run
+`php artisan app:upgrade --verify` and `php artisan queue:restart`.
+
+#### Behaviour to know about
+
+- **400 Bad Request for any host the app isn't configured for**, on every page and
+  the API. Local development (`APP_ENV=local`) is exempt, and so is the `/up` health
+  check, which Docker and App Platform call by the container's own address.
+- **Links in email follow `APP_URL`**, even on a site that answers on several hosts,
+  and even for mail sent while handling a request on another of them.
+- **The sign-in form counts per account as well as per IP.** Five attempts a minute
+  for one email address from one IP, as before, and now ten a minute for one address
+  from any number of IPs. Someone hammering an address can keep its owner waiting a
+  minute at a time; the security monitor reports it.
+- **`security:monitor` and Admin → Security group failed sign-ins by the email address
+  tried** as well as by IP, with the same `SECURITY_ALERT_FAILED_LOGIN_THRESHOLD`, so
+  attempts spread over many IPs still raise an alert.
+- **Check it worked:** sign in, then look at Admin → Security. Your own sign-in should
+  show your IP address, not your proxy's.
+
+#### Rolling back
+
+Nothing in the database changed. Deploy the previous release again; it ignores
+`TRUSTED_HOSTS` and `TRUSTED_PROXIES` and goes back to trusting every peer.
+
+### An unclosed double quote in `.env`
+
+`vlucas/phpdotenv` 5.8 refuses a `.env` file in which a double-quoted value never
+closes: the app won't start, and prints "The environment file is invalid!" with the line
+it couldn't read. Version 5.7 silently ignored that setting and every line after it, so an
+installation with this typo has been running without them. **No migrations, no
+backfills.** Only **Forge and bare-metal** installations read `.env` this way; Docker, the
+DigitalOcean Droplet and App Platform pass settings to the app as environment variables
+and need nothing.
+
+Before you upgrade, list the lines whose double-quoted value doesn't close on the same
+line:
+
+```bash
+grep -nE '^[^#]*="[^"]*$' .env
+```
+
+Each line it prints either starts a value that deliberately spans several lines, which is
+fine, or is missing its closing quote. Add the missing quote, then check the settings that
+follow it: they take effect for the first time once the quote is fixed.
+
+### Employee SINs survive a restore
+
+**No migrations, no config or env changes.** A restore now encrypts each employee SIN with
+this server's key, so it comes back readable whichever server made the backup. A restore
+made before this release stored the SINs unencrypted, where the app can't read them, and
+`app:upgrade` gains a fourth step that repairs them, Encrypted columns
+(`backup:repair-encrypted-columns`).
+
+- **It encrypts the SINs an earlier restore stored unencrypted**, with this server's key,
+  so they read back exactly as they were stored. It never touches a value that is already
+  encrypted, and a second run finds nothing. To see first what it would change in each
+  organization, run `php artisan backup:repair-encrypted-columns --dry-run`; give it an
+  organization's ID or slug to check just that one.
+- **A SIN encrypted under a different `APP_KEY` can't be recovered.** The step counts
+  these for each organization (`… do not decrypt with this APP_KEY`) and leaves them as
+  they are: enter each one again on the employee's payroll setup. Until you do, the RL-1
+  and ROE exports file 000000000 for that employee, and the T4 page names the employee and
+  refuses the CRA XML download. The printed T4 slip shows only the SIN's last four digits.
+- **A backup no longer fails on such a SIN.** It leaves the SIN out, and the restore
+  preview says how many employees come back without one.
+
+### Void reversals carry the foreign-currency memo
+
+Upgrade as usual: back up first, then let `app:upgrade` run. This backfill is its fifth
+step; the fourth, `backup:repair-encrypted-columns`, is also new in this release.
+
+#### The backfill: reversal currency memos
+
+Until this release a void reversed each journal line in the home currency but dropped its
+foreign-currency amount and rate, so every voided foreign-currency document (invoice, bill,
+credit memo, vendor credit, receipt, bill payment, deposit, cheque, transfer) left its
+foreign amount on its accounts. `app:upgrade` now runs `currency:backfill-reversal-memos`
+after the two banking backfills and `backup:repair-encrypted-columns`:
+
+- It copies the currency, rate and foreign amount of each original line onto the reversal
+  line that mirrors it, foreign debit and credit swapped. Home amounts are not touched, so
+  no balance, report or audit-chain entry changes.
+- It then re-checks each customer and vendor whose AR or AP lines it filled, and re-opens
+  any invoice or bill that Close settled balance had closed against a credit memo, vendor
+  credit or receipt that was later voided. Those documents show as owing again, which is
+  what the ledger said all along. Each re-open is recorded in the audit trail.
+- A reversal it cannot match to its original line for line (edited after it was posted,
+  or two lines it cannot tell apart) is left as it is and listed as `Skipped reversal …`.
+  It is listed on every run until fixed. When it is a void, `integrity:check` reports it
+  too, so `app:upgrade --verify` fails until then.
+
+It is idempotent: a second run fills nothing. To see what it would do first, per
+organization, run `php artisan app:upgrade --dry-run` (or
+`php artisan currency:backfill-reversal-memos --dry-run`).
+
+**Preview it with `php artisan currency:backfill-reversal-memos --dry-run`.** This release
+also has migrations, and while one is pending `app:upgrade --dry-run` previews none of the
+data steps. So apply them first (`php artisan migrate --force`), run the dry run, read what
+it would fill, re-open and skip in each organization, then run `app:upgrade`. Under
+Docker, set `MIGRATE_ON_BOOT=false` for this upgrade, or the `app` container runs
+`app:upgrade`, this backfill included, as it starts; prefix the commands with
+`docker compose exec app`.
+
+#### Behaviour to know about
+
+- **Revaluations already posted are not changed.** A Home Currency Adjustment run after a
+  foreign-currency void revalued the voided amount as if it were still open. Each
+  adjustment reverses itself the next day, so balances after it are right, but the
+  unrealized gain or loss it posted at that period end counted the voided documents. The
+  backfill says how many adjustments that affects and from which date. Review the
+  period-end figures they produced. Where it matters and the period is still open, correct
+  the Unrealized Gain or Loss account with a journal entry.
+- **`integrity:check` has a sixth check:** a voided entry and its reversal must cancel in
+  foreign units on every account. It is report-only, with no `--fix`; the backfill above
+  is the repair.
+
+### Foreign-currency accounts reconcile in their own currency
+
+**No migrations, no backfills, no config or env changes.** A bank or credit-card account in
+a foreign currency now reconciles in that currency, the one its statements are in: the
+reconcile screen, completed reconciliations and their downloads, statement matching and the
+bank register all count its transactions in it.
+
+- **A foreign account you reconciled before by typing home-currency figures** can show a
+  Difference other than 0.00 on those completed reconciliations: their ticked transactions
+  now count in the account's currency, while the balances you typed are home amounts. Its
+  next reconciliation starts from the last ending balance, a home figure, so when you begin
+  it, select **Edit details** and correct the **Beginning balance** to the statement's
+  balance in the account's currency.
+
+### Journal entries on foreign-currency accounts
+
+A journal line on a foreign-currency account (a foreign bank or credit-card account, or a
+currency's receivable or payable account) now records its amount in that currency and
+the rate, and the period-end revaluation reads that amount. **Lines saved before the
+upgrade are not changed.** A line saved without its foreign amount still stands for no
+foreign units, so each revaluation keeps writing its home amount off as an unrealized
+loss (or gain), and a write-off posted that way still doesn't reduce what the customer or
+vendor owes in their currency.
+
+`app:upgrade` deliberately has no backfill for this. The foreign amount was never stored,
+so it can't be recovered: working it out from the home amount at the day's rate would
+write a guessed balance into posted entries, one that would then disagree with the bank
+statement. And some of these lines are meant to carry no foreign units at all — a
+hand-made revaluation, or an adjustment that clears a leftover home balance on a foreign
+receivable — so converting every one would break those. Each one needs a person who
+knows the real foreign amount.
+
+**Find them.** Read-only, on MySQL or SQLite — manual entries with a posted line on a
+foreign-currency account and no foreign amount:
+
+```sql
+SELECT je.company_id, je.id AS entry_id, je.entry_no, je.entry_date,
+       a.code AS account_code, a.currency_code, jl.debit_cents, jl.credit_cents
+FROM journal_lines jl
+JOIN journal_entries je ON je.id = jl.journal_entry_id
+JOIN accounts a ON a.id = jl.account_id
+WHERE jl.is_posted = 1
+  AND jl.currency_code IS NULL
+  AND a.currency_code IS NOT NULL
+  AND je.source_type IS NULL
+  AND je.voided_at IS NULL
+  AND je.reverses_entry_id IS NULL
+ORDER BY je.company_id, je.entry_date;
+```
+
+**Fix each one** in the web app: open the entry under Accounting → Journal and select
+Edit. The line on the foreign account now shows an amount in the account's currency,
+worked out from its home amount at the rate on file for the entry date, with the home
+amount unchanged. Type the real foreign amount (from the bank statement or the invoice)
+and the rate the home amount was booked at — home ÷ foreign, so the entry still balances
+— then Save changes. To fix many entries at once, `PATCH /api/v1/journal-entries/{id}`
+with each line's home and foreign cents and no `fx_rate` sets the rate the two imply (see
+`docs/api-v1.md` §2.3). Leave alone a line that is meant to carry no foreign units, such
+as a hand-made revaluation: the journal now gives every line on a foreign account a
+foreign amount, so editing that entry there would add one.
+
+**Opening Balances workspace.** The draft trial balance no longer posts a target on a
+foreign-currency account; that balance is a journal entry in the account's currency. In
+a workspace that isn't finalized, the next save on any tab drops the old home-only line
+from the opening entry, and the account's target shows in the Unexplained balance until
+you post that journal entry. A finalized workspace keeps its entry as it is: un-finalize
+it, re-save the account's row on the Trial balance tab, post the journal entry, and
+finalize again.
+
+Revaluations already posted reversed themselves the next day, so only the reports for
+those period ends carry the extra loss. Whether to restate a closed period is your
+accountant's call; the first revaluation after the lines are fixed is correct.
+
+### Vacation taken relieves Vacation Payable
+
+**One migration, no backfills, no config or env changes.** `app:upgrade` applies the
+migration.
+
+#### What the migration does
+
+- **`pay_run_line_earnings.accrual_relief_cents`** (new nullable column): how much of each
+  posted earning was paid out of the employee's accrued vacation pay. Earnings posted
+  before the upgrade keep it empty, which tells a void to reverse them exactly as they
+  were posted.
+
+#### Behaviour to know about
+
+**Taking accrued vacation settles Vacation Payable.** From the first pay run posted after
+the upgrade, vacation an employee takes is charged to Vacation Payable (or a Dollars
+policy's own liability account) instead of to Wages & Salaries Expense, up to the vacation
+pay they have accrued, and their vacation pay balance goes down by the same amount. This
+covers time off on a time-off policy whose Code is `vacation` (the built-in vacation pay
+under Accrue to liability) or on a Dollars policy. Time off on a vacation policy with any
+other code still pays exactly as before, without touching the accrued vacation pay.
+Balances are kept by code, so renaming the code of a policy in use leaves its existing
+balance behind. Pay beyond the accrued balance is still paid and expensed as wages. Gross
+pay, source deductions, remittances, T4s and ROEs are unchanged. Runs posted before the
+upgrade are not touched.
+
+#### Correcting pay runs posted before the upgrade
+
+Only organizations that paid out accrued vacation before upgrading need this. Each dollar
+of it was expensed twice: as Vacation Pay Expense when it accrued, and again as wages when
+it was paid. So Wages & Salaries Expense and Vacation Payable are both overstated by it.
+Unless the vacation was entered as an amount rather than in hours, the employee's vacation
+pay balance was not lowered either. Do steps 2 and 3 together: correcting one without the
+other leaves Vacation Payable out of step with the balances, and the next vacation would
+be settled from pay the employee has already received.
+
+1. **Work out what was taken**, employee by employee. Take the vacation earnings on their
+   posted pay statements. For a salaried employee, whose salary paid the vacation, use the
+   vacation hours × annual salary ÷ the standard annual hours in Settings → Payroll. Never
+   count more than they had accrued at the time.
+2. **Fix the books** with a journal entry: debit Vacation Payable (or the policy's
+   liability account) and credit Wages & Salaries Expense (or the employee's wage
+   account), for the total. Date it in the period the vacation was paid if that period
+   is still open, otherwise in the current period. If the vacation fell in a fiscal year
+   you have closed, ask your accountant whether to adjust that year through retained
+   earnings instead.
+3. **Fix each employee's balance**, by the vacation they took in hours (a take entered as
+   an amount already lowered it). No screen edits a dollar balance yet. On a Dollars
+   policy that was given an opening balance, lowering the **Opening balance** on the
+   employee's setup page moves the balance down by the difference. Otherwise an operator
+   lowers it from the command line, once per employee. Set the organization's slug, the
+   employee's name and the amount in cents. For a Dollars policy, use its code instead of
+   `vacation` and leave out the last line, which keeps the built-in balance on the
+   profile in step:
+
+   ```bash
+   php artisan tinker --execute='
+   $profile = App\Models\EmployeePayrollProfile::withoutGlobalScopes()
+       ->whereHas("company", fn ($q) => $q->where("slug", "your-organization"))
+       ->whereHas("contact", fn ($q) => $q->where("display_name", "Jordan Avery"))
+       ->firstOrFail();
+   $balance = App\Models\EmployeeAccrualBalance::withoutGlobalScopes()
+       ->where("employee_payroll_profile_id", $profile->id)
+       ->where("code", "vacation")
+       ->firstOrFail();
+   $balance->decrement("balance_cents", 12345);
+   $profile->forceFill(["vacation_balance_cents" => $balance->balance_cents])->save();'
+   ```
+
+   Under Docker, prefix it with `docker compose exec app`.
+
+### Payroll: TD1 claims, shared pay dates and Indian Act exempt income
+
+**Two migrations, no backfills, no config or env changes.** `app:upgrade` applies them.
+
+#### Before the next pay run
+
+- **Recalculate each pay run still in Calculated status before you post it.** A run
+  calculated before the upgrade has no record of the year-to-date it was worked out
+  against, so posting it asks for a recalculation. A calculated run that will never be
+  posted now also blocks posting any later run for the same employee: post it, or open it
+  and save it as a draft.
+- **Turn on Indian Act exempt income for status Indian employees** whose employment income
+  is exempt under section 87 of the Indian Act, on the Tax credits (TD1) card of their
+  payroll setup. Turn on **CPP exempt** too unless you elected CPP coverage for them on form
+  CPT124 (in Quebec, **QPP exempt** unless you filed form RR-2-V). **Income tax exempt**
+  alone still reports their pay as taxable in T4 box 14. Pay runs calculated before the
+  upgrade follow the new switch, so their 2026 T4 moves to code 71.
 
 ## 1.3.0 → 1.3.1
 

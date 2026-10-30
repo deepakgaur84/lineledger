@@ -16,6 +16,8 @@ use App\Models\Contact;
 use App\Models\CustomerReceipt;
 use App\Models\Invoice;
 use App\Models\JournalEntry;
+use App\Models\ReceiptApplication;
+use App\Scopes\CompanyScope;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
 use App\Services\Currency\ExchangeRateService;
@@ -67,6 +69,7 @@ class ReceiptPoster
 
             $this->assertAmountValid($receipt);
             $this->refundGuard->assertWithinSource($receipt);
+            $this->ensureApplicationsPayable((int) $receipt->company_id, (int) $receipt->contact_id, $receipt->applications, $receipt);
 
             $ar = $this->controlAccounts->resolve($receipt->company, AccountSubtype::AccountsReceivable, $receipt->currency_code);
 
@@ -216,6 +219,8 @@ class ReceiptPoster
                 );
             }
 
+            $this->journalPoster->ensureLineAccountsInCompany($entry);
+
             // 3. Recompute each touched invoice's amount_paid from the
             // CURRENT set of all live applications (across all receipts).
             // This naturally unwinds whatever the old application was and
@@ -292,6 +297,139 @@ class ReceiptPoster
     }
 
     /**
+     * Refuse applications this receipt can't make. Each must name a posted
+     * invoice of the receipt's own organization and customer, never another
+     * organization's or another customer's, for a positive amount no larger
+     * than the invoice still has open for this receipt ({@see openBalancesFor()});
+     * an invoice named twice is held to the two amounts together. Used by
+     * SaveReceipt before anything is written, and by post() for a draft saved
+     * earlier, whose invoice may have been paid since.
+     *
+     * @param  iterable<array<string, mixed>|ReceiptApplication>  $applications
+     *
+     * @throws PostingValidationException
+     */
+    public function ensureApplicationsPayable(int $companyId, int $contactId, iterable $applications, ?CustomerReceipt $receipt = null): void
+    {
+        $amounts = [];
+
+        foreach ($applications as $application) {
+            $cents = (int) ($application['amount_cents'] ?? 0);
+
+            if ($cents <= 0) {
+                throw new PostingValidationException(__('Apply a positive amount to each invoice.'));
+            }
+
+            $invoiceId = (int) ($application['invoice_id'] ?? 0);
+            $amounts[$invoiceId] = ($amounts[$invoiceId] ?? 0) + $cents;
+        }
+
+        if ($amounts === []) {
+            return;
+        }
+
+        // Row locks first: a receipt posting against one of these invoices at
+        // the same moment waits for this one, and the paid amounts read below
+        // are the latest committed ones.
+        $invoices = Invoice::withoutGlobalScope(CompanyScope::class)
+            ->where('company_id', $companyId)
+            ->whereKey(array_keys($amounts))
+            ->lockForUpdate()
+            ->get()
+            ->keyBy('id');
+
+        $open = $this->openBalancesFor($invoices, $receipt);
+
+        foreach ($amounts as $invoiceId => $cents) {
+            $invoice = $invoices->get($invoiceId);
+
+            if (! $invoice instanceof Invoice) {
+                throw new PostingValidationException(__('That invoice could not be found.'));
+            }
+
+            $no = ['no' => $invoice->invoice_no];
+
+            if ((int) $invoice->contact_id !== $contactId) {
+                throw new PostingValidationException(__('Invoice :no belongs to a different customer.', $no));
+            }
+
+            if (! in_array($invoice->status, [InvoiceStatus::Posted, InvoiceStatus::Partial, InvoiceStatus::Paid], true)) {
+                throw new PostingValidationException(__('Invoice :no is not open for payment.', $no));
+            }
+
+            $available = $open[$invoiceId] ?? 0;
+
+            if ($available <= 0) {
+                throw new PostingValidationException(__('Invoice :no has nothing left to pay.', $no));
+            }
+
+            if ($cents > $available) {
+                throw new PostingValidationException(__("Cannot apply more than invoice :no's open balance of :amount.", [
+                    ...$no,
+                    'amount' => Money::fromCents($available)->toDecimalString(),
+                ]));
+            }
+        }
+    }
+
+    /**
+     * What each invoice still has open for $receipt to apply, keyed by invoice
+     * id: its total, less any balance reconciled away, less what OTHER posted
+     * receipts already pay. That last figure is read two ways and the larger
+     * wins: from the ledger of live applications (what repost() and
+     * integrity:check recompute the invoice from), and from the cached paid
+     * amount, which a receipt posted a moment earlier has already raised once
+     * the invoice's row lock is ours. So neither a drifted cache nor a racing
+     * receipt opens room that isn't there. The receipt's own live application
+     * counts as open: it is what an edit may re-apply.
+     *
+     * @param  iterable<Invoice>  $invoices
+     * @return array<int, int>
+     */
+    public function openBalancesFor(iterable $invoices, ?CustomerReceipt $receipt = null): array
+    {
+        $invoices = collect($invoices)->keyBy('id');
+        $ids = $invoices->keys()->map(fn ($id) => (int) $id)->all();
+
+        $live = $this->liveAppliedCentsByInvoice($ids);
+        $own = $receipt?->exists ? $this->liveAppliedCentsByInvoice($ids, (int) $receipt->id) : [];
+
+        $open = [];
+
+        foreach ($invoices as $id => $invoice) {
+            $ownCents = $own[$id] ?? 0;
+            $paidByOthers = max(($live[$id] ?? 0) - $ownCents, (int) $invoice->amount_paid_cents - $ownCents);
+
+            $open[(int) $id] = max(0, (int) $invoice->total_cents - (int) $invoice->reconciled_cents - $paidByOthers);
+        }
+
+        return $open;
+    }
+
+    /**
+     * Live applications per invoice, uncapped, in one grouped query — or only
+     * those of one receipt. Keyed by invoice id; an invoice with none is absent.
+     *
+     * @param  list<int>  $invoiceIds
+     * @return array<int, int>
+     */
+    public function liveAppliedCentsByInvoice(array $invoiceIds, ?int $receiptId = null): array
+    {
+        if ($invoiceIds === []) {
+            return [];
+        }
+
+        return $this->liveApplications()
+            ->whereIn('ra.invoice_id', $invoiceIds)
+            ->when($receiptId !== null, fn (Builder $query) => $query->where('ra.customer_receipt_id', $receiptId))
+            ->groupBy('ra.invoice_id')
+            ->selectRaw('ra.invoice_id, SUM(ra.amount_cents) as applied_cents')
+            ->pluck('applied_cents', 'invoice_id')
+            ->map(fn ($cents) => (int) $cents)
+            ->all();
+    }
+
+    /**
      * Sum applications across all posted, non-void receipts targeting this
      * invoice. Updates amount_paid_cents and status. This is the safe
      * canonical recompute — no matter what mutations happen on receipts,
@@ -324,12 +462,21 @@ class ReceiptPoster
      */
     public function liveAppliedCents(Invoice $invoice): int
     {
-        return (int) DB::table('receipt_applications as ra')
-            ->join('customer_receipts as r', 'r.id', '=', 'ra.customer_receipt_id')
+        return (int) $this->liveApplications()
             ->where('ra.invoice_id', $invoice->id)
-            ->where('r.status', ReceiptStatus::Posted->value)
-            ->whereNull('r.deleted_at')
             ->sum('ra.amount_cents');
+    }
+
+    /**
+     * Receipt applications that count against an invoice: those of posted,
+     * non-deleted receipts. The one definition every paid-amount figure uses.
+     */
+    private function liveApplications(): Builder
+    {
+        return DB::table('receipt_applications as ra')
+            ->join('customer_receipts as r', 'r.id', '=', 'ra.customer_receipt_id')
+            ->where('r.status', ReceiptStatus::Posted->value)
+            ->whereNull('r.deleted_at');
     }
 
     /**
@@ -459,10 +606,7 @@ class ReceiptPoster
      */
     private function invoicePaidCacheQuery(int $companyId, ?array $contactIds = null): Builder
     {
-        $live = DB::table('receipt_applications as ra')
-            ->join('customer_receipts as r', 'r.id', '=', 'ra.customer_receipt_id')
-            ->where('r.status', ReceiptStatus::Posted->value)
-            ->whereNull('r.deleted_at')
+        $live = $this->liveApplications()
             ->groupBy('ra.invoice_id')
             ->selectRaw('ra.invoice_id, SUM(ra.amount_cents) as live_cents');
 
@@ -557,6 +701,7 @@ class ReceiptPoster
             // serializes them so each adds to the latest committed value. (It is
             // a no-op on SQLite, which runs serially in tests anyway.)
             $invoice = Invoice::withoutGlobalScopes()
+                ->where('company_id', $receipt->company_id)
                 ->whereKey($app->invoice_id)
                 ->lockForUpdate()
                 ->first();
@@ -673,9 +818,11 @@ class ReceiptPoster
     }
 
     /**
-     * Deposit debits the home value received at the receipt rate; AR is credited
-     * per application at each invoice's locked rate (plus the unapplied remainder
-     * at the receipt rate). The home-cents residual balances to Exchange Gain/Loss.
+     * Deposit debits the home value received at the receipt rate (with the
+     * foreign memo when the deposit account is in the receipt's currency); AR is
+     * credited per application at each invoice's locked rate (plus the unapplied
+     * remainder at the receipt rate). The home-cents residual balances to
+     * Exchange Gain/Loss.
      */
     protected function buildForeignReceiptLines(JournalEntry $entry, CustomerReceipt $receipt, Account $arAccount): void
     {
@@ -685,12 +832,23 @@ class ReceiptPoster
 
         $depositHome = Currency::toHomeCents($amount, $ratePay);
 
+        // Deposited into an account in the receipt's own currency (a USD payment
+        // into USD chequing), the deposit leg carries the foreign amount too, so
+        // that account's foreign balance rises by what reached it and its
+        // statement reconciles against it. Into a home account it is a plain
+        // home-cents leg.
+        $depositCurrency = Account::withoutGlobalScopes()->whereKey($receipt->deposit_to_account_id)->value('currency_code');
+        $depositMemo = $depositCurrency !== null && mb_strtoupper((string) $depositCurrency) === $currency
+            ? Currency::lineMemo($currency, $ratePay, max($amount, 0), max(-$amount, 0))
+            : [];
+
         $entry->lines()->create([
             'account_id' => $receipt->deposit_to_account_id,
             'debit_cents' => max($depositHome, 0),
             'credit_cents' => max(-$depositHome, 0),
             'memo' => BankLineMemo::forSource($receipt),
             'line_order' => 0,
+            ...$depositMemo,
         ]);
 
         $order = 1;

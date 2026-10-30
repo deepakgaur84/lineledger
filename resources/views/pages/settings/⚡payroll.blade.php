@@ -2,9 +2,12 @@
 
 use App\Actions\Payroll\SaveWorkersCompSettings;
 use App\Enums\Country;
+use App\Enums\DentalBenefitsCode;
 use App\Enums\RemittanceFrequency;
 use App\Models\Company;
 use App\Models\WorkersCompSetting;
+use App\Support\Payroll\PayrollAccountNumber;
+use App\Support\Payroll\PayrollContactPhone;
 use App\Support\Payroll\PayStatementJurisdiction;
 use Flux\Flux;
 use Livewire\Attributes\Computed;
@@ -25,6 +28,15 @@ new #[Title('Payroll settings')] class extends Component {
     public string $f_business_number = '';
 
     public string $f_rp_account = '';
+
+    /** T4 box 45 for every employee without their own code: '' (not chosen yet) or 1–5. */
+    public string $f_dental_benefits_code = '';
+
+    public string $f_rep_id = '';
+
+    public string $f_rq_identification_number = '';
+
+    public string $f_rq_file_number = '';
 
     public string $f_contact_name = '';
 
@@ -91,6 +103,10 @@ new #[Title('Payroll settings')] class extends Component {
         $this->f_portal_team_calendar = (bool) $company->portal_team_calendar;
         $this->f_business_number = $company->payroll_business_number ?? '';
         $this->f_rp_account = $company->payroll_rp_account ?? '';
+        $this->f_dental_benefits_code = (string) ($company->payroll_dental_benefits_code?->value ?? '');
+        $this->f_rep_id = $company->payroll_cra_rep_id ?? '';
+        $this->f_rq_identification_number = $company->payroll_rq_identification_number ?? '';
+        $this->f_rq_file_number = $company->payroll_rq_file_number ?? '';
         $this->f_contact_name = $company->payroll_contact_name ?? '';
         $this->f_contact_email = $company->payroll_contact_email ?? '';
         $this->f_contact_phone = $company->payroll_contact_phone ?? '';
@@ -135,16 +151,57 @@ new #[Title('Payroll settings')] class extends Component {
         return array_values(array_map(fn (string $key): string => $labels[$key] ?? $key, $this->homeJurisdiction['required']));
     }
 
+    /**
+     * Write the CRA identifiers the way they are filed — no spaces, upper case,
+     * "RP0001" for a bare "0001" — and split a whole payroll account (BN15)
+     * typed into either field into its Business Number and RP account.
+     */
+    private function normalizeCraIdentifiers(): void
+    {
+        $businessNumber = PayrollAccountNumber::normalize($this->f_business_number);
+        $rpAccount = PayrollAccountNumber::normalize($this->f_rp_account);
+
+        foreach ([$businessNumber, $rpAccount] as $candidate) {
+            if (preg_match(PayrollAccountNumber::PATTERN, $candidate) === 1
+                && PayrollAccountNumber::compose($businessNumber, $rpAccount) === $candidate) {
+                [$businessNumber, $rpAccount] = [substr($candidate, 0, 9), substr($candidate, 9)];
+            }
+        }
+
+        $this->f_business_number = $businessNumber;
+        $this->f_rp_account = PayrollAccountNumber::programAccount($rpAccount) ?? $rpAccount;
+        $this->f_rep_id = strtoupper(trim($this->f_rep_id));
+    }
+
     public function save(): void
     {
+        $this->normalizeCraIdentifiers();
+
+        // Revenu Québec numbers are stored bare: 1234567890 and RS0001. Spaces and
+        // dashes go; a file number typed as its four digits gets the RS prefix.
+        $this->f_rq_identification_number = preg_replace('/[\s-]+/', '', $this->f_rq_identification_number) ?? '';
+        $this->f_rq_file_number = mb_strtoupper(preg_replace('/[\s-]+/', '', $this->f_rq_file_number) ?? '');
+
+        if (preg_match('/^\d{4}$/', $this->f_rq_file_number) === 1) {
+            $this->f_rq_file_number = 'RS'.$this->f_rq_file_number;
+        }
+
         $validated = $this->validate([
             'f_standard_annual_hours' => ['required', 'integer', 'min:1', 'max:8760'],
             'f_overtime_threshold' => ['nullable', 'numeric', 'min:0', 'max:168'],
-            'f_business_number' => ['nullable', 'string', 'max:20'],
-            'f_rp_account' => ['nullable', 'string', 'max:20'],
+            'f_business_number' => ['nullable', 'string', 'regex:/^\d{9}$/'],
+            'f_rp_account' => ['nullable', 'string', 'regex:/^RP\d{4}$/'],
+            'f_dental_benefits_code' => ['nullable', 'in:'.implode(',', array_column(DentalBenefitsCode::cases(), 'value'))],
+            'f_rep_id' => ['nullable', 'string', 'regex:/^[A-Z0-9]{1,7}$/'],
+            'f_rq_identification_number' => ['nullable', 'regex:/^\d{10}$/'],
+            'f_rq_file_number' => ['nullable', 'regex:/^RS\d{4}$/'],
             'f_contact_name' => ['nullable', 'string', 'max:255'],
             'f_contact_email' => ['nullable', 'email', 'max:255'],
-            'f_contact_phone' => ['nullable', 'string', 'max:50'],
+            'f_contact_phone' => ['nullable', 'string', 'max:50', function (string $attribute, mixed $value, Closure $fail): void {
+                if (filled($value) && PayrollContactPhone::parse((string) $value) === null) {
+                    $fail(__('Enter a 10-digit phone number, for example 613-555-0101 (add an extension with “ext.”).'));
+                }
+            }],
             'f_work_location' => ['nullable', 'string', 'max:500'],
             'f_remittance_frequency' => ['required', 'in:'.implode(',', array_column(RemittanceFrequency::cases(), 'value'))],
             'f_wc' => ['array'],
@@ -152,6 +209,12 @@ new #[Title('Payroll settings')] class extends Component {
             'f_wc.*.rate' => ['nullable', 'numeric', 'min:0'],
             'f_wc.*.annual_max' => ['nullable', 'numeric', 'min:0'],
             'f_wc.*.board_account' => ['nullable', 'string', 'max:50'],
+        ], [
+            'f_business_number.regex' => __('Enter the 9-digit Business Number, for example 123456789.'),
+            'f_rp_account.regex' => __('Enter the payroll program account as RP and 4 digits, for example RP0001.'),
+            'f_rep_id.regex' => __('Enter the CRA representative ID: up to 7 letters and digits.'),
+            'f_rq_identification_number.regex' => __('The Revenu Québec identification number is 10 digits.'),
+            'f_rq_file_number.regex' => __('The Revenu Québec file number is RS followed by 4 digits, for example RS0001.'),
         ]);
 
         // Merge the pay-statement toggles into the existing settings JSON.
@@ -168,6 +231,10 @@ new #[Title('Payroll settings')] class extends Component {
             'portal_team_calendar' => $this->f_portal_team_calendar,
             'payroll_business_number' => $validated['f_business_number'] ?: null,
             'payroll_rp_account' => $validated['f_rp_account'] ?: null,
+            'payroll_dental_benefits_code' => ($validated['f_dental_benefits_code'] ?? '') !== '' ? DentalBenefitsCode::from((int) $validated['f_dental_benefits_code']) : null,
+            'payroll_cra_rep_id' => $validated['f_rep_id'] ?: null,
+            'payroll_rq_identification_number' => $validated['f_rq_identification_number'] ?: null,
+            'payroll_rq_file_number' => $validated['f_rq_file_number'] ?: null,
             'payroll_contact_name' => $validated['f_contact_name'] ?: null,
             'payroll_contact_email' => $validated['f_contact_email'] ?: null,
             'payroll_contact_phone' => $validated['f_contact_phone'] ?: null,
@@ -202,10 +269,17 @@ new #[Title('Payroll settings')] class extends Component {
             {{-- CRA payroll program --}}
             <div class="rounded-lg border border-border p-5">
                 <flux:heading size="lg" class="mb-1">{{ __('CRA payroll program') }}</flux:heading>
-                <flux:text class="mb-4 text-sm text-muted-foreground">{{ __('Your Business Number and payroll (RP) program account, used on the PD7A and T4/T4 Summary.') }}</flux:text>
+                <flux:text class="mb-4 text-sm text-muted-foreground">{{ __('Your Business Number and payroll (RP) program account. The PD7A shows them, and your T4 and T4A slips are filed with the CRA under them.') }}</flux:text>
                 <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
                     <flux:input wire:model="f_business_number" :label="__('Business Number')" placeholder="123456789" />
                     <flux:input wire:model="f_rp_account" :label="__('Payroll (RP) account')" placeholder="RP0001" />
+                    <flux:select wire:model="f_dental_benefits_code" :label="__('Employer-offered dental benefits (T4 box 45)')" :description="__('On December 31, who could use dental care insurance or coverage you offered? Applies to every employee whose payroll setup doesn’t set its own code. Required to file T4 slips.')" class="md:col-span-2" data-test="payroll-dental-benefits-code">
+                        <flux:select.option value="">{{ __('Choose…') }}</flux:select.option>
+                        @foreach (\App\Enums\DentalBenefitsCode::options() as $value => $label)
+                            <flux:select.option value="{{ $value }}">{{ $label }}</flux:select.option>
+                        @endforeach
+                    </flux:select>
+                    <flux:input wire:model="f_rep_id" :label="__('Representative ID (RepID)')" :description="__('Only when a representative uploads your T4 or T4A XML through Represent a Client. Leave blank when you upload it yourself.')" placeholder="A1B2C3D" />
                 </div>
                 <flux:separator class="my-4" variant="subtle" />
                 <flux:select wire:model.live="f_remittance_frequency" :label="__('Remittance frequency')" class="max-w-md">
@@ -214,6 +288,16 @@ new #[Title('Payroll settings')] class extends Component {
                     @endforeach
                 </flux:select>
                 <flux:text class="mt-1 text-sm text-muted-foreground">{{ \App\Enums\RemittanceFrequency::from($f_remittance_frequency)->dueDateHint() }}</flux:text>
+            </div>
+
+            {{-- Revenu Québec source deductions (RL-1) --}}
+            <div class="rounded-lg border border-border p-5">
+                <flux:heading size="lg" class="mb-1">{{ __('Revenu Québec source deductions') }}</flux:heading>
+                <flux:text class="mb-4 text-sm text-muted-foreground">{{ __('Your identification number and file number for source deductions, as printed on your Remittance of Source Deductions and Employer Contributions. RL-1 slips for employees who work in Quebec are filed under them; your QST number is a different account.') }}</flux:text>
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <flux:input wire:model="f_rq_identification_number" :label="__('Identification number')" placeholder="1234567890" data-test="rq-identification-number" />
+                    <flux:input wire:model="f_rq_file_number" :label="__('File number')" placeholder="RS0001" data-test="rq-file-number" />
+                </div>
             </div>
 
             {{-- Payroll defaults --}}

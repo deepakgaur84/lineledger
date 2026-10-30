@@ -100,8 +100,7 @@ test('removing a member records a CompanyMemberRemoved event', function () {
 
     $this->actingAs($owner);
 
-    Livewire::test('pages::companies.remove-member-modal', ['company' => $company])
-        ->set('memberId', $member->id)
+    Livewire::test('pages::companies.remove-member-modal', ['company' => $company, 'memberId' => $member->id])
         ->call('removeMember')
         ->assertHasNoErrors();
 

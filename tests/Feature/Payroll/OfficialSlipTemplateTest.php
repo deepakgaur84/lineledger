@@ -18,6 +18,7 @@ use App\Services\Pdf\Slips\SlipTemplateRegistry;
 use App\Services\Pdf\Slips\T4SlipPdfAdapter;
 use App\Services\Posting\PayRunPoster;
 use App\Services\Reporting\PdfExporter;
+use Illuminate\Support\Facades\DB;
 use Smalot\PdfParser\Parser;
 
 use function Pest\Laravel\actingAs;
@@ -108,6 +109,21 @@ it('renders the T4 onto the official form: values, full SIN, and both employee c
 
     // Box 40 has no dedicated field → Other Information slot; box 44 does.
     expect(substr_count($text, '120.00'))->toBeGreaterThanOrEqual(2);
+});
+
+it('prints the masked SIN on the official form when the SIN no longer decrypts', function () {
+    // Ciphertext from another APP_KEY, as after a database restore under a new key.
+    DB::table('employee_payroll_profiles')->where('id', $this->profile->id)
+        ->update(['sin_encrypted' => 'eyJpdiI6IjEyMyIsInZhbHVlIjoiYWJjIiwibWFjIjoiZGVmIn0=']);
+
+    $bytes = app(T4SlipPdfAdapter::class)->render($this->company, ostSlip(), 2025);
+
+    expect($bytes)->not->toBeNull();
+
+    $text = (new Parser)->parseContent($bytes)->getText();
+
+    expect($text)->not->toContain('046 454 286')
+        ->and(substr_count($text, '4286'))->toBeGreaterThanOrEqual(2);
 });
 
 it('returns null (facsimile fallback) for a year with no template', function () {

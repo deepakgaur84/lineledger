@@ -21,7 +21,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 
 /**
- * Nightly proof that the books still reconcile. Five checks per company:
+ * Nightly proof that the books still reconcile. Six checks per company:
  *
  *   1. Audit hash chain — delegated to {@see VerifyAccountingAuditCommand}.
  *   2. Double-entry balance — every posted journal nets to zero across the GL,
@@ -33,6 +33,8 @@ use Illuminate\Support\Facades\Notification;
  *      live applications of posted receipts and payments. --fix reposts.
  *   5. Tax on a control-account cheque line — report-only; see
  *      {@see checkControlAccountTax()}.
+ *   6. Foreign units left by a void — report-only; see
+ *      {@see checkVoidForeignUnits()}.
  *
  * On any failure it logs, emails ops (unless --no-alert), and exits non-zero so
  * a scheduler/CI run surfaces it. The accumulating run history is also exactly
@@ -45,7 +47,14 @@ class CheckLedgerIntegrity extends Command
         {--fix : Recompute drifted account-balance and document paid caches in place}
         {--no-alert : Report failures without emailing}';
 
-    protected $description = 'Verify ledger integrity: audit hash chain, double-entry balance, account-balance cache, invoice/bill paid caches, and tax on control-account cheque lines.';
+    protected $description = 'Verify ledger integrity: audit hash chain, double-entry balance, account-balance cache, invoice/bill paid caches, tax on control-account cheque lines, and foreign-currency units left behind by voids.';
+
+    /**
+     * Voided entries that check 6 lists one by one; any beyond are counted in
+     * one closing line, so a book that has not been backfilled yet does not
+     * bury the rest of the alert.
+     */
+    private const VOID_FOREIGN_UNITS_LISTED = 20;
 
     /**
      * Length of the rolling full-verification cycle, in days.
@@ -151,6 +160,114 @@ class CheckLedgerIntegrity extends Command
 
         // 5. Sales tax on a cheque line coded to an AR/AP control account.
         $issues = array_merge($issues, $this->checkControlAccountTax($companyId));
+
+        // 6. Voided entries whose reversal leaves foreign-currency units behind.
+        $issues = array_merge($issues, $this->checkVoidForeignUnits($companyId));
+
+        return $issues;
+    }
+
+    /**
+     * Voided entries that their reversal does not cancel in foreign units.
+     *
+     * A void mirrors every line, the foreign-currency memo included, so on each
+     * account a voided entry and its reversal net to zero in foreign units just
+     * as they do in home cents. A pair that does not leaves phantom foreign
+     * units behind: every period-end Home Currency Adjustment revalues them into
+     * an unrealized gain or loss, and the AR/AP reconcilers, which compare a
+     * foreign customer or vendor in foreign units, misread what is owed.
+     *
+     * Report-only, with no --fix: nothing here is a cache to recompute. Voids
+     * written before reversals carried the memo are repaired by
+     * `currency:backfill-reversal-memos`, which app:upgrade runs; a reversal it
+     * lists as skipped no longer mirrors its original and needs a look by hand.
+     *
+     * @return list<string>
+     */
+    protected function checkVoidForeignUnits(int $companyId): array
+    {
+        // One leg per side of each void pair, keyed by the voided entry. Lines
+        // with no foreign amount add nothing to the sum, so they are left out.
+        $originals = DB::table('journal_entries as je')
+            ->join('journal_lines as jl', 'jl.journal_entry_id', '=', 'je.id')
+            ->where('je.company_id', $companyId)
+            ->whereNotNull('je.voided_at')
+            ->whereNotNull('je.reversed_by_entry_id')
+            ->where(fn ($q) => $q->where('jl.foreign_debit_cents', '!=', 0)->orWhere('jl.foreign_credit_cents', '!=', 0))
+            ->select('je.id as entry_id', 'jl.account_id')
+            ->selectRaw('jl.foreign_debit_cents - jl.foreign_credit_cents as net');
+
+        $reversals = DB::table('journal_entries as je')
+            ->join('journal_entries as rev', fn ($join) => $join
+                ->on('rev.id', '=', 'je.reversed_by_entry_id')
+                ->on('rev.company_id', '=', 'je.company_id'))
+            ->join('journal_lines as jl', 'jl.journal_entry_id', '=', 'rev.id')
+            ->where('je.company_id', $companyId)
+            ->whereNotNull('je.voided_at')
+            ->where(fn ($q) => $q->where('jl.foreign_debit_cents', '!=', 0)->orWhere('jl.foreign_credit_cents', '!=', 0))
+            ->select('je.id as entry_id', 'jl.account_id')
+            ->selectRaw('jl.foreign_debit_cents - jl.foreign_credit_cents as net');
+
+        $rows = DB::query()
+            ->fromSub($originals->unionAll($reversals), 'pair_lines')
+            ->select('entry_id', 'account_id')
+            ->selectRaw('SUM(net) as net')
+            ->groupBy('entry_id', 'account_id')
+            ->havingRaw('SUM(net) <> 0')
+            ->orderBy('entry_id')
+            ->orderBy('account_id')
+            ->get()
+            ->groupBy('entry_id');
+
+        if ($rows->isEmpty()) {
+            return [];
+        }
+
+        $listed = $rows->take(self::VOID_FOREIGN_UNITS_LISTED);
+
+        $entries = DB::table('journal_entries as je')
+            ->join('journal_entries as rev', 'rev.id', '=', 'je.reversed_by_entry_id')
+            ->whereIntegerInRaw('je.id', $listed->keys()->map(fn ($id): int => (int) $id)->all())
+            ->get(['je.id', 'je.entry_no', 'rev.id as reversal_id', 'rev.entry_no as reversal_no'])
+            ->keyBy('id');
+
+        $accounts = DB::table('accounts')
+            ->whereIntegerInRaw('id', $listed->flatten(1)->pluck('account_id')->map(fn ($id): int => (int) $id)->unique()->values()->all())
+            ->get(['id', 'code', 'name'])
+            ->keyBy('id');
+
+        $issues = [];
+
+        foreach ($listed as $entryId => $accountRows) {
+            $entry = $entries->get($entryId);
+
+            $left = $accountRows
+                ->map(fn ($row): string => sprintf(
+                    '%s (%s) %+d',
+                    $accounts->get($row->account_id)->code ?? '#'.$row->account_id,
+                    $accounts->get($row->account_id)->name ?? '?',
+                    (int) $row->net,
+                ))
+                ->implode(', ');
+
+            $issues[] = sprintf(
+                'Voided entry %s (#%d) and its reversal %s (#%d) do not cancel in foreign units: %s foreign cents are left over. Run `currency:backfill-reversal-memos %d` (app:upgrade runs it); if it lists this reversal as skipped, check it by hand.',
+                $entry->entry_no ?? '?',
+                (int) $entryId,
+                $entry->reversal_no ?? '?',
+                (int) ($entry->reversal_id ?? 0),
+                $left,
+                $companyId,
+            );
+        }
+
+        if ($rows->count() > $listed->count()) {
+            $issues[] = sprintf(
+                '%d more void pair(s) leave foreign units behind as well. Run `currency:backfill-reversal-memos %d` (app:upgrade runs it).',
+                $rows->count() - $listed->count(),
+                $companyId,
+            );
+        }
 
         return $issues;
     }

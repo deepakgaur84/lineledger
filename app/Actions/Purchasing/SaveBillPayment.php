@@ -7,6 +7,7 @@ use App\Enums\BillType;
 use App\Models\BillPayment;
 use App\Models\Company;
 use App\Models\Contact;
+use App\Services\Posting\BillPaymentPoster;
 use App\Services\Posting\DocumentNumberGenerator;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
@@ -15,6 +16,11 @@ use Illuminate\Support\Facades\DB;
  * Builds or updates a bill-payment header and its bill applications.
  * Shared by the Livewire form and the API. Does NOT post — the caller decides
  * whether to hand the result to BillPaymentPoster.
+ *
+ * Every application is checked before anything is written
+ * (BillPaymentPoster::ensureApplicationsPayable()): it must be to a posted bill
+ * of this organization, this payee and this payment's kind, for no more than
+ * the bill still owes. What the payment doesn't apply stays on account.
  *
  * Expected $data shape (cents-based, framework-agnostic):
  *   contact_id:           int
@@ -30,7 +36,10 @@ use Illuminate\Support\Facades\DB;
  */
 final class SaveBillPayment
 {
-    public function __construct(protected DocumentNumberGenerator $numbers) {}
+    public function __construct(
+        protected DocumentNumberGenerator $numbers,
+        protected BillPaymentPoster $poster,
+    ) {}
 
     /**
      * @param  array<string, mixed>  $data
@@ -62,6 +71,19 @@ final class SaveBillPayment
 
             $previousBillIds = [];
             $previousContactId = null;
+            $existing = $payment && $payment->exists ? $payment : null;
+
+            // Before anything is written: each application must be to a posted
+            // bill of this organization, this payee and this payment's kind,
+            // within what it still owes — whatever the form, the batch page, the
+            // bank feed or the API sent. An edit keeps the payment's own type.
+            $this->poster->ensureApplicationsPayable(
+                (int) $company->id,
+                (int) $data['contact_id'],
+                $existing?->getAttribute('payment_type') ?? $paymentType,
+                $data['applications'] ?? [],
+                $existing,
+            );
 
             if ($payment && $payment->exists) {
                 $previousBillIds = $payment->applications()->pluck('bill_id')->map(fn ($id) => (int) $id)->all();

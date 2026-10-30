@@ -51,3 +51,14 @@ it('limits the reconciliation-stamp backfill to the named organization', functio
 it('refuses an argument that names no organization', function () {
     $this->artisan('recurring:generate', ['company' => 'no-such-organization'])->assertFailed();
 });
+
+it('limits the reversal currency-memo backfill to the named organization', function () {
+    $this->artisan('currency:backfill-reversal-memos', ['company' => $this->real->id, '--dry-run' => true])
+        ->expectsOutputToContain('Company '.$this->real->slug)
+        ->doesntExpectOutputToContain($this->decoy->slug)
+        ->assertSuccessful();
+
+    $this->artisan('currency:backfill-reversal-memos', ['company' => $this->decoy->slug, '--dry-run' => true])
+        ->expectsOutputToContain('Company '.$this->decoy->slug)
+        ->assertSuccessful();
+});

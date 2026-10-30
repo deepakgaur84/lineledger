@@ -19,14 +19,27 @@
 </head>
 <body>
     @php($fmt = fn ($c) => number_format($c / 100, 2))
+    {{-- Finalized before boxes B.A, B.B and C: shown as it was issued, with one box B. --}}
+    @php($legacy = ! array_key_exists('boxBA', $summary))
     <h1>RL-1 Sommaire {{ $year }}</h1>
-    <div class="subtitle">{{ $company->name }} · {{ $summary['slip_count'] }} relevé(s)</div>
+    <div class="subtitle">
+        {{ $company->name }} · {{ $summary['slip_count'] }} relevé(s)
+        @if ($company->payroll_rq_identification_number)
+            · No d'identification {{ $company->payroll_rq_identification_number }}@if ($company->payroll_rq_file_number) · Dossier {{ $company->payroll_rq_file_number }}@endif
+        @endif
+    </div>
 
     <table>
         <thead>
             <tr>
                 <th>Employé</th>
-                <th class="num">A Revenus</th><th class="num">B RRQ</th><th class="num">E Impôt</th>
+                <th class="num">A Revenus</th>
+                @if ($legacy)
+                    <th class="num">B RRQ</th>
+                @else
+                    <th class="num">B.A RRQ</th><th class="num">B.B RRQ suppl.</th><th class="num">C AE</th>
+                @endif
+                <th class="num">E Impôt</th>
                 <th class="num">G Adm. RRQ</th><th class="num">H RQAP</th><th class="num">I Adm. RQAP</th>
             </tr>
         </thead>
@@ -35,7 +48,13 @@
             <tr>
                 <td>{{ $slip['name'] }}</td>
                 <td class="num">{{ $fmt($slip['boxA']) }}</td>
-                <td class="num">{{ $fmt($slip['boxB']) }}</td>
+                @if ($legacy)
+                    <td class="num">{{ $fmt($slip['boxB'] ?? 0) }}</td>
+                @else
+                    <td class="num">{{ $fmt($slip['boxBA'] ?? 0) }}</td>
+                    <td class="num">{{ $fmt($slip['boxBB'] ?? 0) }}</td>
+                    <td class="num">{{ $fmt($slip['boxC'] ?? 0) }}</td>
+                @endif
                 <td class="num">{{ $fmt($slip['boxE']) }}</td>
                 <td class="num">{{ $fmt($slip['boxG']) }}</td>
                 <td class="num">{{ $fmt($slip['boxH']) }}</td>
@@ -47,7 +66,13 @@
             <tr>
                 <td>Totaux</td>
                 <td class="num">{{ $fmt($summary['boxA']) }}</td>
-                <td class="num">{{ $fmt($summary['boxB']) }}</td>
+                @if ($legacy)
+                    <td class="num">{{ $fmt($summary['boxB'] ?? 0) }}</td>
+                @else
+                    <td class="num">{{ $fmt($summary['boxBA']) }}</td>
+                    <td class="num">{{ $fmt($summary['boxBB']) }}</td>
+                    <td class="num">{{ $fmt($summary['boxC']) }}</td>
+                @endif
                 <td class="num">{{ $fmt($summary['boxE']) }}</td>
                 <td class="num">{{ $fmt($summary['boxG']) }}</td>
                 <td class="num">{{ $fmt($summary['boxH']) }}</td>
@@ -57,7 +82,12 @@
     </table>
 
     <p style="margin-top:14px;">
-        Cotisation de l'employeur au RRQ : <strong>{{ $fmt($summary['employer_qpp']) }}</strong> &nbsp;·&nbsp;
+        @if ($legacy)
+            Cotisation de l'employeur au RRQ : <strong>{{ $fmt($summary['employer_qpp']) }}</strong> &nbsp;·&nbsp;
+        @else
+            Cotisation de l'employeur au RRQ (ligne 22) : <strong>{{ $fmt($summary['employer_qpp']) }}</strong> &nbsp;·&nbsp;
+            cotisation supplémentaire de l'employeur au RRQ (ligne 24) : <strong>{{ $fmt($summary['employer_qpp2'] ?? 0) }}</strong> &nbsp;·&nbsp;
+        @endif
         au RQAP : <strong>{{ $fmt($summary['employer_qpip']) }}</strong> &nbsp;·&nbsp;
         au FSS (QHSF) : <strong>{{ $fmt($summary['qhsf']) }}</strong>
     </p>

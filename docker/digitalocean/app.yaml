@@ -25,6 +25,9 @@ alerts:
 envs:
   - {key: APP_KEY, type: SECRET, value: __APP_KEY__}
   - {key: APP_URL, value: "${APP_URL}"}
+  # The load balancer is the only way to reach the containers, so trust what it
+  # forwards: the visitor's IP and that the request was HTTPS.
+  - {key: TRUSTED_PROXIES, value: "*"}
   - {key: APP_REGION, value: __COUNTRY__}
   - {key: PASSKEYS_USER_HANDLE_SECRET, type: SECRET, value: __PASSKEYS_USER_HANDLE_SECRET__}
   - {key: PASSPORT_PRIVATE_KEY, type: SECRET, value: __PASSPORT_PRIVATE_KEY__}

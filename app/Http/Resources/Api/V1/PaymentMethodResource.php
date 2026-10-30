@@ -20,6 +20,7 @@ class PaymentMethodResource extends JsonResource
             'id' => $this->id,
             'name' => $this->name,
             'is_cheque' => (bool) $this->is_cheque,
+            'is_card' => (bool) $this->is_card,
             'is_active' => (bool) $this->is_active,
             'created_at' => optional($this->created_at)->toIso8601String(),
         ];

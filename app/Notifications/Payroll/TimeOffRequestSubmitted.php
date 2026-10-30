@@ -4,6 +4,7 @@ namespace App\Notifications\Payroll;
 
 use App\Models\Company;
 use App\Models\TimeOffRequest;
+use App\Support\Http\CanonicalUrl;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -44,7 +45,7 @@ class TimeOffRequestSubmitted extends Notification implements ShouldQueue
                 'end' => $this->request->end_date->toDateString(),
             ]))
             ->when($this->request->employee_note, fn (MailMessage $m) => $m->line(__('Note: ":note"', ['note' => $this->request->employee_note])))
-            ->action(__('Review the request'), route('time-off-requests.index', ['company' => $this->company]))
+            ->action(__('Review the request'), CanonicalUrl::route('time-off-requests.index', ['company' => $this->company]))
             ->line(__('Approve or deny it from the time-off requests page.'));
     }
 }

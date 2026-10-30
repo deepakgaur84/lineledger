@@ -14,6 +14,7 @@ use App\Models\Donation;
 use App\Models\JournalEntry;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
+use App\Services\Charity\DonationReceiptSynchronizer;
 use App\Services\Posting\EntryNumberGenerator;
 use App\Services\Posting\JournalPoster;
 use Carbon\CarbonImmutable;
@@ -29,8 +30,9 @@ use RuntimeException;
  *   CR    donation revenue tagged with the fund  — restricted, restricted-fund method
  *
  * In-kind donations book the same way; the deposit-to account is the asset (or
- * expense) receiving the gift at fair market value. A spawned official receipt
- * carries no debit account, so the issuer never re-posts the gift (no double count).
+ * expense) receiving the gift at fair market value. An official receipt spawned
+ * from the donation is record-only — the issuer never re-posts the gift (no double
+ * count) — and voiding the donation voids that receipt in the same transaction.
  */
 class DonationPoster
 {
@@ -38,6 +40,7 @@ class DonationPoster
         protected JournalPoster $journalPoster,
         protected EntryNumberGenerator $entryNumbers,
         protected AccountingAuditRecorder $auditRecorder,
+        protected DonationReceiptSynchronizer $receipts,
     ) {}
 
     public function post(Donation $donation): JournalEntry
@@ -145,6 +148,9 @@ class DonationPoster
                 'voided_at' => now(),
                 'voided_by_user_id' => Auth::id(),
             ])->save();
+
+            // The gift was reversed, so no official receipt may stand for it.
+            $this->receipts->donationVoided($donation);
 
             $this->auditRecorder->record(
                 (int) $donation->company_id,

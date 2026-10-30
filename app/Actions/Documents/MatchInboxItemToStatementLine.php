@@ -6,6 +6,7 @@ use App\Enums\StatementLineMatchStatus;
 use App\Models\BankStatementLine;
 use App\Models\Expense;
 use App\Models\InboxItem;
+use App\Services\Banking\StatementLineCurrencyGuard;
 use App\Services\Posting\ExpensePoster;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
@@ -27,6 +28,7 @@ final class MatchInboxItemToStatementLine
     public function __construct(
         private readonly PromoteInboxItem $promote,
         private readonly ExpensePoster $poster,
+        private readonly StatementLineCurrencyGuard $currencyGuard,
     ) {}
 
     /**
@@ -48,6 +50,12 @@ final class MatchInboxItemToStatementLine
 
             /** @var Expense $expense */
             $expense = $this->promote->handle($item, $overrides);
+
+            // A foreign account's expense carries its currency on every leg.
+            $this->currencyGuard->assertCategoriesFit(
+                $line->account()->firstOrFail(),
+                $expense->lines()->pluck('account_id')->map(fn ($id): int => (int) $id)->all(),
+            );
 
             $entry = $this->poster->post($expense);
 

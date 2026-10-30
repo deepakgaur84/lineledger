@@ -8,7 +8,6 @@ use App\Models\Contact;
 use App\Models\EmployeePayrollProfile;
 use App\Services\Pdf\PdfMerger;
 use App\Services\Reporting\T4SlipCalculator;
-use Illuminate\Contracts\Encryption\DecryptException;
 
 /**
  * Renders one employee's T4 onto the OFFICIAL CRA template (two employee
@@ -165,15 +164,11 @@ final class T4SlipPdfAdapter
      */
     private function sin(Company $company, int $contactId, ?string $last4): string
     {
-        try {
-            $sin = EmployeePayrollProfile::query()->withoutGlobalScopes()
-                ->where('company_id', $company->id)
-                ->where('contact_id', $contactId)
-                ->first()
-                ?->sin_encrypted;
-        } catch (DecryptException) {
-            $sin = null;
-        }
+        $sin = EmployeePayrollProfile::query()->withoutGlobalScopes()
+            ->where('company_id', $company->id)
+            ->where('contact_id', $contactId)
+            ->first()
+            ?->sinOrNull();
 
         if (is_string($sin) && preg_match('/^\d{9}$/', $sin) === 1) {
             return implode(' ', str_split($sin, 3));

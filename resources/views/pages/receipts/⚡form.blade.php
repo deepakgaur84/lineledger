@@ -5,6 +5,7 @@ use App\Enums\AccountSubtype;
 use App\Enums\InvoiceStatus;
 use App\Enums\ReceiptStatus;
 use App\Exceptions\Posting\PeriodLockedException;
+use App\Livewire\Attributes\LockedRows;
 use App\Livewire\Concerns\GuardsEditLockedForm;
 use App\Livewire\Concerns\HandlesPeriodLockOverride;
 use App\Models\Account;
@@ -34,6 +35,8 @@ new #[Title('Receive payment')] class extends Component {
 
     public ?CustomerReceipt $receipt = null;
 
+    /** Set by selectContact() and friends, which rebuild the apply table to match. */
+    #[Locked]
     public ?int $contact_id = null;
 
     public string $contact_query = '';
@@ -57,8 +60,13 @@ new #[Title('Receive payment')] class extends Component {
     public string $memo = '';
 
     /**
+     * Built on the server by refreshApplyTable(). Only each row's Apply cell is
+     * the browser's to change: which invoice a row pays, and what it still
+     * owes, are refused like a #[Locked] property.
+     *
      * @var array<int, array{invoice_id: int, invoice_no: string, due_date: string, balance: int, apply: string}>
      */
+    #[LockedRows(except: 'apply')]
     public array $applyTable = [];
 
     /**
@@ -258,6 +266,11 @@ new #[Title('Receive payment')] class extends Component {
             ->orderBy('id')
             ->get();
 
+        // The same open balance SaveReceipt holds each application to: what the
+        // invoice owes, treating this receipt's own existing application as
+        // un-applied, so the user sees the full headroom they can re-apply.
+        $balances = app(ReceiptPoster::class)->openBalancesFor($invoices, $this->receipt);
+
         foreach ($invoices as $inv) {
             $existing = $existingApplications->get($inv->id);
             $existingApplied = (int) ($existing->amount_cents ?? 0);
@@ -266,9 +279,7 @@ new #[Title('Receive payment')] class extends Component {
                 'invoice_id' => $inv->id,
                 'invoice_no' => $inv->invoice_no,
                 'due_date' => $inv->due_date->toDateString(),
-                // Open balance treats this receipt's existing application as un-applied,
-                // so the user sees the full headroom they can re-apply.
-                'balance' => $inv->balanceCents() + $existingApplied,
+                'balance' => $balances[$inv->id] ?? 0,
                 'apply' => number_format($existingApplied / 100, 2, '.', ''),
             ];
         }
@@ -362,6 +373,10 @@ new #[Title('Receive payment')] class extends Component {
         $applications = [];
         $totalApplied = 0;
 
+        // Each row's invoice is the server's (#[LockedRows] refuses any other);
+        // SaveReceipt checks it is this customer's, still open, and owes at
+        // least the amount — against its balance now, not the one the table
+        // showed when it was built.
         foreach ($this->applyTable as $row) {
             $applyCents = Money::tryFromString((string) $row['apply'])?->cents ?? 0;
 
@@ -369,13 +384,7 @@ new #[Title('Receive payment')] class extends Component {
                 continue;
             }
 
-            if ($applyCents > $row['balance']) {
-                $this->addError('applyTable', __('Cannot apply more than the invoice balance.'));
-
-                return;
-            }
-
-            $applications[] = ['invoice_id' => $row['invoice_id'], 'amount_cents' => $applyCents];
+            $applications[] = ['invoice_id' => (int) $row['invoice_id'], 'amount_cents' => $applyCents];
             $totalApplied += $applyCents;
         }
 

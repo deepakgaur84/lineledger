@@ -6,6 +6,8 @@ use App\Enums\CompanyBackupStatus;
 use App\Enums\CompanyRestoreStatus;
 use App\Enums\CompanyRole;
 use App\Enums\InvoiceStatus;
+use App\Enums\McpProposalStatus;
+use App\Enums\ReceiptStatus;
 use App\Enums\TaxAppliesTo;
 use App\Models\Account;
 use App\Models\Attachment;
@@ -16,6 +18,7 @@ use App\Models\Cheque;
 use App\Models\Company;
 use App\Models\CompanyApiKey;
 use App\Models\CompanyBackup;
+use App\Models\CompanyInvitation;
 use App\Models\CompanyRestore;
 use App\Models\Contact;
 use App\Models\CreditMemo;
@@ -27,6 +30,7 @@ use App\Models\Invoice;
 use App\Models\InvoiceLine;
 use App\Models\Item;
 use App\Models\JournalEntry;
+use App\Models\McpWriteProposal;
 use App\Models\Membership;
 use App\Models\OpeningBalanceRow;
 use App\Models\OpeningBalanceState;
@@ -46,6 +50,7 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 beforeEach(function () {
     Storage::fake('local');
@@ -257,6 +262,50 @@ beforeEach(function () {
         journalEntry: $this->journalEntry,
     );
     app()->forgetInstance('current_api_key');
+
+    // ---- Values UNIQUE across the instance, which a restore next to Company A
+    //      must not repeat: inbox email, an accepted and an open invitation, a
+    //      Stripe card payment and an agentic MCP proposal. ----
+    $this->companyA->forceFill([
+        'inbound_email_token' => Str::lower(Str::random(40)),
+        'inbound_email_enabled' => true,
+    ])->save();
+
+    $this->acceptedInvitation = CompanyInvitation::factory()->accepted()->create([
+        'company_id' => $this->companyA->id,
+        'invited_by' => $this->alice->id,
+        'email' => $this->bob->email,
+    ]);
+    $this->openInvitation = CompanyInvitation::factory()->expiresIn(3)->create([
+        'company_id' => $this->companyA->id,
+        'invited_by' => $this->alice->id,
+        'email' => 'carol@acme.test',
+    ]);
+
+    CustomerReceipt::create([
+        'contact_id' => $this->customer->id,
+        'receipt_no' => 'RCPT-STRIPE',
+        'receipt_date' => '2026-05-04',
+        'deposit_to_account_id' => $this->bankAccount->id,
+        'reference' => 'pi_3RoundTrip',
+        'amount_cents' => 2500,
+        'currency_code' => $this->companyA->currency_code,
+        'home_amount_cents' => 2500,
+        'status' => ReceiptStatus::Draft,
+        'stripe_payment_intent_id' => 'pi_3RoundTrip',
+    ]);
+
+    $this->proposal = McpWriteProposal::create([
+        'company_api_key_id' => $this->apiKey->id,
+        'user_id' => $this->alice->id,
+        'tool' => 'journal_entry',
+        'payload' => ['memo' => 'opening balance'],
+        'preview' => 'Journal entry JE-001',
+        'idempotency_key' => (string) Str::ulid(),
+        'status' => McpProposalStatus::Confirmed,
+        'confirmed_journal_entry_id' => $this->journalEntry->id,
+        'expires_at' => now()->addDay(),
+    ]);
 });
 
 afterEach(function () {
@@ -646,6 +695,39 @@ it('round-trips a company through export and import', function () {
         ->all();
 
     expect($auditKeyIdsB)->toBe([$keyB->id]);
+
+    // ---- 7d. Nothing UNIQUE across the instance is shared with Company A:
+    //      inbox email comes back off, invitations and the MCP proposal get
+    //      tokens nobody holds, and the Stripe PaymentIntent id is dropped. ----
+    expect($companyB->inbound_email_token)->toBeNull()
+        ->and($companyB->inbound_email_enabled)->toBeFalse()
+        ->and($freshA->inbound_email_enabled)->toBeTrue();
+
+    $invitationsB = CompanyInvitation::query()
+        ->where('company_id', $companyB->id)
+        ->get()
+        ->keyBy('email');
+
+    expect($invitationsB->pluck('code')->intersect([$this->acceptedInvitation->code, $this->openInvitation->code]))->toBeEmpty()
+        ->and($invitationsB[$this->bob->email]->isAccepted())->toBeTrue()
+        ->and($invitationsB['carol@acme.test']->isExpired())->toBeTrue();
+
+    $stripeReceiptB = CustomerReceipt::withoutGlobalScopes()
+        ->where('company_id', $companyB->id)
+        ->where('receipt_no', 'RCPT-STRIPE')
+        ->sole();
+
+    expect($stripeReceiptB->stripe_payment_intent_id)->toBeNull()
+        ->and($stripeReceiptB->reference)->toBe('pi_3RoundTrip');
+
+    $proposalB = McpWriteProposal::withoutGlobalScopes()
+        ->where('company_id', $companyB->id)
+        ->sole();
+
+    expect($proposalB->idempotency_key)->not->toBe($this->proposal->idempotency_key)
+        ->and($proposalB->status)->toBe(McpProposalStatus::Confirmed)
+        ->and($proposalB->company_api_key_id)->toBe($keyB->id)
+        ->and($proposalB->confirmed_journal_entry_id)->toBe($jeB->id);
 
     // ---- 8. Audit-log chain verifies on Company B. ----
     // With UNIQUE(company_id, row_hash) the bundle's hashes are copied verbatim,

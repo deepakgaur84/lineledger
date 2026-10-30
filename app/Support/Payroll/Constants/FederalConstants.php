@@ -12,6 +12,10 @@ namespace App\Support\Payroll\Constants;
  * for the effective date before production payroll. Adding a new period is a
  * data-only change: append one entry keyed by its effective date.
  *
+ * A table covers pay dates until the next one and never past December 31 of its
+ * own year ({@see PayrollTableCoverage}), so payroll is refused from January 1
+ * until that year's table is appended.
+ *
  * Tax brackets are stored as [up_to_cents (null = top bracket), rate]. The CRA
  * constant "K" (bracket adjustment) is derived in code from the bracket edges,
  * so it can never drift from the rates.
@@ -197,21 +201,43 @@ final class FederalConstants
 
     /**
      * The federal constants effective on the given date, or null if no table
-     * covers it.
+     * covers it: before the first table, or in a year whose table isn't loaded.
      *
      * @return array<string, mixed>|null
      */
     public static function for(string $payDate): ?array
     {
-        $match = null;
+        return PayrollTableCoverage::select(self::PERIODS, $payDate);
+    }
+
+    /**
+     * The last pay date the loaded federal tables cover (Y-m-d).
+     */
+    public static function coveredThrough(): ?string
+    {
+        return PayrollTableCoverage::coveredThrough(self::PERIODS);
+    }
+
+    /**
+     * The federal basic personal amount (maximum BPAF) of every table effective
+     * on or before the given date: the current one and each earlier one. A TD1
+     * total claim equal to one of them claims the basic amount only (claim
+     * code 1), from whichever year's form it came. See
+     * {@see PayrollConstantSet::isFederalBasicClaim()}.
+     *
+     * @return list<int>
+     */
+    public static function basicPersonalAmountsOnOrBefore(string $date): array
+    {
+        $amounts = [];
 
         foreach (self::PERIODS as $effective => $values) {
-            if ($effective <= $payDate) {
-                $match = $values;
+            if ($effective <= $date) {
+                $amounts[] = (int) $values['tax']['bpa_max_cents'];
             }
         }
 
-        return $match;
+        return array_values(array_unique($amounts));
     }
 
     /**

@@ -25,8 +25,8 @@ it('saves the expanded customer profile fields', function () {
 
     Livewire::test('pages::customers.index', ['company' => $this->company])
         ->call('openCreate')
-        ->set('f_display_name', 'Pacific Crematorium Limited')
-        ->set('f_company_name', 'Pacific Crematorium Ltd.')
+        ->set('f_display_name', 'Harborview Services Limited')
+        ->set('f_company_name', 'Harborview Services Ltd.')
         ->set('f_first_name', 'Dana')
         ->set('f_last_name', 'Lee')
         ->set('f_job_title', 'Director')
@@ -42,7 +42,7 @@ it('saves the expanded customer profile fields', function () {
         ->call('save')
         ->assertHasNoErrors();
 
-    $customer = Contact::query()->where('display_name', 'Pacific Crematorium Limited')->firstOrFail();
+    $customer = Contact::query()->where('display_name', 'Harborview Services Limited')->firstOrFail();
 
     expect($customer->first_name)->toBe('Dana')
         ->and($customer->last_name)->toBe('Lee')

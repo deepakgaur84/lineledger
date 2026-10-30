@@ -5,6 +5,7 @@ namespace App\Actions\Portal;
 use App\Models\Company;
 use App\Models\Contact;
 use App\Models\PortalLoginLink;
+use App\Support\Http\CanonicalUrl;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Str;
 
@@ -39,8 +40,9 @@ final class IssuePortalLoginToken
 
         // The same one-time PortalLoginLink row backs both portals; only the
         // consume route differs (customer vs. employee), so the magic-link URL
-        // lands the recipient on the right sign-in endpoint.
-        return route($consumeRouteName, [
+        // lands the recipient on the right sign-in endpoint. Built on APP_URL,
+        // not the request's host: the link is emailed and carries the token.
+        return CanonicalUrl::route($consumeRouteName, [
             'company' => $company->slug,
             'token' => $token,
         ]);

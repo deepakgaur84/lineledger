@@ -87,7 +87,7 @@ final class EnsureStripeAccounts
     {
         return PaymentMethod::withoutGlobalScopes()->firstOrCreate(
             ['company_id' => $company->id, 'name' => self::METHOD_NAME],
-            ['is_cheque' => false, 'is_active' => true],
+            ['is_cheque' => false, 'is_card' => true, 'is_active' => true],
         );
     }
 }

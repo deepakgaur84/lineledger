@@ -11,6 +11,7 @@ use App\Models\PaymentMethod;
  * Expected $data shape:
  *   name:      string
  *   is_cheque: ?bool
+ *   is_card:   ?bool  (a card or payment app; the US 1099 Summary leaves its payments out)
  *   is_active: ?bool
  */
 final class SavePaymentMethod
@@ -28,6 +29,10 @@ final class SavePaymentMethod
             $attributes['is_cheque'] = (bool) $data['is_cheque'];
         }
 
+        if (array_key_exists('is_card', $data)) {
+            $attributes['is_card'] = (bool) $data['is_card'];
+        }
+
         if (array_key_exists('is_active', $data)) {
             $attributes['is_active'] = (bool) $data['is_active'];
         }
@@ -40,6 +45,7 @@ final class SavePaymentMethod
 
         return PaymentMethod::create($attributes + [
             'is_cheque' => $data['is_cheque'] ?? false,
+            'is_card' => $data['is_card'] ?? false,
             'is_active' => $data['is_active'] ?? true,
         ]);
     }

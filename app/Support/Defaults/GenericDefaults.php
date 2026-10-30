@@ -87,7 +87,7 @@ class GenericDefaults implements CompanyDefaults
             ['name' => 'Check', 'is_cheque' => true],
             ['name' => 'Bank Transfer', 'is_cheque' => false],
             ['name' => 'Wire', 'is_cheque' => false],
-            ['name' => 'Credit card', 'is_cheque' => false],
+            ['name' => 'Credit card', 'is_cheque' => false, 'is_card' => true],
         ];
     }
 

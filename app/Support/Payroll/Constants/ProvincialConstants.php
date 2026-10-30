@@ -13,7 +13,9 @@ namespace App\Support\Payroll\Constants;
  * CRA revises Jan 1 and, when a budget lands mid-year, Jul 1. The Jul editions use
  * PRORATED first-half-offsetting amounts for that year (e.g. Alberta's new 8%
  * bracket bills at 6% for Jul–Dec 2025; Manitoba's frozen BPAMB bills at $15,591).
- * The resolver picks the latest table whose effective date ≤ the pay date.
+ * The resolver picks the latest table whose effective date ≤ the pay date, and only
+ * within that table's own year ({@see PayrollTableCoverage}): a province's payroll
+ * is refused from January 1 until its table for that year is appended.
  *
  * Brackets: [up_to_cents (null = top), rate]. Optional per-province keys:
  *   'surtax'         => [[threshold_tax_cents, marginal_rate], ...] (Ontario)
@@ -862,7 +864,8 @@ final class ProvincialConstants
 
     /**
      * The provincial constants for the province effective on the given date, or
-     * null if the province/date is not loaded.
+     * null if the province isn't loaded or none of its tables covers the date
+     * (before the first table, or in a year whose table isn't loaded).
      *
      * @return array<string, mixed>|null
      */
@@ -870,19 +873,47 @@ final class ProvincialConstants
     {
         $tables = self::PERIODS[$province] ?? null;
 
-        if ($tables === null) {
-            return null;
-        }
+        return $tables === null ? null : PayrollTableCoverage::select($tables, $payDate);
+    }
 
-        $match = null;
+    /**
+     * The last pay date the province's loaded tables cover (Y-m-d), or null if
+     * the province isn't loaded.
+     */
+    public static function coveredThrough(string $province): ?string
+    {
+        $tables = self::PERIODS[$province] ?? null;
 
-        foreach ($tables as $effective => $values) {
-            if ($effective <= $payDate) {
-                $match = $values;
+        return $tables === null ? null : PayrollTableCoverage::coveredThrough($tables);
+    }
+
+    /**
+     * The province's basic personal amount (bpa_cents, plus bpa_max_cents where
+     * the amount is income-tested) in every table effective on or before the
+     * given date: the current one and each earlier one, including the prorated
+     * mid-year amounts. A TD1 (or Quebec TP-1015.3-V) claim equal to one of
+     * them claims the basic amount only. See
+     * {@see PayrollConstantSet::isProvincialBasicClaim()}.
+     *
+     * @return list<int>
+     */
+    public static function basicPersonalAmountsOnOrBefore(string $province, string $date): array
+    {
+        $amounts = [];
+
+        foreach (self::PERIODS[$province] ?? [] as $effective => $values) {
+            if ($effective > $date) {
+                continue;
+            }
+
+            $amounts[] = (int) $values['bpa_cents'];
+
+            if (isset($values['bpa_max_cents'])) {
+                $amounts[] = (int) $values['bpa_max_cents'];
             }
         }
 
-        return $match;
+        return array_values(array_unique($amounts));
     }
 
     /**

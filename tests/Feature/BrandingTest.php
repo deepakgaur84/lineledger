@@ -45,13 +45,13 @@ test('the browser tab follows the app name', function () {
 });
 
 test('the footer names the configured operator', function () {
-    config(['brand.footer.owner' => 'Personal Alternative Funeral Services Limited']);
+    config(['brand.footer.owner' => 'Cedar Point Holdings Limited']);
 
     $this
         ->actingAs(User::factory()->create())
         ->get(route('dashboard'))
         ->assertOk()
-        ->assertSeeText('Personal Alternative Funeral Services Limited')
+        ->assertSeeText('Cedar Point Holdings Limited')
         ->assertDontSeeText('Local Foundry Inc.');
 });
 

@@ -35,7 +35,7 @@ Please include as much as you can:
 
 ## Safe harbor
 
-**Local Foundry Inc.**, which operates the hosted service, considers security
+**Local Foundry Inc.**, which maintains LineLedger, considers security
 research and vulnerability disclosure conducted in good faith and in accordance with
 this policy to be authorized. We will not pursue or support legal action against you
 for such research, provided that you:
@@ -56,10 +56,8 @@ hello@lineledger.ca.
 **In scope:**
 
 - The LineLedger source code in this repository.
-- The official hosted service operated by Local Foundry Inc. LineLedger runs two
-  regional deployments and **both are in scope**:
-  - `books.lineledger.ca` (Canada)
-  - `books.lineledger.com` (United States)
+
+LineLedger is self-hosted software; there is no official hosted service.
 
 **Supported versions:** security fixes are issued for the **latest release** only.
 The current release is listed in [CHANGELOG.md](CHANGELOG.md); if you're self-hosting
@@ -70,7 +68,8 @@ an older version, upgrade before reporting a bug that may already be fixed.
 - Third-party dependencies — please report those to their respective maintainers.
 - Third-party services we rely on (for example our payment processor and
   infrastructure providers) — report those to the relevant vendor.
-- Any LineLedger instance hosted by someone other than Local Foundry Inc.;
-  self-hosted deployments are the responsibility of whoever operates them.
+- Running LineLedger deployments, including the public demo (`demo.lineledger.com`,
+  `.ca` and `.co.uk`) and self-hosted instances. If you find a flaw while using one,
+  report it as a flaw in the source code; don't test against the deployment.
 - Findings that require physical access, social engineering of our staff, or
   denial-of-service testing.

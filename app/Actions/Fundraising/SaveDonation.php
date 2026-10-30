@@ -5,6 +5,7 @@ namespace App\Actions\Fundraising;
 use App\Actions\Charity\SaveDonationReceipt;
 use App\Models\Contact;
 use App\Models\Donation;
+use App\Services\Charity\DonationReceiptSynchronizer;
 use App\Services\Posting\DocumentNumberGenerator;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -13,8 +14,9 @@ use InvalidArgumentException;
  * Creates or updates a DRAFT donation (posted/void donations are immutable).
  * Generates the serial on create, flags the contact as a donor, and — when asked
  * and the company is a registered charity — spawns a draft official receipt linked
- * back via donation_id (with no debit account, so the issuer posts no GL: the
- * donation already books the revenue).
+ * back via donation_id. A linked receipt never posts GL (the donation already
+ * books the revenue) and follows the donation: every later save brings it back in
+ * step ({@see DonationReceiptSynchronizer::donationSaved()}).
  *
  * Expected $data shape:
  *   contact_id, gift_type, donation_date, amount_cents, is_restricted, fund_id,
@@ -26,6 +28,7 @@ final class SaveDonation
     public function __construct(
         protected DocumentNumberGenerator $numbers,
         protected SaveDonationReceipt $saveReceipt,
+        protected DonationReceiptSynchronizer $receipts,
     ) {}
 
     /**
@@ -69,6 +72,8 @@ final class SaveDonation
 
             if (($data['issue_receipt'] ?? false) && $company->isRegisteredCharity() && $donation->donation_receipt_id === null) {
                 $this->spawnReceipt($donation);
+            } else {
+                $this->receipts->donationSaved($donation);
             }
 
             return $donation;
@@ -76,21 +81,17 @@ final class SaveDonation
     }
 
     /**
-     * Spawn a draft official receipt for the donation. No debit_account_id is set,
-     * so the issuer posts no GL — the donation already recorded the revenue.
+     * Spawn a draft official receipt for the donation, linked by donation_id —
+     * which is what keeps it free of a debit account, so the issuer never posts
+     * the gift again: the donation already recorded the revenue.
      */
     protected function spawnReceipt(Donation $donation): void
     {
         $receipt = $this->saveReceipt->handle([
-            'contact_id' => $donation->contact_id,
-            'gift_type' => $donation->gift_type->value,
-            'gift_date' => $donation->donation_date->toDateString(),
-            'amount_cents' => $donation->amount_cents,
+            'donation_id' => $donation->id,
             'advantage_cents' => 0,
-            'revenue_account_id' => $donation->revenue_account_id,
-        ]);
+        ] + $donation->receiptFields());
 
-        $receipt->forceFill(['donation_id' => $donation->id])->save();
         $donation->forceFill(['donation_receipt_id' => $receipt->id])->save();
     }
 }

@@ -12,10 +12,13 @@ use App\Services\Audit\AuditMute;
 use App\Services\Audit\CanonicalJson;
 use App\Services\Backup\BackupTableRegistry;
 use App\Services\Backup\CompanyExporter;
+use App\Services\Backup\JsonlTableWriter;
 use App\Services\Restore\Exceptions\BundleValidationException;
+use App\Support\Encryption\EncryptedColumns;
 use App\Support\Storage\TemporaryLocalFile;
 use Carbon\CarbonImmutable;
 use FilesystemIterator;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -42,6 +45,9 @@ use ZipArchive;
  *     polymorphic remap, per-table quirks). Every insert is via
  *     `DB::table()->insertGetId()` to skip `JournalLine::creating`'s clobber
  *     and `AccountingAuditLog`'s update/delete immutability guard uniformly.
+ *     That also skips the model casts, so columns with an `encrypted` cast,
+ *     which the bundle carries as plaintext, are encrypted first with this
+ *     instance's key ({@see self::encryptColumns()}).
  *  6. Re-updates the Company row with account FKs that didn't exist when
  *     the shell was created.
  *  7. Imports attachment blobs onto the target disk, then the company logo.
@@ -55,6 +61,14 @@ use ZipArchive;
  */
 final class CompanyImporter
 {
+    /**
+     * {@see EncryptedColumns::of()} per model class, worked out once per table
+     * rather than once per row.
+     *
+     * @var array<class-string<Model>, list<string>>
+     */
+    private array $encryptedColumns = [];
+
     public function __construct(
         private readonly BundleInspector $inspector,
         private readonly JsonlTableReader $reader,
@@ -198,7 +212,7 @@ final class CompanyImporter
             $shellRow['created_at'] = $shellRow['created_at'] ?? $now;
             $shellRow['updated_at'] = $now;
 
-            $shellPayload = $this->prepareRowForInsert($shellRow);
+            $shellPayload = $this->prepareRowForInsert($this->encryptColumns(Company::class, $shellRow));
 
             $stepResults = [];
             $deferredFkUpdates = [];
@@ -250,6 +264,7 @@ final class CompanyImporter
                 ): void {
                     foreach (BackupTableRegistry::tables() as $entry) {
                         $tableName = $entry['table'];
+                        $modelClass = $entry['model'];
 
                         // The companies row was already used to build the shell.
                         // We deferred its account-FK columns to a post-loop UPDATE
@@ -287,7 +302,7 @@ final class CompanyImporter
                                 continue;
                             }
 
-                            $payload = $this->prepareRowForInsert($result['row']);
+                            $payload = $this->prepareRowForInsert($this->encryptColumns($modelClass, $result['row']));
 
                             if ($tableName === 'accounting_audit_logs') {
                                 [$payload, $auditPrevHash] = $this->rebuildAuditChainEntry($payload, $auditPrevHash);
@@ -338,7 +353,7 @@ final class CompanyImporter
                     // that the row transformer can NOW resolve via the populated
                     // IdMapper (default_inventory_asset_account_id, etc.).
                     $companyUpdate = $rowTransformer->transform('companies', $rawCompanyRow);
-                    $updateRow = $this->prepareRowForInsert($companyUpdate['row']);
+                    $updateRow = $this->prepareRowForInsert($this->encryptColumns(Company::class, $companyUpdate['row']));
 
                     // Don't overwrite the freshly-generated slug or the (about to
                     // be set) logo_path — both are handled separately. Also drop
@@ -638,6 +653,34 @@ final class CompanyImporter
 
             if (is_string($value) && $this->looksLikeIsoDateTime($value)) {
                 $row[$column] = $this->normalizeDateTimeString($value);
+            }
+        }
+
+        return $row;
+    }
+
+    /**
+     * Encrypt the row's encrypted-cast columns with this instance's key.
+     *
+     * The bundle carries them as plaintext ({@see JsonlTableWriter::ENCRYPTED_COLUMN_ENCODING};
+     * BundleInspector refuses any other encoding before the import starts), and
+     * the raw insert skips the model's cast. Without this the column would hold
+     * the plaintext: unreadable through the cast, and unencrypted at rest. The
+     * source instance's key never comes into it, so a bundle restores the same
+     * way onto any instance. A bundle from before the manifest recorded the
+     * encoding holds plaintext too, since `toArray()` decrypted through the cast.
+     *
+     * @param  class-string<Model>  $modelClass
+     * @param  array<string, mixed>  $row
+     * @return array<string, mixed>
+     */
+    private function encryptColumns(string $modelClass, array $row): array
+    {
+        $this->encryptedColumns[$modelClass] ??= EncryptedColumns::of($modelClass);
+
+        foreach ($this->encryptedColumns[$modelClass] as $column) {
+            if (array_key_exists($column, $row)) {
+                $row[$column] = EncryptedColumns::encrypt($modelClass, $row[$column]);
             }
         }
 

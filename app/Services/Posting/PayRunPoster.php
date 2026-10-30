@@ -10,14 +10,19 @@ use App\Exceptions\Posting\PeriodLockedException;
 use App\Models\Account;
 use App\Models\Company;
 use App\Models\EmployeeAccrualBalance;
+use App\Models\EmployeeRecurringItem;
 use App\Models\JournalEntry;
 use App\Models\PayrollCheque;
 use App\Models\PayRun;
 use App\Models\PayRunLine;
+use App\Models\PayRunLineEarning;
 use App\Models\TimeEntry;
+use App\Models\TimeOffPolicy;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
 use App\Services\Payroll\CalculatePayRun;
+use App\Services\Payroll\PayrollYtdService;
+use App\Support\Payroll\Constants\PayrollConstantsRepository;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -42,6 +47,11 @@ use RuntimeException;
  *     CR  <voluntary payables>    (per liability account)
  *     CR  Net Pay Clearing        (per employee net; drained as cheques post)
  *
+ * Accrued pay taken settles its liability instead of being expensed twice:
+ *   DR  Vacation Payable (or the accrual's own liability)  (vacation pay drawn from an accrued dollar balance)
+ *   DR  Banked Time Payable                                (banked time taken, liability mode)
+ *     CR  Wages & Salaries Expense                         (… backing out the wage debit for that pay)
+ *
  * Quebec amounts are 0 on rest-of-Canada lines and vice-versa, so the {@see addLeg}
  * zero-guard suppresses inapplicable legs and one balanced JE serves pure-ROC,
  * pure-QC, and mixed runs alike. The CRA-vs-Revenu-Québec split is a reporting
@@ -57,6 +67,8 @@ class PayRunPoster
         protected EntryNumberGenerator $entryNumbers,
         protected PayrollAccountResolver $accounts,
         protected AccountingAuditRecorder $auditRecorder,
+        protected PayrollConstantsRepository $constants,
+        protected PayrollYtdService $ytd,
     ) {}
 
     public function post(PayRun $payRun): JournalEntry
@@ -84,6 +96,20 @@ class PayRunPoster
             if ($payRun->company->isLockedFor($payDate)) {
                 throw PeriodLockedException::for($payDate, CarbonImmutable::parse($payRun->company->lock_date));
             }
+
+            // Posting never re-runs the engine, so refuse amounts no loaded tax
+            // table stands behind, e.g. a run calculated before the engine refused
+            // pay dates past the last loaded year.
+            foreach ($payRun->lines->pluck('province_of_employment')->unique() as $province) {
+                $this->constants->resolve((string) $province, $payDate);
+            }
+
+            // The amounts were calculated against the year-to-date of every run
+            // that counted at the time. Refuse while an earlier calculated run
+            // for the same employee is unposted, when that year-to-date has
+            // changed since, or when a line would take posted CPP/CPP2/EI/QPP/
+            // QPP2/QPIP past an annual maximum (audit D6Payroll-12).
+            $this->ytd->assertPostable($payRun);
 
             $entry = JournalEntry::create([
                 'entry_no' => $this->entryNumbers->next($payRun->company),
@@ -200,6 +226,8 @@ class PayRunPoster
         $accrualLiabByAccount = [];    // CR dollar-accrual liability, grouped by account
         $bankedReliefCredits = [];     // CR wage expense backing out banked-time settlements
         $totalBankedRelief = 0;        // DR Banked Time Payable
+        $accruedPayDebits = [];        // DR accrual liability for vacation pay taken, grouped by account
+        $accruedPayCredits = [];       // CR wage expense backing it out, keyed like the wage debits
         $wageByKey = [];
 
         foreach ($payRun->lines as $line) {
@@ -250,6 +278,28 @@ class PayRunPoster
                 $totalBankedRelief += $relief;
                 $creditAccount = $earning->expense_account_id ?? $defaultWageAccount->id;
                 $bankedReliefCredits[$creditAccount] = ($bankedReliefCredits[$creditAccount] ?? 0) + $relief;
+            }
+
+            // Vacation pay taken from an accrued dollar balance was expensed when
+            // it accrued, so the part the balance covers settles the accrual's
+            // liability instead of being expensed again as wages: DR the liability
+            // / CR the wage expense the earning debited, tagged like that debit so
+            // the employee's (and the class's) wages net to what wasn't accrued.
+            foreach ($this->settleAccruedPay($company, $line) as ['earning' => $earning, 'cents' => $cents, 'liability_account_id' => $liabilityId]) {
+                $accruedPayDebits[$liabilityId] = ($accruedPayDebits[$liabilityId] ?? 0) + $cents;
+
+                $accountId = $earning->expense_account_id ?? $defaultWageAccount->id;
+                $key = $accountId.':'.($earning->class_id ?? '').':'.($earning->location_id ?? '').':'.$line->contact_id;
+                $accruedPayCredits[$key] ??= [
+                    'account_id' => $accountId,
+                    'debit' => 0,
+                    'credit' => 0,
+                    'contact_id' => $line->contact_id,
+                    'class_id' => $earning->class_id,
+                    'location_id' => $earning->location_id,
+                    'memo' => 'Vacation pay taken',
+                ];
+                $accruedPayCredits[$key]['credit'] += $cents;
             }
 
             // Employer CPP and QPP both expense to 6210 (one is always 0 per line).
@@ -388,6 +438,15 @@ class PayRunPoster
             }
         }
 
+        // Vacation pay taken: settle the liability each accrual built.
+        foreach ($accruedPayDebits as $accountId => $amount) {
+            $legs[] = ['account_id' => (int) $accountId, 'debit' => $amount, 'credit' => 0, 'contact_id' => null, 'class_id' => null, 'location_id' => null, 'memo' => 'Vacation pay taken'];
+        }
+
+        foreach ($accruedPayCredits as $leg) {
+            $legs[] = $leg;
+        }
+
         $order = 0;
 
         foreach ($legs as $leg) {
@@ -415,11 +474,13 @@ class PayRunPoster
      *   - vacation accrued → the 'vacation' dollar balance up, mirrored to the
      *     profile's vacation_balance_cents;
      *   - time off taken (an earning whose code has a balance) → balance down,
-     *     used-YTD up (hours when the earning carries hours, else dollars).
+     *     used-YTD up: the hours it carries (a dollar policy has no hours side),
+     *     and the accrued pay it settled at posting (frozen on the earning).
      */
     protected function applyAccrualBalances(PayRun $payRun, int $sign): void
     {
         $payRun->loadMissing('lines.accruals', 'lines.earnings', 'lines.profile');
+        $company = $payRun->company;
 
         foreach ($payRun->lines as $line) {
             $profileId = $line->employee_payroll_profile_id;
@@ -452,8 +513,7 @@ class PayRunPoster
             }
 
             // Taken: an earning whose code matches a balance draws it down + raises
-            // used YTD. Hours-based earnings draw hours; a dollar 'vacation'/dollar
-            // balance draws dollars. Earnings with no matching balance are ignored.
+            // used YTD. Earnings with no matching balance are ignored.
             foreach ($line->earnings as $earning) {
                 $balance = EmployeeAccrualBalance::withoutGlobalScopes()
                     ->where('company_id', $payRun->company_id)
@@ -465,10 +525,20 @@ class PayRunPoster
                     continue;
                 }
 
-                $hours = (float) $earning->hours;
-                $amount = (int) $earning->amount_cents;
+                // Posted before settlements were recorded on the earning: reverse
+                // its draw by the rules it was posted under.
+                if ($earning->accrual_relief_cents === null) {
+                    $this->applyUnrecordedTake($payRun, $line, $balance, $earning, $sign);
 
-                if ($hours !== 0.0) {
+                    continue;
+                }
+
+                $hours = (float) $earning->hours;
+                $settled = (int) $earning->accrual_relief_cents;
+
+                // Hours draw the hours side — except a dollar policy's, which has
+                // none (its take is measured by the dollars it settled).
+                if ($hours !== 0.0 && ! $this->policyFor($company, (string) $balance->code)?->isDollarUnit()) {
                     $balance->balance_hours = (float) $balance->balance_hours - $sign * $hours;
                     $balance->used_ytd_hours = (float) $balance->used_ytd_hours + $sign * $hours;
 
@@ -478,23 +548,180 @@ class PayRunPoster
                     // post and void move identical amounts no matter how the
                     // company liability toggle has changed in between.
                     if ($balance->code === 'banked' && $this->balanceTracksDollars($balance)) {
-                        $relief = (int) round($hours * $this->lineHourlyRateCents($payRun->company, $line));
+                        $relief = (int) round($hours * $this->lineHourlyRateCents($company, $line));
                         $balance->balance_cents = (int) $balance->balance_cents - $sign * $relief;
                         $balance->used_ytd_cents = (int) $balance->used_ytd_cents + $sign * $relief;
                     }
+                }
 
-                    $balance->save();
-                } elseif ($amount !== 0 && ((int) $balance->balance_cents !== 0 || (int) $balance->accrued_ytd_cents !== 0 || $balance->code === 'vacation')) {
-                    $balance->balance_cents = (int) $balance->balance_cents - $sign * $amount;
-                    $balance->used_ytd_cents = (int) $balance->used_ytd_cents + $sign * $amount;
-                    $balance->save();
+                // The accrued pay this take settled from the liability draws the
+                // dollar side by the same frozen amount (see settleAccruedPay()).
+                if ($settled !== 0) {
+                    $balance->balance_cents = (int) $balance->balance_cents - $sign * $settled;
+                    $balance->used_ytd_cents = (int) $balance->used_ytd_cents + $sign * $settled;
+                }
 
-                    if ($balance->code === 'vacation' && $line->profile) {
-                        $line->profile->forceFill(['vacation_balance_cents' => (int) $balance->balance_cents])->save();
-                    }
+                $balance->save();
+
+                if ($settled !== 0 && $balance->code === 'vacation' && $line->profile) {
+                    $line->profile->forceFill(['vacation_balance_cents' => (int) $balance->balance_cents])->save();
                 }
             }
         }
+    }
+
+    /**
+     * Draw (or, on void, restore) a take posted before accrual settlements were
+     * recorded on the earning, exactly as the poster of the time did: hours
+     * from the hours side, and a dollar amount from a dollar-tracked balance in
+     * full. None of that run's journal relieved a liability for it.
+     */
+    private function applyUnrecordedTake(PayRun $payRun, PayRunLine $line, EmployeeAccrualBalance $balance, PayRunLineEarning $earning, int $sign): void
+    {
+        $hours = (float) $earning->hours;
+        $amount = (int) $earning->amount_cents;
+
+        if ($hours !== 0.0) {
+            $balance->balance_hours = (float) $balance->balance_hours - $sign * $hours;
+            $balance->used_ytd_hours = (float) $balance->used_ytd_hours + $sign * $hours;
+
+            if ($balance->code === 'banked' && $this->balanceTracksDollars($balance)) {
+                $relief = (int) round($hours * $this->lineHourlyRateCents($payRun->company, $line));
+                $balance->balance_cents = (int) $balance->balance_cents - $sign * $relief;
+                $balance->used_ytd_cents = (int) $balance->used_ytd_cents + $sign * $relief;
+            }
+
+            $balance->save();
+        } elseif ($amount !== 0 && ((int) $balance->balance_cents !== 0 || (int) $balance->accrued_ytd_cents !== 0 || $balance->code === 'vacation')) {
+            $balance->balance_cents = (int) $balance->balance_cents - $sign * $amount;
+            $balance->used_ytd_cents = (int) $balance->used_ytd_cents + $sign * $amount;
+            $balance->save();
+
+            if ($balance->code === 'vacation' && $line->profile) {
+                $line->profile->forceFill(['vacation_balance_cents' => (int) $balance->balance_cents])->save();
+            }
+        }
+    }
+
+    /**
+     * Freeze on each of the line's earnings how much of it was paid out of the
+     * employee's accrued DOLLAR balance for its code — vacation pay taken — and
+     * return the ones that settled something, with the liability their accrual
+     * credits.
+     *
+     * A take is worth what it paid; a $0 row on a paid leave policy (a salaried
+     * employee's day off, which the salary pays) is worth its hours at the
+     * line's hourly rate, as banked time is. It settles at most what has
+     * accrued: the balance plus this run's accrual for the code (the balance
+     * takes accruals before draws). Pay beyond that is still paid in full and
+     * stays wage expense, and a balance at or below zero settles nothing.
+     * Banked time keeps its own relief ({@see bankedReliefCents()}).
+     *
+     * The amount is stored on the earning (0 when nothing settles), so a void
+     * returns the balance by exactly what posting drew, whatever has moved it
+     * since.
+     *
+     * @return list<array{earning: PayRunLineEarning, cents: int, liability_account_id: int}>
+     */
+    private function settleAccruedPay(Company $company, PayRunLine $line): array
+    {
+        /** @var array<string, int> $room */
+        $room = [];
+
+        if ($line->employee_payroll_profile_id) {
+            $balances = EmployeeAccrualBalance::withoutGlobalScopes()
+                ->where('company_id', $company->id)
+                ->where('employee_payroll_profile_id', $line->employee_payroll_profile_id)
+                ->get();
+
+            foreach ($balances as $balance) {
+                $room[(string) $balance->code] = (int) $balance->balance_cents;
+            }
+
+            foreach ($line->accruals as $accrual) {
+                $room[(string) $accrual->code] = ($room[(string) $accrual->code] ?? 0) + (int) $accrual->amount_cents;
+            }
+
+            $room['vacation'] = ($room['vacation'] ?? 0) + (int) $line->vacation_accrued_cents;
+        }
+
+        $settled = [];
+
+        foreach ($line->earnings as $earning) {
+            $code = (string) $earning->code;
+            $available = $room[$code] ?? 0;
+            $cents = 0;
+
+            if ($available > 0 && $code !== 'banked' && ! $earning->add_to_bases_only && ! $earning->add_to_net_pay_only) {
+                $cents = min($available, $this->accruedPayTakenCents($company, $line, $earning));
+                $room[$code] = $available - $cents;
+            }
+
+            $earning->forceFill(['accrual_relief_cents' => $cents])->save();
+
+            if ($cents > 0) {
+                $settled[] = [
+                    'earning' => $earning,
+                    'cents' => $cents,
+                    'liability_account_id' => $this->accruedPayLiabilityId($company, $line, $code),
+                ];
+            }
+        }
+
+        return $settled;
+    }
+
+    /**
+     * What a take of accrued pay is worth: the cash it paid, or — for a $0
+     * row on a PAID leave policy, whose hours the salary already pays — its
+     * hours at the line's effective hourly rate. Unpaid leave is worth nothing.
+     */
+    private function accruedPayTakenCents(Company $company, PayRunLine $line, PayRunLineEarning $earning): int
+    {
+        $amount = (int) $earning->amount_cents;
+
+        if ($amount !== 0) {
+            return max(0, $amount);
+        }
+
+        $hours = (float) $earning->hours;
+
+        if ($hours <= 0 || ! $this->policyFor($company, (string) $earning->code)?->paid) {
+            return 0;
+        }
+
+        return (int) round($hours * $this->lineHourlyRateCents($company, $line));
+    }
+
+    /**
+     * The liability a code's dollar accrual credits, so a take settles the
+     * account its accrual built: a dollar time-off policy's own account, else
+     * an accrual item's, else Vacation Payable (where the built-in vacation
+     * accrual and any accrual without an account of its own go).
+     */
+    private function accruedPayLiabilityId(Company $company, PayRunLine $line, string $code): int
+    {
+        $policy = $this->policyFor($company, $code);
+
+        $accountId = $policy?->isDollarUnit()
+            ? $policy->liability_account_id
+            : EmployeeRecurringItem::withoutGlobalScopes()
+                ->where('company_id', $company->id)
+                ->where('employee_payroll_profile_id', $line->employee_payroll_profile_id)
+                ->where('kind', 'accrual')
+                ->where('code', $code)
+                ->value('liability_account_id');
+
+        return (int) ($accountId ?? $this->accounts->resolve($company, PayrollAccount::VacationPayable)->id);
+    }
+
+    /** The company's time-off policy for a code, if one exists (active or not). */
+    private function policyFor(Company $company, string $code): ?TimeOffPolicy
+    {
+        return TimeOffPolicy::withoutGlobalScopes()
+            ->where('company_id', $company->id)
+            ->where('code', $code)
+            ->first();
     }
 
     /**

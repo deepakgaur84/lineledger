@@ -144,7 +144,7 @@ it('shows the document logo at the configured height in place of the company nam
 
     $invoice = makePostedInvoice($this)->load('lines.taxCode', 'lines.item', 'contact', 'terms');
 
-    $this->company->name = 'Pacific Crematorium Limited';
+    $this->company->name = 'Harborview Services Limited';
     $this->company->document_logo_path = UploadedFile::fake()->image('doc-logo.png')->store('company-logos', 'public');
     $this->company->document_logo_max_height = 96;
 
@@ -171,8 +171,8 @@ it('shows the document logo at the configured height in place of the company nam
 it('shows email and website only when those header fields are enabled', function () {
     $invoice = makePostedInvoice($this)->load('lines.taxCode', 'lines.item', 'contact', 'terms');
 
-    $this->company->email = 'office@crematorium.test';
-    $this->company->website = 'https://crematorium.test';
+    $this->company->email = 'office@harborview.test';
+    $this->company->website = 'https://harborview.test';
 
     $render = fn (bool $show) => view('pdf.invoices.invoice', [
         'company' => $this->company,
@@ -187,11 +187,11 @@ it('shows email and website only when those header fields are enabled', function
     ])->render();
 
     expect($render(true))
-        ->toContain('office@crematorium.test')
-        ->toContain('https://crematorium.test');
+        ->toContain('office@harborview.test')
+        ->toContain('https://harborview.test');
     expect($render(false))
-        ->not->toContain('office@crematorium.test')
-        ->not->toContain('https://crematorium.test');
+        ->not->toContain('office@harborview.test')
+        ->not->toContain('https://harborview.test');
 });
 
 it('hides the GST number and a toggled-off column', function () {

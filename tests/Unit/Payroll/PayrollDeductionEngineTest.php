@@ -221,14 +221,16 @@ it('honours a provincial TD1 claim above the basic amount (lower provincial tax)
         ->and($higher->federalTaxCents)->toBe($basic->federalTaxCents);
 });
 
-it('floors a below-basic provincial claim to the basic amount (matches federal treatment)', function () {
-    // A below-basic provincial claim (e.g. claim code 0) floors to the basic
-    // personal amount — a documented, federally-shared limitation — so provincial
-    // tax is unchanged from the basic baseline, never increased.
+it('gives no provincial personal credit for a $0 provincial claim (claim code 0)', function () {
+    // T4127 claim code 0 → TCP 0.00, K1P 0.00. On the Jan 2025 Alberta table
+    // the basic claim's K1P is 0.10 × $22,323 = $2,232.30 a year, so a $0 claim
+    // withholds $85.86 more a biweekly pay; the federal tax is unchanged.
     $basic = payrollEngine()->compute(employeeContext('AB'), flatEarnings(200000), YtdTotals::none());
     $zero = payrollEngine()->compute(employeeContext('AB', ['prov' => 0]), flatEarnings(200000), YtdTotals::none());
 
-    expect($zero->provincialTaxCents)->toBe($basic->provincialTaxCents);
+    expect($zero->provincialTaxCents - $basic->provincialTaxCents)->toBeGreaterThanOrEqual(8585)
+        ->toBeLessThanOrEqual(8586)
+        ->and($zero->federalTaxCents)->toBe($basic->federalTaxCents);
 });
 
 it('honours a Quebec source-deductions claim above the basic amount (lower Quebec tax)', function () {

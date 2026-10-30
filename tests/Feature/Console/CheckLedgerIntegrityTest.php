@@ -1,5 +1,6 @@
 <?php
 
+use App\Actions\Accounting\EnableCompanyCurrency;
 use App\Console\Commands\CheckLedgerIntegrity;
 use App\Enums\AccountSubtype;
 use App\Enums\BillType;
@@ -252,4 +253,46 @@ it('checks bill paid caches too, and --fix repairs them', function () {
 
     expect($bill->fresh()->amount_paid_cents)->toBe(5000);
     expect($bill->fresh()->status->value)->toBe('paid');
+});
+
+it('reports a void that leaves foreign-currency units behind, which --fix leaves to the backfill', function () {
+    app(EnableCompanyCurrency::class)->handle($this->company, 'USD');
+    $this->company->refresh();
+
+    $customer = Contact::create(['display_name' => 'US Integrity Customer', 'is_customer' => true, 'currency_code' => 'USD']);
+    $income = Account::query()->where('subtype', AccountSubtype::Income->value)->first();
+    $invoice = Invoice::create([
+        'contact_id' => $customer->id, 'invoice_no' => 'INV-INT-USD',
+        'invoice_date' => now()->toDateString(), 'due_date' => now()->addDays(30)->toDateString(),
+        'currency_code' => 'USD', 'fx_rate' => '1.35',
+    ]);
+    $invoice->lines()->create([
+        'account_id' => $income->id, 'description' => 'Export', 'quantity' => '1',
+        'unit_price_cents' => 10000, 'line_subtotal_cents' => 10000, 'line_tax_cents' => 0, 'line_total_cents' => 10000, 'line_order' => 0,
+    ]);
+    app(InvoicePoster::class)->post($invoice);
+    app(InvoicePoster::class)->void($invoice->fresh());
+
+    // A void that mirrors the memo nets to zero in foreign units: healthy.
+    $this->artisan('integrity:check', ['company' => $this->companyId])->assertExitCode(0);
+
+    // Rewind the reversal to what voids wrote before they carried the memo.
+    $original = $invoice->fresh()->journalEntry;
+    $reversal = $original->reversedBy;
+    DB::table('journal_lines')->where('journal_entry_id', $reversal->id)
+        ->update(['currency_code' => null, 'fx_rate' => null, 'foreign_debit_cents' => 0, 'foreign_credit_cents' => 0]);
+    $usdAr = Account::withoutGlobalScopes()->find($this->company->currencies()->where('currency_code', 'USD')->value('ar_account_id'));
+
+    // Reported, not repaired: --fix has no cache to heal here.
+    $this->artisan('integrity:check', ['company' => $this->companyId, '--fix' => true, '--no-alert' => true])
+        ->expectsOutputToContain("Voided entry {$original->entry_no} (#{$original->id}) and its reversal {$reversal->entry_no} (#{$reversal->id}) do not cancel in foreign units: {$income->code} ({$income->name}) -10000, {$usdAr->code} ({$usdAr->name}) +10000 foreign cents are left over.")
+        ->assertExitCode(1);
+
+    expect(DB::table('journal_lines')->where('journal_entry_id', $reversal->id)->whereNotNull('currency_code')->count())->toBe(0);
+
+    $this->artisan('currency:backfill-reversal-memos', ['company' => $this->companyId])->assertSuccessful();
+
+    $this->artisan('integrity:check', ['company' => $this->companyId])
+        ->expectsOutputToContain('Ledger integrity OK.')
+        ->assertExitCode(0);
 });

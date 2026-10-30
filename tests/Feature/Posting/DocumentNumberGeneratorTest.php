@@ -88,7 +88,7 @@ it('keeps BILL and REIM as separate sequences', function () {
 });
 
 it('skips a number the last-by-id row would have collided with', function () {
-    // The Pacific Crematorium shape: an imported back catalogue whose newest
+    // A common shape: an imported back catalogue whose newest
     // row by id is NOT the highest number. Naively incrementing it lands on a
     // number that already exists and trips the unique index.
     dngMakeInvoice('INV 27/10052');

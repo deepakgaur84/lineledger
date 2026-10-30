@@ -1,6 +1,7 @@
 <?php
 
 use App\Actions\Accounting\EnableCompanyCurrency;
+use App\Actions\Accounting\SaveAccount;
 use App\Enums\AccountSubtype;
 use App\Enums\BillType;
 use App\Models\Account;
@@ -109,6 +110,42 @@ it('realizes an exchange loss when paying at a higher rate than the bill', funct
     $fxLine = $entry->lines->firstWhere('account_id', $this->company->exchange_gain_loss_account_id);
     expect($fxLine->debit_cents)->toBe(5_000)
         ->and($fxLine->credit_cents)->toBe(0);
+});
+
+it('carries the foreign amount on the bank leg only when the bank is in the payment currency', function () {
+    $usdBank = app(SaveAccount::class)->handle([
+        'code' => '1015', 'name' => 'USD Chequing', 'subtype' => AccountSubtype::Bank->value, 'currency_code' => 'USD',
+    ]);
+
+    $pay = function (Account $from, string $no) {
+        $bill = postUsdBill(100_000, '1.30', 'BILL-'.$no);
+        $payment = BillPayment::create([
+            'contact_id' => $this->vendor->id,
+            'payment_type' => BillType::Vendor,
+            'payment_no' => $no,
+            'payment_date' => '2026-04-01',
+            'paid_from_account_id' => $from->id,
+            'amount_cents' => 100_000,
+            'currency_code' => 'USD',
+            'fx_rate' => '1.35',
+        ]);
+        $payment->applications()->create(['bill_id' => $bill->id, 'amount_cents' => 100_000]);
+
+        return app(BillPaymentPoster::class)->post($payment)->lines->firstWhere('account_id', $from->id);
+    };
+
+    // From USD chequing: 1,350.00 CAD leaves it, and so does 1,000 USD.
+    $usdLeg = $pay($usdBank, 'PAY-USD-BANK');
+    expect($usdLeg->credit_cents)->toBe(135_000)
+        ->and($usdLeg->currency_code)->toBe('USD')
+        ->and($usdLeg->foreign_credit_cents)->toBe(100_000)
+        ->and($usdBank->fresh()->foreignBalanceCents())->toBe(-100_000);
+
+    // From the home bank: a plain home-cents leg, as before.
+    $homeLeg = $pay($this->bank, 'PAY-CAD-BANK');
+    expect($homeLeg->credit_cents)->toBe(135_000)
+        ->and($homeLeg->currency_code)->toBeNull()
+        ->and($homeLeg->foreign_credit_cents)->toBe(0);
 });
 
 it('realizes an exchange gain when paying at a lower rate than the bill', function () {
