@@ -23,9 +23,12 @@ the current CRA, Revenu Québec and Service Canada formats, TD1 claims, annual
 maximums, vacation pay and Indian Act exempt income are handled correctly, and a
 pay date past the loaded tax tables is refused. Restores keep employee SINs
 readable and no longer collide with the organization they came from, and the
-1099 Summary uses the $2,000 threshold for 2026. Nine migrations and two new
-`app:upgrade` steps; behind a load balancer, CDN or reverse proxy, set
-`TRUSTED_PROXIES` before you upgrade. See `UPGRADING.md`.
+1099 Summary uses the $2,000 threshold for 2026. The late-October dependency
+updates are in too, among them `laravel/mcp` 1.1.1, which limits what MCP's open
+client registration accepts. Nine migrations and two new `app:upgrade` steps;
+behind a load balancer, CDN or reverse proxy, set `TRUSTED_PROXIES` before you
+upgrade, and on Forge or bare metal check `.env` for an unclosed double quote.
+See `UPGRADING.md`.
 
 ### Added
 
@@ -75,6 +78,12 @@ readable and no longer collide with the organization they came from, and the
   more, so the guest country-switcher banner stays off unless you list your own
   sibling deployments. `SECURITY.md` now scopes reports to the source code; running
   deployments, including the public demo, are out of scope.
+- Dependency updates: `laravel/framework` 13.39, `livewire/flux` 2.21,
+  `resend/resend-php` 1.17, Guzzle 8.3.1, Carbon 3.15.1, `vlucas/phpdotenv` 5.8
+  (see the upgrade notes), Larastan 3.13.1, Vite 8.3.5,
+  `@rollup/rollup-linux-x64-gnu` 4.64.12 and the CodeQL SARIF upload action
+  4.39.1.
+  ([#145](https://github.com/lineledger/lineledger/pull/145)–[#152](https://github.com/lineledger/lineledger/pull/152))
 
 ### Fixed
 
@@ -443,6 +452,11 @@ readable and no longer collide with the organization they came from, and the
   also escapes quotes and backslashes in quoted parameter values, such as
   attachment filenames.
   ([#160](https://github.com/lineledger/lineledger/pull/160))
+- **`laravel/mcp` 1.1.1** (from 1.0.2) caps MCP's dynamic client registration
+  at 10 redirect URIs of up to 1,024 characters each. MCP clients call that
+  endpoint without signing in, and until now one registration could store any
+  number of redirect URIs of any length.
+  ([#145](https://github.com/lineledger/lineledger/pull/145))
 - **Links in email always point at `APP_URL`, and the app answers only on its
   own host names.** Password-reset, email-verification, invitation and portal
   sign-in links were built on whatever host name the request that sent them
@@ -478,6 +492,11 @@ readable and no longer collide with the organization they came from, and the
   `deploy.sh` doesn't update an existing app's spec. On **Forge** with a
   Cloudflare-proxied domain, use Cloudflare's IP ranges. The Droplet and Docker
   reached directly need nothing.
+- **On Forge or bare metal, check `.env` for an unclosed double quote.**
+  `vlucas/phpdotenv` 5.8 refuses to start the app ("The environment file is
+  invalid!") where 5.7 silently ignored that setting and every line after it.
+  Docker, the Droplet and App Platform pass settings as environment variables
+  and aren't affected.
 - See `UPGRADING.md` for the step-by-step.
 
 ## [1.3.1] - 2026-10-24

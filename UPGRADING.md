@@ -40,8 +40,10 @@ newest first.
 
 Released 2026-10-29. A minor release that adds statutory accounts for UK companies and an
 Airy invoice layout, with fixes to security, foreign currency, payroll year-end filing and
-restores. PHP `^8.5` and Laravel 13 are unchanged; `phpoffice/phpword` is new (the
-statutory accounts' Word download) and `symfony/mime` moves from 8.1.7 to 8.1.10.
+restores. PHP `^8.5` and Laravel 13 are unchanged (Laravel moves from 13.37 to 13.39);
+`phpoffice/phpword` is new (the statutory accounts' Word download), `symfony/mime` moves
+from 8.1.7 to 8.1.10, and `vlucas/phpdotenv` 5.8 refuses an unclosed double quote in
+`.env` (see below).
 **Nine migrations and two new `app:upgrade` steps** (`backup:repair-encrypted-columns`,
 then `currency:backfill-reversal-memos`), all run by `app:upgrade`. **New settings:**
 `TRUSTED_HOSTS` and `TRUSTED_PROXIES`; behind a load balancer, CDN or reverse proxy, set
@@ -154,6 +156,27 @@ with the unchanged deploy script (its `config:cache` picks the settings up), run
 
 Nothing in the database changed. Deploy the previous release again; it ignores
 `TRUSTED_HOSTS` and `TRUSTED_PROXIES` and goes back to trusting every peer.
+
+### An unclosed double quote in `.env`
+
+`vlucas/phpdotenv` 5.8 refuses a `.env` file in which a double-quoted value never
+closes: the app won't start, and prints "The environment file is invalid!" with the line
+it couldn't read. Version 5.7 silently ignored that setting and every line after it, so an
+installation with this typo has been running without them. **No migrations, no
+backfills.** Only **Forge and bare-metal** installations read `.env` this way; Docker, the
+DigitalOcean Droplet and App Platform pass settings to the app as environment variables
+and need nothing.
+
+Before you upgrade, list the lines whose double-quoted value doesn't close on the same
+line:
+
+```bash
+grep -nE '^[^#]*="[^"]*$' .env
+```
+
+Each line it prints either starts a value that deliberately spans several lines, which is
+fine, or is missing its closing quote. Add the missing quote, then check the settings that
+follow it: they take effect for the first time once the quote is fixed.
 
 ### Employee SINs survive a restore
 
