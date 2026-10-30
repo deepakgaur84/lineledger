@@ -25,14 +25,22 @@ use ReflectionObject;
  */
 class PrintReportController extends Controller
 {
+    /** Renderable reports that are reached by drill-down only, so are absent from the catalog. */
+    private const DRILL_ONLY_REPORTS = ['reports.transactions'];
+
     public function __invoke(Request $request, Company $company, string $reportKey, ReportRenderer $renderer): Response
     {
         abort_unless(RenderableReports::supports($reportKey, 'pdf'), 404);
 
         // Mirror the hub's gating: a report hidden from this company/user
         // (feature flag, jurisdiction, role) cannot be printed either.
-        $catalog = ReportCatalog::flatten($company, $request->user());
-        abort_unless(array_key_exists($reportKey, $catalog), 404);
+        // Fork: Transactions is a drill-down target that is deliberately not in the
+        // report hub, so it has no catalog entry to gate on; the route's own
+        // auth + company-membership middleware already protects it.
+        if (! in_array($reportKey, self::DRILL_ONLY_REPORTS, true)) {
+            $catalog = ReportCatalog::flatten($company, $request->user());
+            abort_unless(array_key_exists($reportKey, $catalog), 404);
+        }
 
         $entry = RenderableReports::get($reportKey);
         $settings = $this->settingsFromQuery($request, $entry['component']);
