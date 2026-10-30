@@ -2,6 +2,7 @@
 
 use App\Enums\AccountSubtype;
 use App\Models\Account;
+use App\Models\BankStatementLine;
 use App\Models\Company;
 use App\Models\JournalEntry;
 use App\Models\JournalLine;
@@ -173,6 +174,60 @@ new #[Title('Bank register')] class extends Component {
     }
 
     /**
+     * Where each row on the page came from (fork): a bank feed or an imported
+     * statement (the row was created from one of their lines), or entered by hand.
+     * A hand-entered row that was later matched to a feed/imported line stays
+     * "Manual" but says what it was matched to.
+     *
+     * @return array<int, array{origin: string, matched: ?string}> line id => origin
+     */
+    #[Computed]
+    public function lineSources(): array
+    {
+        $entryIds = $this->lines->pluck('journal_entry_id')->unique()->values()->all();
+        $lineIds = $this->lines->pluck('id')->all();
+
+        if ($lineIds === []) {
+            return [];
+        }
+
+        $statementLines = BankStatementLine::query()
+            ->with('import:id,bank_feed_account_id')
+            ->where(function ($q) use ($entryIds, $lineIds) {
+                $q->whereIn('created_journal_entry_id', $entryIds)
+                    ->orWhereIn('matched_journal_line_id', $lineIds);
+            })
+            ->get(['id', 'bank_statement_import_id', 'created_journal_entry_id', 'matched_journal_line_id']);
+
+        $createdBy = [];
+        $matchedTo = [];
+
+        foreach ($statementLines as $sl) {
+            $kind = $sl->import?->bank_feed_account_id !== null ? 'feed' : 'import';
+
+            if ($sl->created_journal_entry_id !== null) {
+                $createdBy[(int) $sl->created_journal_entry_id] = $kind;
+            }
+
+            if ($sl->matched_journal_line_id !== null) {
+                $matchedTo[(int) $sl->matched_journal_line_id] = $kind;
+            }
+        }
+
+        $sources = [];
+
+        foreach ($this->lines as $line) {
+            $created = $createdBy[(int) $line->journal_entry_id] ?? null;
+
+            $sources[(int) $line->id] = $created !== null
+                ? ['origin' => $created, 'matched' => null]
+                : ['origin' => 'manual', 'matched' => $matchedTo[(int) $line->id] ?? null];
+        }
+
+        return $sources;
+    }
+
+    /**
      * Ids of the rows that are one half of a void nobody has cleared, so the
      * register can mark them void rather than as waiting to clear.
      *
@@ -274,6 +329,7 @@ new #[Title('Bank register')] class extends Component {
                     <th class="px-3 py-2 text-left"><x-sort-header field="date" :current-field="$sortField" :current-dir="$sortDir" :label="__('Date')" /></th>
                     <th class="px-3 py-2 text-left"><x-sort-header field="entry" :current-field="$sortField" :current-dir="$sortDir" :label="__('Entry #')" /></th>
                     <th class="px-3 py-2 text-left"><x-sort-header field="memo" :current-field="$sortField" :current-dir="$sortDir" :label="__('Memo')" /></th>
+                    <th class="px-3 py-2 text-left">{{ __('Source') }}</th>
                     <th class="px-3 py-2 text-right"><x-sort-header field="payment" :current-field="$sortField" :current-dir="$sortDir" :label="__('Payment')" align="right" /></th>
                     <th class="px-3 py-2 text-right"><x-sort-header field="deposit" :current-field="$sortField" :current-dir="$sortDir" :label="__('Deposit')" align="right" /></th>
                     <th class="px-3 py-2 text-right">{{ __('Balance') }}</th>
@@ -297,12 +353,25 @@ new #[Title('Bank register')] class extends Component {
                             <a href="{{ route('journal.show', ['company' => $company->slug, 'entry' => $line->journalEntry->id]) }}" wire:navigate class="underline">{{ $line->journalEntry->entry_no }}</a>
                         </td>
                         <td class="px-3 py-2 text-muted-foreground">{{ $line->memo ?? $line->journalEntry->memo }}</td>
+                        @php $source = $this->lineSources[$line->id] ?? ['origin' => 'manual', 'matched' => null]; @endphp
+                        <td class="px-3 py-2 whitespace-nowrap" data-test="register-source" data-source="{{ $source['origin'] }}">
+                            @if ($source['origin'] === 'feed')
+                                <flux:badge size="sm" color="sky">{{ __('Bank feed') }}</flux:badge>
+                            @elseif ($source['origin'] === 'import')
+                                <flux:badge size="sm" color="zinc">{{ __('Statement import') }}</flux:badge>
+                            @else
+                                <span class="text-muted-foreground">{{ __('Manual') }}</span>
+                                @if ($source['matched'] !== null)
+                                    <span class="block text-xs text-muted-foreground" data-test="register-source-matched">{{ $source['matched'] === 'feed' ? __('matched to bank feed') : __('matched to statement') }}</span>
+                                @endif
+                            @endif
+                        </td>
                         <td class="px-3 py-2 text-right font-mono">{{ $line->credit_cents > 0 ? number_format($line->credit_cents / 100, 2) : '' }}</td>
                         <td class="px-3 py-2 text-right font-mono">{{ $line->debit_cents > 0 ? number_format($line->debit_cents / 100, 2) : '' }}</td>
                         <td class="px-3 py-2 text-right font-mono" data-test="register-balance">{{ number_format(($this->runningBalances[$line->id] ?? 0) / 100, 2) }}</td>
                     </tr>
                 @empty
-                    <tr><td colspan="7" class="px-3 py-8 text-center text-muted-foreground">{{ __('No transactions on this account.') }}</td></tr>
+                    <tr><td colspan="8" class="px-3 py-8 text-center text-muted-foreground">{{ __('No transactions on this account.') }}</td></tr>
                 @endforelse
             </tbody>
         </table>

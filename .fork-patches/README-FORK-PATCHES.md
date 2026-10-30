@@ -1460,3 +1460,33 @@ adds an opt-in so they can post themselves. Both default to **off** (drafts, unc
   `pages/recurring-journal/⚡form.blade.php`, `pages/recurring-journal/⚡show.blade.php` (also §28), `pages/assets/⚡index.blade.php`,
   `pages/docs/⚡accounting.blade.php`, `pages/docs/⚡fixed-assets.blade.php`, `tests/Feature/Recurring/RecurringAutoPostTest.php`.
 - **On upstream sync:** rebuild each patched file from the new upstream version and re-add only the lines described here.
+
+## 31. Bank register: Source column
+
+The Bank register now has a **Source** column telling you where each row came from:
+
+- **Bank feed** — the row was created from a line of a bank feed sync (its statement line belongs to an import with a `bank_feed_account_id`).
+- **Statement import** — created from a line of an uploaded statement file.
+- **Manual** — entered by hand. If a manual entry was later matched to a feed or imported statement line, it stays "Manual" with a small
+  "matched to bank feed" / "matched to statement" note, so you can tell what the bank confirmed.
+
+`⚡register.blade.php` gains a `lineSources()` computed (one extra query per page, keyed by journal line id; no schema change) and the column
+(header is not sortable). Files: `resources/views/pages/banking/⚡register.blade.php`, `tests/Feature/Banking/BankRegisterSourceTest.php`.
+**On upstream sync:** rebuild the page from the new upstream version and re-add the `lineSources()` computed, the Source `<th>`/`<td>` and `colspan="8"`.
+
+## 32. Faster CI (tests and lint)
+
+The full Pest suite took ~40 minutes per push. Now:
+
+- `.github/workflows/tests.yml` runs only the tests that matter for the push. `.github/scripts/select-tests.sh` takes the files changed since the
+  previous commit and picks test files that mention them (class name, Livewire page alias, view name), plus the `tests/Feature/<Area>` folder
+  that matches the changed path (skipped for folders over 60 files). Changed test files always run. Anything global (composer files,
+  `phpunit.xml`, `tests/Pest.php`, `tests/TestCase.php`, `routes/`, `bootstrap/`) or a selection over 400 files runs everything; a push that
+  touches no code runs no tests.
+- **The full suite still runs**: nightly at 12:00 UTC (1am NZ), and from Actions → tests → Run workflow with "Run the whole test suite" ticked.
+- xdebug coverage was switched off (nothing used it); JS unit tests run only when JS/package files changed (or on a full run).
+- `.github/workflows/lint.yml`: Pint checks only the PHP files changed by the push (full Pint on "Run workflow" or when `pint.json` changes). PHPStan is
+  unchanged (it analyses the whole project in about a minute and caught the baseline-count failures).
+- Files: `.github/workflows/tests.yml`, `.github/workflows/lint.yml`, `.github/scripts/select-tests.sh` (these three are committed straight to `.github/`,
+  not under `.fork-patches/`).
+- Trade-off: a change can break a test the script did not pick; the nightly full run is the safety net.
