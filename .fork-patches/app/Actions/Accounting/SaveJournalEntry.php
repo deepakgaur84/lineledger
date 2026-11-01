@@ -110,20 +110,20 @@ final class SaveJournalEntry
                 $entry->lines()->create([
                     'account_id' => $line['account_id'],
                     'contact_id' => $this->optionalId($line['contact_id'] ?? null),
-                    'debit_cents' => $debit,
-                    'credit_cents' => $credit,
+                    'debit_cents' => $money['debit_cents'],
+                    'credit_cents' => $money['credit_cents'],
                     'memo' => $line['memo'] ?? null,
                     'tax_code_id' => $this->optionalId($line['tax_code_id'] ?? null),
                     'line_order' => $order++,
                     'class_id' => $this->optionalId($line['class_id'] ?? null),
                     'location_id' => $this->optionalId($line['location_id'] ?? null),
                     'fund_id' => $this->optionalId($line['fund_id'] ?? null),
-                    ...($currencyCode !== null ? [
-                        'currency_code' => $currencyCode,
-                        'fx_rate' => $line['fx_rate'] ?? null,
-                        'foreign_debit_cents' => (int) ($line['foreign_debit_cents'] ?? 0),
-                        'foreign_credit_cents' => (int) ($line['foreign_credit_cents'] ?? 0),
-                    ] : []),
+                    ...Currency::lineMemo(
+                        $money['currency_code'],
+                        $money['fx_rate'],
+                        $money['foreign_debit_cents'],
+                        $money['foreign_credit_cents'],
+                    ),
                 ]);
             }
 
@@ -133,6 +133,100 @@ final class SaveJournalEntry
 
             return $entry;
         });
+    }
+
+    /**
+     * Each line's home amounts and foreign memo as {@see handle()} would write
+     * them, in the order given, without writing anything — for callers that
+     * must check the entry balances first (the API's in-place edit of a posted
+     * entry). Index i of the result is line i of $lines.
+     *
+     * @param  array<int, array<string, mixed>>  $lines
+     * @return list<array{debit_cents: int, credit_cents: int, currency_code: ?string, fx_rate: ?string, foreign_debit_cents: int, foreign_credit_cents: int, derived: bool}>
+     *
+     * @throws ValidationException
+     */
+    public function resolveLines(array $lines, string $entryDate): array
+    {
+        $company = app('current_company');
+        assert($company instanceof Company);
+
+        $lines = array_values($lines);
+        $currencies = $this->foreignCurrencies($company, $lines);
+        $date = CarbonImmutable::parse($entryDate);
+
+        /** @var array<string, ?string> $rates */
+        $rates = [];
+
+        $result = ForeignJournalLines::resolve(
+            array_map(function (array $line) use ($company, $currencies): array {
+                $code = $line['currency_code'] ?? null;
+
+                return [
+                    ...$line,
+                    'currency' => $currencies[(int) ($line['account_id'] ?? 0)] ?? null,
+                    // The home currency named on a line is the same as naming none.
+                    'currency_code' => is_string($code) && ! $company->isHomeCurrency(trim($code)) ? $code : null,
+                ];
+            }, $lines),
+            function (string $currency) use ($company, $date, &$rates): ?string {
+                if (! array_key_exists($currency, $rates)) {
+                    $rates[$currency] = $this->rateOnFile($company, $currency, $date);
+                }
+
+                return $rates[$currency];
+            },
+        );
+
+        if ($result['errors'] !== []) {
+            throw ValidationException::withMessages($result['errors']);
+        }
+
+        return $result['lines'];
+    }
+
+    /**
+     * account_id => currency code for the lines' foreign-currency accounts.
+     *
+     * @param  list<array<string, mixed>>  $lines
+     * @return array<int, string>
+     */
+    private function foreignCurrencies(Company $company, array $lines): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map(
+            fn (array $line): int => (int) ($line['account_id'] ?? 0),
+            $lines,
+        ))));
+
+        if ($ids === []) {
+            return [];
+        }
+
+        return Account::query()
+            ->withTrashed()
+            ->whereIn('id', $ids)
+            ->whereNotNull('currency_code')
+            ->pluck('currency_code', 'id')
+            ->reject(fn ($code): bool => $company->isHomeCurrency((string) $code))
+            ->map(fn ($code): string => mb_strtoupper((string) $code))
+            ->all();
+    }
+
+    /**
+     * The rate the documents would lock for this date — manual, then fetched —
+     * or null when none can be found (the line then has to name its rate).
+     */
+    private function rateOnFile(Company $company, string $currency, CarbonImmutable $date): ?string
+    {
+        try {
+            return $this->exchangeRates->rateFor($company, $currency, $date);
+        } catch (MissingExchangeRateException) {
+            return null;
+        } catch (HttpClientException $e) {
+            report($e);
+
+            return null;
+        }
     }
 
     /**

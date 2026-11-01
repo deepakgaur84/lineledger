@@ -98,7 +98,7 @@ new #[Title('Fixed Asset Reconciliation')] class extends Component {
         foreach ($buckets as $key => $assetsInGroup) {
             $label = $this->groupBy === 'category'
                 ? ($key === 'none' ? __('Uncategorized') : ($assetsInGroup->first()->category?->name ?? __('Uncategorized')))
-                : (Account::withoutGlobalScopes()->find((int) $key)?->name ?? __('Unknown account'));
+                : (Account::withoutGlobalScopes()->where('company_id', $this->company->id)->find((int) $key)?->name ?? __('Unknown account'));
 
             [$assetAccountIds, $accumAccountIds] = $this->glAccountsForGroup($key, $assetsInGroup);
 
@@ -215,13 +215,13 @@ new #[Title('Fixed Asset Reconciliation')] class extends Component {
         $calculator = app(ReportCalculator::class);
 
         $bsCost = array_sum(array_map(
-            fn (int $id): int => $calculator->balanceAsOf(Account::withoutGlobalScopes()->find($id), $date),
+            fn (int $id): int => $calculator->balanceAsOf(Account::withoutGlobalScopes()->where('company_id', $this->company->id)->findOrFail($id), $date),
             $assetAccountIds
         ));
 
         // Negated — see the class docblock for why Accum Dep comes back negative.
         $bsAccum = -array_sum(array_map(
-            fn (int $id): int => $calculator->balanceAsOf(Account::withoutGlobalScopes()->find($id), $date),
+            fn (int $id): int => $calculator->balanceAsOf(Account::withoutGlobalScopes()->where('company_id', $this->company->id)->findOrFail($id), $date),
             $accumAccountIds
         ));
 

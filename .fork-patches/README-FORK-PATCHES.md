@@ -1490,3 +1490,19 @@ The full Pest suite took ~40 minutes per push. Now:
 - Files: `.github/workflows/tests.yml`, `.github/workflows/lint.yml`, `.github/scripts/select-tests.sh` (these three are committed straight to `.github/`,
   not under `.fork-patches/`).
 - Trade-off: a change can break a test the script did not pick; the nightly full run is the safety net.
+
+## 33. Upstream 1.4.0 sync: files that lost upstream changes (repaired)
+
+The automatic sync of upstream 1.4.0 hit conflicting hunks in four patched files and, per the conflict rule ("our side of a conflicting hunk wins"),
+dropped upstream's side — leaving code that called methods that no longer existed (`SaveJournalEntry::resolveLines()`; ~200 test failures).
+Each file was rebuilt from upstream's current version plus only the fork's own additions:
+
+- `app/Actions/Accounting/SaveJournalEntry.php` — upstream + `optionalId()` (blank Class/Location/Fund/Tax/Contact selects save as null).
+- `app/Services/Posting/JournalPoster.php` — upstream + `applyAccountDimensionDefaults()` (account default class/location).
+- `app/Providers/AppServiceProvider.php` — upstream (`configureEmailLinks()`/`CanonicalUrl`) + `DateDisplay::register()`.
+- `app/Services/Posting/BillPaymentPoster.php` — now identical to upstream (it only carried stale upstream code).
+- `resources/views/pages/reports/⚡fixed-asset-reconciliation.blade.php` (fork-only page) — account lookups now constrain `company_id`, which upstream's new
+  `LivewireTenantKeyGuardTest` requires of every Livewire page.
+
+**Lesson for future syncs:** after an upstream sync, check each patched file for lost upstream hunks (3-way merge of previous-upstream / ours / new-upstream
+and see whether it changes ours) before trusting a green-looking sync commit; a conflict-only "ours wins" can silently remove new upstream methods.

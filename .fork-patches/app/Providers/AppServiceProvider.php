@@ -21,6 +21,7 @@ use App\Services\Currency\ExchangeRateProvider;
 use App\Services\Currency\Providers\FrankfurterProvider;
 use App\Services\Currency\Providers\NullExchangeRateProvider;
 use App\Support\DateDisplay;
+use App\Support\Http\CanonicalUrl;
 use App\Support\MailSettings;
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Events\Login;
@@ -78,6 +79,7 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->configureDefaults();
         DateDisplay::register();
+        $this->configureEmailLinks();
         $this->configureRateLimiting();
         $this->configureRouteBindings();
         $this->configurePassport();
