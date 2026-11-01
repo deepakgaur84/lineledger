@@ -15,7 +15,6 @@ use App\Models\JournalLine;
 use App\Services\Audit\AccountingAuditRecorder;
 use App\Services\Audit\AuditMute;
 use App\Services\Reconciliation\BankReconciliationLockGuard;
-use App\Support\Currency;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\Auth;
@@ -197,29 +196,7 @@ class JournalPoster
 
             AuditMute::silence(function () use ($entry, $reversal): void {
                 foreach ($entry->lines as $i => $line) {
-                    $reversal->lines()->create([
-                        'account_id' => $line->account_id,
-                        'debit_cents' => $line->credit_cents,
-                        'credit_cents' => $line->debit_cents,
-                        'memo' => $line->memo,
-                        'contact_id' => $line->contact_id,
-                        'tax_code_id' => $line->tax_code_id,
-                        'line_order' => $i,
-                        'class_id' => $line->class_id,
-                        'location_id' => $line->location_id,
-                        'fund_id' => $line->fund_id,
-                        // Mirror the home-currency debit/credit swap on the
-                        // foreign side too — otherwise a reversal of any
-                        // foreign-currency line silently drops its foreign
-                        // amount, leaving the void's foreign-balance effect
-                        // wrong even though the home-currency side is correct.
-                        ...Currency::lineMemo(
-                            $line->currency_code,
-                            $line->fx_rate !== null ? (string) $line->fx_rate : null,
-                            (int) $line->foreign_credit_cents,
-                            (int) $line->foreign_debit_cents,
-                        ),
-                    ]);
+                    $reversal->lines()->create($line->reversingAttributes($i));
                 }
             });
 

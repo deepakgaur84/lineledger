@@ -634,7 +634,7 @@ class BillPaymentPoster
             'credit_cents' => $bankHome,
             'memo' => BankLineMemo::forSource($payment),
             'line_order' => $order++,
-            ...Currency::lineMemo($currency, $ratePay, 0, $amount),
+            ...$bankMemo,
         ]);
 
         // Realized FX residual balances the entry in home cents.
