@@ -4,25 +4,25 @@ Fork: `github.com/deepakgaur84/lineledger`
 Base: `github.com/lineledger/lineledger`
 
 This is the master list of every change made in this fork, organized by
-feature/fix, with the exact files touched. For the bulk importer
+feature, with the exact files touched. For the bulk importer
 specifically, see its own `README-BULK-IMPORT.md` in
 `app/Services/BulkImport/` — not duplicated here.
 
 All application-code changes are staged in `.fork-patches/` (mirroring
 real repo paths) and applied automatically by
 `.github/workflows/reapply-fork-patches.yml` on every push, including
-upstream syncs. The two workflow files themselves (see §8) are the
+upstream syncs. The two workflow files themselves (see §6) are the
 exception — GitHub blocks the automation's own token from touching
 `.github/workflows/*`, so those are committed directly to their real path.
 
 This is a hard rule, not a preference: `.fork-patches/` is meant to be a
 complete, standalone record of every change this fork has ever made —
-new features, fixes, schema changes, anything — so that re-deriving the
+new features, schema changes, anything — so that re-deriving the
 whole fork from a bare upstream clone plus this folder is always
 possible, and so a future collision on any of it gets the 3-way-merge
-protection in §7 rather than a raw git conflict. It briefly slipped:
+protection in §5 rather than a raw git conflict. It briefly slipped:
 several deliveries (Bill Payments/Receipts, then the whole depreciation-
-methods feature — §10) went straight to their real paths only, so
+methods feature — §8) went straight to their real paths only, so
 `.fork-patches/` genuinely fell out of sync with what the app was
 actually running. An audit against upstream (diffing every file that
 differs from `upstream/main`, then checking each one has a
@@ -88,45 +88,13 @@ a currency/region upstream never anticipated.
     choice, not a fixed requirement (currently 90, changed down from the
     365 originally used at launch).
 
-## 3. Employee Reimbursements Payable backfill
-
-`ChartTemplateBuilder` only seeds this control account when `employees`
-is enabled *at company creation*. Enabling it later (a pre-existing
-upstream gap, not fork-specific) left the account permanently missing,
-breaking reimbursement bill posting.
-
-- `app/Actions/Payroll/EnsureEmployeeReimbursementAccount.php` (new) —
-  mirrors the existing `EnsureInventoryAccounts` pattern; also promotes a
-  manually-created stand-in account in place if one already exists,
-  rather than duplicating it
-- `app/Models/Company.php` — added `usesEmployees(): bool` accessor
-- `resources/views/pages/companies/⚡edit.blade.php` — wired the backfill
-  into the same save-triggered block as payroll/inventory/fundraising
-
-## 4. Cursor on buttons
+## 3. Cursor on buttons
 
 - `resources/css/app.css` — Tailwind v4's Preflight resets buttons to
   `cursor: default`; restored `cursor: pointer` globally rather than
   patching every component
 
-## 5. Two real upstream posting bugs (found via a live data investigation)
-
-Both confirmed against upstream's own current code, not fork-specific.
-
-- `app/Services/Posting/BillPaymentPoster.php` — the bank/paid-from
-  account's own journal line was missing the `Currency::lineMemo(...)`
-  spread every *other* line in the same method correctly includes,
-  meaning a foreign-currency bill payment's bank-side foreign amount was
-  always recorded as zero. One-line fix.
-- `app/Services/Posting/JournalPoster.php` — the generic journal-entry
-  void/reversal logic copies `debit_cents`/`credit_cents`/etc. onto the
-  reversal line but never copied `currency_code`/`fx_rate`/foreign
-  debit-credit — meaning voiding *any* foreign-currency transaction, of
-  any document type, silently lost its foreign-currency data on the
-  reversal side. Fixed by mirroring the home-currency debit/credit swap
-  on the foreign side too.
-
-## 6. Transaction report: source-currency columns + running/opening/closing balance
+## 4. Transaction report: source-currency columns + running/opening/closing balance
 
 Originally scoped for foreign-currency accounts only; generalized to a
 plain home-currency running balance for any single balance-sheet account
@@ -153,7 +121,7 @@ P&L drill-downs).
   crashing on an undefined array key. Added `columnActuallyVisible()`,
   used everywhere the old check was.
 
-## 7. GitHub Actions workflow reliability
+## 5. GitHub Actions workflow reliability
 
 Started from two independent race conditions, both from the same root
 cause: a normal commit is often followed within seconds by
@@ -223,7 +191,7 @@ they were found, since each built on the last.
   `.fork-patches` — GitHub blocks the bot's own token from modifying
   workflow files.
 
-## 8. Multi-currency prerequisites for Vendors/Customers/Bills/Payments
+## 6. Multi-currency prerequisites for Vendors/Customers/Bills/Payments
 
 `currency_code` was previously unreachable via the API on *any* Contact,
 Bill, or BillPayment endpoint — even though the underlying `Save*` actions
@@ -244,7 +212,7 @@ full reasoning and the production incident that surfaced this.
   never blanks an already-locked rate)
 - `app/Actions/Purchasing/SaveBillPayment.php` — same
 
-## 9. Bulk Import tool
+## 7. Bulk Import tool
 
 Standalone, repeatable CSV importer — separate from the one-time
 QuickBooks migration wizard, calls the real `Save*` actions directly so
@@ -305,7 +273,7 @@ design: see `app/Services/BulkImport/README-BULK-IMPORT.md`.** Files:
 
 ---
 
-## 10. Fixed asset depreciation methods
+## 8. Fixed asset depreciation methods
 
 Book depreciation was straight-line only. Assets can now use straight-line,
 written-down value (declining balance / WDV), or an immediate 100%-on-
@@ -391,7 +359,7 @@ default new assets onto WDV at a given rate.
   carries that depreciation, lock the period first.
 - `app/Services/Migration/Importers/FixedAssetsImporter.php` (the
   QuickBooks-migration / Opening-Balances importer, shared code — see
-  §9's own note on this pattern) — learned the same
+  §7's own note on this pattern) — learned the same
   `depreciation_method`/`depreciation_rate` columns, sharing the exact
   same validation. A CSV with neither column still imports, as
   straight-line, so nothing already relying on the old template breaks.
@@ -427,7 +395,7 @@ limit (above) — the $12 version never shipped, but it's a reminder to
 confirm a business rule before assuming a sensible-looking default is
 the intended one.
 
-## 11. Fixed asset reconciliation report, disposal link, and a dashboard insight fix
+## 9. Fixed asset reconciliation report, disposal link, and a dashboard insight fix
 
 Three separate pieces, delivered together in one commit.
 
@@ -526,7 +494,7 @@ both references in the in-app docs page updated to match.
   by review beforehand, since there was no PHP runtime available to run
   Pint directly against the change before delivering it.
 
-## 12. Straight-line depreciation rate (a real, storable fact — not just a
+## 10. Straight-line depreciation rate (a real, storable fact — not just a
     one-time conversion), its fallout across three more places, and the new
     Depreciation Schedule report
 
@@ -595,14 +563,14 @@ Status).
 Two of the reference report's own columns — Sale Price and Dep Recovered —
 are deliberately not offered as options at all, not merely hidden by
 default: LineLedger tracks no disposal-proceeds or gain/loss-on-disposal
-data whatsoever (disposal today is a register-only status flag, per §11),
+data whatsoever (disposal today is a register-only status flag, per §9),
 so those two could only ever show blank. "Disposals" here is the asset's
 own net book value at its disposal date — the roll-forward's write-off
 amount — not a sale price.
 
 - `resources/views/pages/reports/⚡depreciation-schedule.blade.php` (new)
 - `resources/views/pdf/reports/depreciation-schedule.blade.php` (new) —
-  CSV and PDF only; no XLSX yet, consistent with §11's own export scope
+  CSV and PDF only; no XLSX yet, consistent with §9's own export scope
 - `routes/web.php`, `RenderableReports.php`, `ReportCatalog.php` — route
   and catalog registration
 
@@ -626,112 +594,7 @@ field for declining balance," no longer true now that straight-line shows
 it too). Both corrected alongside the fix that made them stale, not left
 to fail in CI.
 
-## 13. Bulk Import: Validate button stuck greyed out after choosing a CSV
-
-Reported while testing the Fixed Assets importer: a CSV is chosen, the file
-input shows its name, no error appears — and Validate stays greyed out.
-
-**Cause.** The button was
-`:disabled="! $upload" wire:loading.attr="disabled" wire:target="upload"`.
-In Livewire 4.4, `wire:loading` with the `.attr` modifier *captures the
-attribute's value when loading starts and puts that value back when loading
-ends*. The button is already disabled at that moment (`$upload` is null until
-the upload lands). The sequence that follows is, per Livewire's own request
-pipeline (`effect` → `morph` → `morphed`, with server-dispatched events such as
-`upload:finished` fired in the last phase): the server's morph enables the
-button, and *then* `livewire-upload-finish` fires and the directive "restores"
-`disabled`. Nothing re-renders afterwards, so it stays greyed out for good.
-Livewire 4.3.4 simply removed the attribute at the end, which is why the page
-worked when it was first built and tested.
-
-Worth recording what this is *not*: it is not a 4.4.7 regression. The loading,
-upload, morph and dispatch code is byte-identical between 4.4.5 and 4.4.7
-(only the navigate plugin differs), and the behaviour change landed between
-4.3.4 and 4.4.5 — i.e. with the 1.1.0 upstream sync, not the October bump.
-It is also not the CSV's content: the button's state depends only on whether
-the server holds the upload, never on what is in the file.
-
-**Fix.** `resources/views/pages/tools/⚡bulk-import.blade.php` — the directive
-is gone. It was redundant anyway: `:disabled="! $upload"` already covers the
-whole of the first upload, because `$upload` is only set once the upload has
-finished. The one thing it also covered, validating the *previous* file while a
-replacement is still uploading, is a window of milliseconds for a CSV and
-harmless (it validates the file the server actually holds). A search of every
-view found this was the only place in the app combining the two.
-
-- `tests/Feature/BulkImport/BulkImportPageTest.php` (new) — the first tests this
-  page has had: a CSV is held server-side and validated for the Fixed Assets
-  importer; switching importer drops the staged upload (by design, so a file is
-  never validated as the wrong kind); and a **static guard** that scans every
-  Blade view for a `wire:loading.attr` sharing a line with a server-rendered
-  `disabled`. The client-side half of this bug cannot be reproduced in PHP, so
-  the guard is the only automated protection against reintroducing it.
-
-**How this was diagnosed, honestly.** From Livewire's JavaScript source
-(v4.3.4, v4.4.5, v4.4.7), not by reproducing it in a browser. The ordering and
-the version difference are verified against that source; the symptom matching
-it exactly is strong evidence rather than a reproduction.
-
-**Found while diagnosing, not fixed here — date formats.** All eight row-based
-importers validate dates with Laravel's `date` rule and parse them with
-`Carbon::parse`, both of which read a slash date as *US month/day*. So
-`27/09/2026` fails as "not a valid date", and — worse — an ambiguous one like
-`05/09/2026` is silently read as 9 May rather than 5 September. Excel on a
-d/m/Y locale rewrites ISO dates into exactly this form when it re-saves a CSV,
-so this is easy to hit from a spreadsheet. The importers' own column help says
-"any unambiguous date works", which is not true for d/m/Y. Unfixed because it
-is a cross-cutting design decision (strict ISO, a company date-format setting,
-or accepting d/m/Y for certain jurisdictions), not a one-line change.
-
-## 14. Asset form: the Rate box turning into the useful-life number
-
-Reported straight after §12 shipped: on the asset form, with Straight-line
-selected and the toggle on **Rate**, typing `67` left the box showing `18` —
-the useful life in months (`1200 ÷ 67`, rounded) — while the "= 18 months
-useful life" text beside it was correct. This is very likely what the original
-"I enter a rate and it converts to useful life" complaint (§12) was describing
-as well: §12 fixed a real persistence bug (the rate was never saved), but the
-box visibly changing under the user's hands is a separate bug, and it survived
-that fix.
-
-**Cause.** The Months input and the Rate input are two branches of one `@if`,
-rendered at the same position with no `wire:key`. Livewire's morph keys elements
-only by `wire:key`/`wire:id`, so flipping the toggle *reuses the Months `<input>`*
-and patches its attributes into the Rate input. But Livewire's `wire:model`
-directive runs **once per element**, and its `x-model` `get()`/`set()` close over
-the property name at that moment (and it registers no cleanup). The reused box
-therefore keeps a live binding to `useful_life_months`. Typing 67 correctly set
-`straight_line_rate` and computed the life (hence the right helper text), then
-the leftover binding re-read `useful_life_months` (18) and wrote it into the box.
-Nothing in the PHP can put `18` in `straight_line_rate`: the only server code
-that writes it is the toggle's back-fill, which derives a rate *from* the life
-(from 18 months it would give `66.667`, from 67 it would give `17.91`) — never
-`18` itself. That is what pointed at the browser layer in the first place.
-
-**Fix.** `resources/views/pages/assets/⚡form.blade.php` — every input in the
-depreciation block that appears or disappears with the method or the life mode
-now sits in its own `wire:key` wrapper (`life-rate`, `life-months`,
-`life-optional`, `depreciation-rate`, `materiality-limit`, plus the toggle's own
-`life-mode-toggle`). The wrappers are `display: contents`, so the grid layout is
-unchanged, and the key is on an element we control rather than relying on which
-inner element Flux forwards attributes to. Different keys mean the morph replaces
-the subtree instead of patching it, so a fresh input gets a fresh binding. Every
-`data-test` hook (31) and `wire:model` binding (26) is identical before and after.
-
-- `tests/Feature/Assets/AssetDepreciationMethodFormTest.php` — two tests. One pins
-  that each branch renders under its own key and never another's, across
-  straight-line (both modes), declining balance and immediate. The other is the
-  server half of the exact sequence reported (toggle to Rate, type 67): the rate
-  stays `67`, the life is `18`, the stored `depreciation_rate` is `67`.
-
-**Verification, honestly.** Diagnosed from Livewire's JavaScript source (v4.4.7)
-and from the one coincidence that `18` is precisely the months value; not
-reproduced in a browser. The DOM reuse itself cannot be exercised from PHP, so the
-key test guards the fix rather than proving the cause. The category settings page
-has the same *shape* of conditional input but no sibling that could be reused
-for the common (non-Canadian) case, and was not changed.
-
-## 15. Bulk Import: say it on the screen — dates, and the Fixed Assets rules
+## 11. Bulk Import: say it on the screen — dates, and the Fixed Assets rules
 
 Prompted by a real file: a Fixed Assets CSV saved from Excel with dates like
 `27/09/2026`, a `100%` row that also carried a rate, and a category name that
@@ -805,85 +668,7 @@ every day is 12 or under cannot be decided from the values, so it would still ne
 confirmation step. Only Fixed Assets has importer notes; any other importer can opt in
 by implementing `HasImportNotes`.
 
-## 16. A blank Class / Location / Fund made saves fail with a 500
-
-Reported on a real entry (JE-000015, six small purchases reclassed from an expense account
-into Office Equipment): Post, and also Save draft, gave a blank "500 Server Error" modal.
-
-**Found from the Laravel log**, not guessed. Three identical errors, one per attempt:
-`SQLSTATE[HY000]: General error: 1366 Incorrect integer value: '' for column 'class_id' at
-row 1 … insert into journal_lines`, raised from `SaveJournalEntry.php`. The bound values on
-the failing line were the giveaway: `contact_id`, `tax_code_id`, `location_id` and `fund_id`
-were all `NULL`, but `class_id` was an empty string — the credit line, whose Class was left
-on "—".
-
-**Cause.** A blank select ("—") submits `''`. The forms pass it straight to the save action
-as `$line['class_id'] ?? null`, and `??` catches a *missing* value, not an empty string.
-Validation lets it through too (`nullable|integer` skips an empty string entirely), so `''`
-reached the insert and MySQL in strict mode refused it for an integer column. The journal
-form already knew the trick for one field — `tax_code_id` is built with `?: null`, which is
-why the tax code left on "—" was fine and the class was not. Draft and Post share
-`SaveJournalEntry`, which is why both died. It is an **upstream bug**: their current `main`
-has the same code, unnoticed there because a SQLite test database quietly accepts `''` in an
-integer column. This repo's suite runs on MySQL, so the tests below fail for real without
-the fix. Nothing was half-saved: the whole save is one `DB::transaction`.
-
-**Fix, in two layers.**
-
-1. *The reported path, explicitly.* `app/Actions/Accounting/SaveJournalEntry.php` and
-   `SaveRecurringJournalEntry.php` normalise their optional ids through an `optionalId()`
-   helper copied from `SaveJournalEntryTemplate`, where upstream had already fixed this exact
-   problem — in one of three sibling actions.
-2. *Everything else, once.* `app/Providers/BlankTrackingIdsServiceProvider.php` (new, fork-owned)
-   listens to `eloquent.saving: *` and turns an empty-string `class_id`, `location_id` or
-   `fund_id` into `NULL` before any model is saved. It is registered first in
-   `bootstrap/providers.php`, the only upstream file this layer touches.
-
-**Why a listener instead of editing every action.** The first survey found thirteen more
-actions with the same `$line['x'] ?? null` write (`SaveBill`, `SaveExpense`, `SaveVendorCredit`,
-`SavePurchaseOrder`, `SaveInvoice`, `SaveCreditMemo`, `SaveEstimate`, `SaveSalesOrder`,
-`SaveSalesReceipt`, `SaveInvoiceTemplate`, `SaveStockAdjustment`, `SaveDeposit`, `SaveCheque`).
-A wider one found six more using `$data[...]` that the first regex could not match
-(`SaveBudget`, `SaveDonation`, `SaveGrant`, `SaveEmployeePayrollProfile`, `SaveTimeEntry`,
-`SaveOwnTimeEntry`), and twenty-three models carry these columns, including some no action grep
-found at all (`PayRunLineEarning`, `RecurringDocumentLine`, `JournalEntryTemplateLine`). Editing
-nineteen upstream files would have been nineteen future merge points and would still have left
-every path the regex missed broken. Every one of those paths ends in saving a model, so the guard
-sits there: complete today and for code not yet written, for one line of upstream churn.
-
-**Verified against Laravel 13.34.0's source, because a global hook can break things quietly.**
-`Model::save()` fires `saving` through `until` — halt mode — under the name
-`eloquent.saving: <Class>`; a wildcard listener receives `[$model]` and its return value is passed
-straight back; and in halt mode the first non-null return ends the chain and skips every listener
-after it. So the listener returns nothing at all, and a test proves a listener registered after it
-still runs.
-
-**Deliberately narrow.** Only those three names (every migration declares them `foreignId`, 30 of
-30, so a blank can never be a legitimate string there); only the exact empty string (a real id,
-null, and every other attribute — a blank memo stays a blank memo — are untouched); and it never
-blocks or fails a save.
-
-**What it does not cover.** Writes that skip model events — `Model::query()->update(...)`,
-`insert()`, `upsert()`, `DB::table(...)` — none of which the survey found writing these columns from
-user input. And other optional ids (`tax_code_id`, `contact_id`, `item_id`, …): there is no evidence
-they fail (the journal form already guards the tax code), so they were left alone rather than
-widening a global hook on a hunch.
-
-- `tests/Feature/Journal/JournalBlankOptionalIdsTest.php` — the exact failing entry through the form
-  for both Save draft and Post, blank ids through the journal action, real ids kept, and recurring.
-- `tests/Feature/Support/BlankTrackingIdsGuardTest.php` — a blank saved straight onto a model and on
-  update; a scan of `app/Models` proving every model with these columns (23 today) is covered, so a
-  new one is caught the day it is written; real ids and other attributes untouched; and the
-  does-not-halt-other-listeners rule.
-
-**Verification, honestly.** `php -l` and Laravel Pint (CI's exact version, v1.32.1) pass on every
-touched file. The listener's own logic was executed under real PHP against stubbed models — scope,
-real ids kept, and the return-null rule included. Laravel's semantics were read from its source, not
-recalled. Pest and the Livewire form were not run (no Composer dependencies in the environment this
-was written in), and MySQL's strict-mode rejection comes from the production log, not a local
-reproduction.
-
-## 17. Upstream sync that merges through conflicts, with a backup before every merge
+## 12. Upstream sync that merges through conflicts, with a backup before every merge
 
 **The problem.** "Sync fork" refused: *"This branch has conflicts that must be resolved"*,
 two commits behind. The button cannot be told to resolve anything — it works only when git
@@ -967,11 +752,8 @@ input — and were fixed in the test, not the workflow.
   so a quiet week makes none. The ruleset deliberately blocks deleting them, so pruning means temporarily relaxing
   it under Settings → Rules.
 - GitHub pauses scheduled workflows after 60 days with no activity on a repository.
-- The first real run merged the two pending upstream commits, including the `Country.php` conflict, 16 seconds after the
-  workflow was committed. That fixed the `source-map-js` advisory; the `security` check was still red on a separate
-  `shell-quote` advisory, which §19 explains and fixes at the fork level.
 
-## 18. Depreciation Schedule PDF: landscape, and a table that fits the page
+## 13. Depreciation Schedule PDF: landscape, and a table that fits the page
 
 **The problem.** The PDF ran off the right edge: the last column ("Closing Value") was cut to `CL` / `1,1…`, and asset names and
 method labels wrapped onto four lines each. Eleven columns at the shared report layout's 11px type and 8px cell padding need about
@@ -1002,32 +784,9 @@ covering the 15 constructs these two templates use stood in for it. The first pu
 **Known limits.** Seventeen columns render at 8px (about 6 pt): legible, but small. The page is A4 only, matching every other PDF in
 the app (there is no per-company paper setting).
 
-## 19. The `security` check: a `shell-quote` override
-
-**The problem.** After the upstream sync fixed `source-map-js`, `npm audit --audit-level=high` still failed on a critical advisory in
-`shell-quote` (versions 1.8.4 to 1.10.0, GHSA-pqg4-j6r4-53mv). The lockfile had 1.9.0, pulled in by `concurrently@10.0.5`, which pins
-`shell-quote` to **exactly** 1.9.0. Fixed releases (1.11.0, 1.12.0) existed, but npm could not use them without breaking that pin, so its
-only suggested fix was a breaking *downgrade* of `concurrently`. An earlier note here said the fix was upstream's to make; the cause is
-an exact pin, which an npm `overrides` entry is the standard answer to.
-
-**The fix.** `"overrides": { "shell-quote": "^1.11.0" }` in `package.json`, and `shell-quote`'s lockfile entry moved to 1.12.0 — three
-lines in each file. A regenerated lockfile was rejected: it touched 26 packages, 25 of them unrelated platform binaries whose versions had
-not changed (a difference between the npm that built it and the one used here). Instead the one entry was edited into the committed
-lockfile, after checking the serializer reproduces that file byte for byte (4-space indent).
-
-**What was run.** `npm ci` (which fails if the two files disagree, and is what CI and the Docker build run): succeeded.
-`npm audit --audit-level=high`: 0 vulnerabilities, exit 0. `npm ls`: `shell-quote@1.12.0 overridden` under `concurrently`.
-`concurrently` was run with it and executed two commands correctly. **Not run:** the Docker build and the vite build, and `composer dev`
-on the NAS. `concurrently` is used only by that composer `dev` script, with fixed arguments, so real exposure was low; the cost of leaving
-it was a permanently red check that would hide the next genuine finding.
-
-**Upkeep.** `package.json` and `package-lock.json` are now patched files. Future upstream edits to them are 3-way merged by the sync
-step (§17); a conflicting hunk keeps our side and is flagged. To retire the override, once `npm view concurrently dependencies` shows a
-`shell-quote` at 1.11.0 or later: delete both files from `.fork-patches` and take upstream's copies.
-
 ## Ongoing maintenance — now partially automated, still worth watching
 
-`reapply-fork-patches` (see §7) originally just *overwrote* on every
+`reapply-fork-patches` (see §5) originally just *overwrote* on every
 sync — if upstream improved a file we'd also patched, our version always
 won and upstream's change was silently discarded, forever, unless a human
 noticed and manually re-merged it. That's exactly what happened with
@@ -1041,10 +800,10 @@ automatically when they don't genuinely overlap, and only falling back to
 "our version wins, flagged for manual review" when there's a real
 textual conflict it can't reconcile. A `Backup-DD.MM.YYYY` branch is
 created immediately before any merge — an upstream sync, or a collision where a
-push also changed a patched file — and only then (§17), protected against
+push also changed a patched file — and only then (§12), protected against
 deletion/force-push by the branch-protection ruleset, as a rollback point if an
 auto-merge ever produces something broken. The upstream merge itself now happens
-inside this workflow rather than via the "Sync fork" button — also §17.
+inside this workflow rather than via the "Sync fork" button — also §12.
 
 This has since been exercised against a real upstream sync, not just
 designed on paper: a sync landed a genuine conflict on three separate
@@ -1092,7 +851,7 @@ safety nets instead:
 - A repo ruleset matching branches named `*backup*`/`*Backup*` blocks
   deletion and force-push on any branch following that naming pattern
   (created manually, e.g. `Backup-18.09.2026`, or automatically by
-  `reapply-fork-patches` before an auto-merge attempt — see §7).
+  `reapply-fork-patches` before an auto-merge attempt — see §5).
 - **Gitea**, running as a Docker container on the NAS, mirrors this repo
   from GitHub and auto-syncs every 8 hours — a complete, independent,
   browsable copy that doesn't depend on GitHub at all. Chosen over the
@@ -1100,7 +859,7 @@ safety nets instead:
   (fits the existing homelab) and gives a full web GUI rather than a bare
   git-over-SSH server.
 
-## 20. Date format (Settings → Appearance)
+## 14. Date format (Settings → Appearance)
 
 A per-user **Date format** setting controls how dates are *displayed*
 everywhere (screens, PDFs, statements). Default is `01-Apr-26`.
@@ -1129,7 +888,7 @@ everywhere (screens, PDFs, statements). Default is `01-Apr-26`.
 - **On upstream sync:** new upstream views that use a hard-coded date format
   won't follow the setting — re-run the replacement above on them.
 
-## 21. Invoice designer (Settings → Lists → Form styles)
+## 15. Invoice designer (Settings → Lists → Form styles)
 
 Form styles are now a small invoice designer: a **layout gallery** plus style
 controls, applied to invoice PDFs everywhere (staff print, customer portal,
@@ -1183,7 +942,7 @@ invoice emails — all go through `InvoicePdfRenderer`).
   `InvoicePdfRenderer`, `FormStyle`, `SaveFormStyle`, `SecurityHeaders`, the form-styles settings page,
   the lists index description and `routes/web.php`; everything else is new.
 
-## 22. Send attachments with an invoice email
+## 16. Send attachments with an invoice email
 
 Files attached to an invoice are **not** emailed by default. The invoice page's
 "Send to client" dialog (the confirmation screen) shows a **Send attachments**
@@ -1203,7 +962,7 @@ includes the invoice PDF and 2 attached files."). The box resets after every sen
 - **On upstream sync:** edited upstream files are the invoice show page,
   `SendInvoiceToCustomer` and `InvoiceSharedNotification`.
 
-## 23. Budget reports: period, PDF / print / email
+## 17. Budget reports: period, PDF / print / email
 
 - **Fiscal year naming:** a budget's `fiscal_year` is the calendar year its fiscal
   year *begins* in (unchanged). `Budget::periodLabel()` spells it out ("Apr 2027 –
@@ -1226,42 +985,7 @@ includes the invoice PDF and 2 attached files."). The box resets after every sen
 - **On upstream sync:** edited upstream files are the three budget report pages, the
   budget form and list, `Budget`, `RenderableReports` and `ReportSettings`.
 
-## 24. Re-basing stale patch copies on upstream 1.2.1 (UK + locale support)
-
-Upstream added United Kingdom support (`Country::UnitedKingdom`, `Locales`, VAT) after
-several patch copies were taken. Those copies silently overwrote the newer upstream
-files on every reapply, leaving a half-merged `Country.php` (Pint + 22 PHPStan errors).
-Each file below was rebuilt from **upstream 1.2.1 plus only the fork's own change**:
-
-- `app/Enums/Country.php` — upstream + `Global` case (`'ZZ'`) with an arm in every
-  `match`. Only existing translation strings are used, so `fr.json` stays complete.
-- `app/Support/Tax/TaxAuthorityCatalog.php` — upstream + `Global => []`.
-- `app/Support/Defaults/ChartTemplateBuilder.php` — upstream + `Global` arm for the
-  corporation share-class name (new patch copy).
-- `app/Models/User.php` — upstream (restores `locale` fillable + `Locales` import) +
-  the `date_format` fillable/default/cast from §20.
-- `app/Services/Reporting/InvoicePdfRenderer.php` — upstream (keeps `Locales::using`,
-  `html()`) + the designer's `design` data and `previewInline()` from §21.
-- **On upstream sync:** when upstream edits any of these, rebuild from the new upstream
-  file and re-add only the lines described here.
-
-## 25. Test-suite reconciliation after the 1.2.1 rebase
-
-- **Blade gotcha:** an inline `@php($x = 1)` in a file that *also* has a block
-  `@php … @endphp` later is swallowed by Blade's block regex — everything from the inline
-  directive to the next `@endphp` is printed as text, so variables set in that block
-  (`$schedule`) are undefined. `pdf/invoices/invoice.blade.php` therefore uses
-  `@php $rowIndex = 0; @endphp`. Never use the inline form in a file that has a block form.
-- `pdf/statements/customer-statement.blade.php` — restored the `$currencySymbol` and
-  `$dateFormat` lines upstream's UK work added (the stale copy had dropped them).
-- `tests/Feature/I18n/TranslationCatalogTest.php` — unused French keys are reported as
-  *incomplete*, not failed, when `.fork-patches` exists: the fork rewrites some English
-  strings and `lang/fr.json` belongs to upstream.
-- Upstream tests whose English date expectations changed with §20 (`CountryEnumTest`,
-  `DocumentLocaleTest`, `UkCompanySetupTest`) are patched; `InvoiceDesignerTest` now uses a
-  unique invoice number per helper call.
-
-## 26. Bank feeds: Actual Budget bridge (all banks) with Akahu as direct fallback
+## 18. Bank feeds: Actual Budget bridge (all banks) with Akahu as direct fallback
 
 Bank feeds are now **pluggable providers**. The intended path is **Actual Budget → bridge → LineLedger**, so every bank
 (NZ and elsewhere) arrives through one provider. Akahu stays as a direct fallback while Actual is being proven out.
@@ -1380,47 +1104,13 @@ current password, and that turning it off again has had reported problems when a
 
 (`bridge_data` also needs declaring under top-level `volumes:`.)
 
-**Related fixes made in the same round**
-
-- **Excluded lines reappearing after sync.** Resume-matching now protects Ignored/created lines and marks a stuck import Ready if
-  matching fails. Cause was not fully verified; the user reports it resolved.
-- **For Review** (`⚡review.blade.php`, `ManagesStatementLineContacts.php`, `statement-contact-combo.blade.php`): row dimming while
-  confirming, a search box, live bulk-category picker, a `contacts-changed` event so new vendors/customers appear in every picker,
-  and new bank rules are applied to the waiting lines immediately.
-- **Lint:** `JournalPoster.php` and `AccountDimensionDefaultsTest.php` use `getAttribute()` / `getRawOriginal()` (Larastan level 5).
-
 **Upload rule (learned the hard way).** Put these files **only** in `.fork-patches/`. Files uploaded only to the real paths are
 reverted by `reapply-fork-patches` on the next push, because the `.fork-patches` copy always wins on conflict.
 
 **On upstream sync:** if upstream edits `BankFeedSyncer.php` or `BankFeedConnection.php`, rebuild from the new upstream file and
 re-add the provider-based changes; the other files are fork-only.
 
-## 27. Upstream sync notes (UK statutory report, Airy invoice layout)
-
-- Upstream added the **UK statutory accounts report**; `app/Support/Reporting/ReportCatalog.php` in `.fork-patches` was rebuilt
-  from upstream's version plus the fork's additions so that report is not lost.
-- Upstream added its own `InvoiceLayout` enum (Classic, **Airy**), `FormStyle`, `SaveFormStyle`, a form-styles page and
-  `InvoiceLayoutParityTest` (renders every layout and checks all fields). The fork's invoice designer (§21) was merged with those:
-  `app/Enums/InvoiceLayout.php`, `app/Actions/Sales/SaveFormStyle.php`,
-  `resources/views/pages/settings/lists/⚡form-styles.blade.php`, `resources/views/partials/invoice-layout-thumb.blade.php`.
-  `SaveFormStyle.php` must import `App\Enums\InvoiceLayout` (a bot merge once dropped it, failing Pint and PHPStan).
-- **Watch:** `InvoiceLayoutParityTest` against the fork's designer layouts is the most likely place for a future failure.
-- **Composer audit** fails on `symfony/mime` CVE-2026-45070 until Symfony releases 8.1.10; nothing to fix on our side.
-
-- **`form_styles.layout` column exists twice.** The fork's designer migration (`2026_10_14_000001`) and upstream's Airy migration
-  (`2026_10_21_000002`) both add it. The patched copy of the upstream one skips the add when the column exists; without that the
-  app container crash-loops on "Duplicate column name 'layout'". Keep that guard on any upstream rewrite of the migration.
-- **Parity test vs the fork's designed layouts.** `InvoiceLayoutParityTest` needs every layout to print the provincial tax number
-  (QST/PST). The designed layouts share `pdf/invoices/sections/_footer.blade.php`, which now includes
-  `pdf.invoices.partials.tax-numbers` (the same partial Classic and Airy use) instead of printing only `$company->tax_number`.
-- **Form styles page is a list, not a table.** Upstream's `InvoiceAiryLayoutTest` looks for `data-test="style-layout-cell"` in a
-  `<td>`; the fork's page renders a `<span>`, so the page wraps the layout label alone in `<span data-test="style-layout-cell">` and the patched test checks a freshly mounted page for `...>Airy</span>` after confirming the saved layout in the database (`tests/Feature/Invoices/InvoiceAiryLayoutTest.php`).
-- **New vendor on For Review.** A vendor name typed into a row but never ticked is now created when the row is confirmed
-  (`createPendingLineContact()` in `ManagesStatementLineContacts.php`, called from accept, create-rule and save-split).
-  The file-import wizard (`pages/banking/⚡import.blade.php`, now a patched file) does the same on confirm, confirm-all, create-rule and
-  before every commit (`createAllPendingLineContacts()`). On upstream sync, rebuild that file from upstream and re-add those calls.
-
-## 28. Recurring schedules: "Generate now" catches up
+## 19. Recurring schedules: "Generate now" catches up
 
 Upstream's **Generate now** button on a recurring invoice/bill/journal schedule created one occurrence per click, so a schedule
 started months ago needed one click per month. (The nightly `recurring:generate` run already caught up every missed occurrence,
@@ -1438,7 +1128,7 @@ up to 60 per run.) Now the button creates **every occurrence already due** in on
   `⚡show.blade.php` pages above, `⚡recurring.blade.php` (docs), `tests/Feature/Recurring/RecurringCatchUpTest.php`.
 - **On upstream sync:** rebuild each patched file from the new upstream version and re-add only the lines described here.
 
-## 29. Auto-post for recurring journals and monthly depreciation
+## 20. Auto-post for recurring journals and monthly depreciation
 
 Upstream always leaves generated recurring journal entries and monthly depreciation as **drafts** for a human to post. The fork
 adds an opt-in so they can post themselves. Both default to **off** (drafts, unchanged behaviour).
@@ -1456,12 +1146,12 @@ adds an opt-in so they can post themselves. Both default to **off** (drafts, unc
   Depreciation for months on or before the lock date is still skipped entirely, as before.
 - Docs text updated on the Accounting and Fixed assets pages.
 - Files: migration above, `app/Models/RecurringJournalEntry.php`, `app/Actions/Accounting/SaveRecurringJournalEntry.php`,
-  `app/Services/Recurring/RecurringJournalEntryGenerator.php` and `RecurringDocumentGenerator.php` (also carry the §28 catch-up, using a method-call pattern the PHPStan baseline already counts), `app/Services/Assets/DepreciationGenerator.php`,
-  `pages/recurring-journal/⚡form.blade.php`, `pages/recurring-journal/⚡show.blade.php` (also §28), `pages/assets/⚡index.blade.php`,
+  `app/Services/Recurring/RecurringJournalEntryGenerator.php` and `RecurringDocumentGenerator.php` (also carry the §19 catch-up), `app/Services/Assets/DepreciationGenerator.php`,
+  `pages/recurring-journal/⚡form.blade.php`, `pages/recurring-journal/⚡show.blade.php` (also §19), `pages/assets/⚡index.blade.php`,
   `pages/docs/⚡accounting.blade.php`, `pages/docs/⚡fixed-assets.blade.php`, `tests/Feature/Recurring/RecurringAutoPostTest.php`.
 - **On upstream sync:** rebuild each patched file from the new upstream version and re-add only the lines described here.
 
-## 31. Bank register: Source column
+## 21. Bank register: Source column
 
 The Bank register now has a **Source** column telling you where each row came from:
 
@@ -1474,7 +1164,7 @@ The Bank register now has a **Source** column telling you where each row came fr
 (header is not sortable). Files: `resources/views/pages/banking/⚡register.blade.php`, `tests/Feature/Banking/BankRegisterSourceTest.php`.
 **On upstream sync:** rebuild the page from the new upstream version and re-add the `lineSources()` computed, the Source `<th>`/`<td>` and `colspan="8"`.
 
-## 32. Faster CI (tests and lint)
+## 22. Faster CI (tests and lint)
 
 The full Pest suite took ~40 minutes per push. Now:
 
@@ -1490,19 +1180,3 @@ The full Pest suite took ~40 minutes per push. Now:
 - Files: `.github/workflows/tests.yml`, `.github/workflows/lint.yml`, `.github/scripts/select-tests.sh` (these three are committed straight to `.github/`,
   not under `.fork-patches/`).
 - Trade-off: a change can break a test the script did not pick; the nightly full run is the safety net.
-
-## 33. Upstream 1.4.0 sync: files that lost upstream changes (repaired)
-
-The automatic sync of upstream 1.4.0 hit conflicting hunks in four patched files and, per the conflict rule ("our side of a conflicting hunk wins"),
-dropped upstream's side — leaving code that called methods that no longer existed (`SaveJournalEntry::resolveLines()`; ~200 test failures).
-Each file was rebuilt from upstream's current version plus only the fork's own additions:
-
-- `app/Actions/Accounting/SaveJournalEntry.php` — upstream + `optionalId()` (blank Class/Location/Fund/Tax/Contact selects save as null).
-- `app/Services/Posting/JournalPoster.php` — upstream + `applyAccountDimensionDefaults()` (account default class/location).
-- `app/Providers/AppServiceProvider.php` — upstream (`configureEmailLinks()`/`CanonicalUrl`) + `DateDisplay::register()`.
-- `app/Services/Posting/BillPaymentPoster.php` — now identical to upstream (it only carried stale upstream code).
-- `resources/views/pages/reports/⚡fixed-asset-reconciliation.blade.php` (fork-only page) — account lookups now constrain `company_id`, which upstream's new
-  `LivewireTenantKeyGuardTest` requires of every Livewire page.
-
-**Lesson for future syncs:** after an upstream sync, check each patched file for lost upstream hunks (3-way merge of previous-upstream / ours / new-upstream
-and see whether it changes ours) before trusting a green-looking sync commit; a conflict-only "ours wins" can silently remove new upstream methods.
