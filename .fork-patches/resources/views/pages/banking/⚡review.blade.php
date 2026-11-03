@@ -18,11 +18,14 @@ use App\Models\Account;
 use App\Models\BankStatementLine;
 use App\Models\Bill;
 use App\Models\BillPayment;
+use App\Models\CustomerReceipt;
 use App\Models\Company;
 use App\Models\Contact;
 use App\Models\Expense;
+use App\Models\Invoice;
 use App\Services\Banking\Import\BankRuleEngine;
 use App\Services\Banking\Import\OpenBillMatcher;
+use App\Services\Banking\Import\OpenInvoiceMatcher;
 use App\Services\Banking\TransferPairMatcher;
 use App\Services\Classification\CategorySuggester;
 use App\Services\EditLocks\EditLockManager;
@@ -66,6 +69,18 @@ new #[Title('For Review')] class extends Component {
 
     /** @var array<int, int|string> lineId => bill to pay ('' = record as expense) */
     public array $lineBill = [];
+
+    /**
+     * Fork: lineId => invoice to pay ('' = record as a plain journal entry,
+     * 'allocations' = the set held in $lineInvoiceAllocations). Held on the page,
+     * not on the line: it only matters until the line is accepted.
+     *
+     * @var array<int, int|string>
+     */
+    public array $lineInvoice = [];
+
+    /** @var array<int, list<array{invoice_id: int, amount_cents: int}>> lineId => invoices a deposit pays */
+    public array $lineInvoiceAllocations = [];
 
     // Split modal.
     public ?int $splittingLineId = null;
@@ -195,6 +210,253 @@ new #[Title('For Review')] class extends Component {
         }
 
         return app(OpenBillMatcher::class)->forLines($this->rows, $overrides);
+    }
+
+    /**
+     * Fork: open-invoice offers for every customer-tagged deposit in the feed,
+     * keyed by line id — the receivable twin of {@see billCandidates()}.
+     *
+     * @return array<int, Collection<int, Invoice>>
+     */
+    #[Computed]
+    public function invoiceCandidates(): array
+    {
+        if ($this->showExcluded) {
+            return [];
+        }
+
+        $contacts = [];
+        foreach ($this->rows as $line) {
+            $contacts[$line->id] = $line->isInflow() ? $this->lineContactId($line) : null;
+        }
+
+        return app(OpenInvoiceMatcher::class)->forLines($this->rows, $contacts);
+    }
+
+    /**
+     * Open invoices per customer shown on the page, one grouped query — gates
+     * the "Receive payment…" button.
+     *
+     * @return array<int, int> contact id => open invoice count
+     */
+    #[Computed]
+    public function openInvoiceCounts(): array
+    {
+        $contactIds = $this->rows
+            ->map(fn (BankStatementLine $l) => $l->isInflow() ? $this->lineContactId($l) : null)
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($contactIds->isEmpty()) {
+            return [];
+        }
+
+        return Invoice::query()
+            ->openWithBalance()
+            ->whereIn('contact_id', $contactIds)
+            ->selectRaw('contact_id, COUNT(*) AS n')
+            ->groupBy('contact_id')
+            ->pluck('n', 'contact_id')
+            ->map(fn ($n): int => (int) $n)
+            ->all();
+    }
+
+    public function updatedLineInvoice(mixed $value, int|string|null $key = null): void
+    {
+        if ($key === null) {
+            return;
+        }
+
+        $lineId = (int) $key;
+        $choice = $this->lineInvoice[$lineId] ?? '';
+
+        if ($choice === '' || $choice === null) {
+            unset($this->lineInvoiceAllocations[$lineId]);
+        } elseif ($choice !== 'allocations') {
+            $invoice = Invoice::query()->whereKey((int) $choice)->first();
+
+            if ($invoice === null) {
+                unset($this->lineInvoiceAllocations[$lineId]);
+                $this->lineInvoice[$lineId] = '';
+
+                return;
+            }
+
+            $this->lineInvoiceAllocations[$lineId] = [[
+                'invoice_id' => (int) $invoice->id,
+                'amount_cents' => $invoice->balanceCents(),
+            ]];
+        }
+
+        unset($this->rows);
+    }
+
+    // ---- "Receive payment…" picker: apply one deposit across several open invoices ----
+
+    public ?int $receiveLineId = null;
+
+    public int $receiveTargetCents = 0;
+
+    /** @var array<int, array{invoice_id: int, invoice_no: string, due_date: string, balance: int, apply: string}> */
+    public array $receiveRows = [];
+
+    private function noReceivableInvoicesReason(BankStatementLine $line, Contact $contact): string
+    {
+        $open = Invoice::query()->where('contact_id', $contact->id)->openWithBalance()->get();
+
+        if ($open->isEmpty()) {
+            return __('No open invoices for :name. Only posted invoices with a balance can be paid here — a draft invoice has to be posted first.', ['name' => $contact->display_name]);
+        }
+
+        $account = $line->account()->first();
+        $home = mb_strtoupper((string) ($this->company->currency_code ?? ''));
+        $accountCode = mb_strtoupper((string) ($account?->currency_code ?: $home));
+        $otherCurrency = $open
+            ->map(fn (Invoice $i): string => mb_strtoupper((string) ($i->getAttribute('currency_code') ?: $home)))
+            ->first(fn (string $code): bool => $code !== $accountCode);
+
+        return __(':name has an open invoice in :invoice, but this transaction is in :account. An invoice can only be paid into an account in its own currency.', [
+            'name' => $contact->display_name,
+            'invoice' => $otherCurrency ?? $accountCode,
+            'account' => $accountCode,
+        ]);
+    }
+
+    public function openReceivePayment(int $lineId): void
+    {
+        $line = $this->lineForReview($lineId);
+
+        if ($line === null) {
+            return;
+        }
+
+        $contactId = $this->lineContactId($line);
+        $contact = $contactId !== null ? Contact::query()->find($contactId) : null;
+
+        if ($contact === null) {
+            Flux::toast(variant: 'danger', text: __('Choose the customer first.'));
+
+            return;
+        }
+
+        $invoices = app(OpenInvoiceMatcher::class)->openInvoicesFor($line, $contact);
+
+        if ($invoices->isEmpty()) {
+            Flux::toast(variant: 'danger', text: $this->noReceivableInvoicesReason($line, $contact));
+
+            return;
+        }
+
+        $target = abs((int) $line->amount_cents);
+
+        // Pre-fill: the held allocation, else the oldest invoices first up to
+        // the deposit total (the last one partial).
+        $existing = collect($this->lineInvoiceAllocations[$lineId] ?? [])->pluck('amount_cents', 'invoice_id');
+        $remaining = $target;
+
+        $this->receiveRows = [];
+        foreach ($invoices as $invoice) {
+            $balance = $invoice->balanceCents();
+
+            if ($existing->isNotEmpty()) {
+                $apply = (int) ($existing[$invoice->id] ?? 0);
+            } else {
+                $apply = min($balance, $remaining);
+                $remaining -= $apply;
+            }
+
+            $this->receiveRows[] = [
+                'invoice_id' => (int) $invoice->id,
+                'invoice_no' => (string) ($invoice->invoice_no ?: '#'.$invoice->id),
+                'due_date' => $invoice->due_date ? \Carbon\CarbonImmutable::parse($invoice->due_date)->toDateString() : '',
+                'balance' => $balance,
+                'apply' => $apply > 0 ? number_format($apply / 100, 2, '.', '') : '',
+            ];
+        }
+
+        $this->receiveLineId = $lineId;
+        $this->receiveTargetCents = $target;
+        $this->resetErrorBag('receiveRows');
+
+        Flux::modal('receive-payment')->show();
+    }
+
+    public function receiveTotal(): int
+    {
+        return (int) collect($this->receiveRows)->sum(fn (array $row): int => Money::tryFromString(trim((string) $row['apply']))?->cents ?? 0);
+    }
+
+    public function saveReceivePayment(): void
+    {
+        $line = $this->receiveLineId ? $this->lineForReview($this->receiveLineId) : null;
+
+        if ($line === null) {
+            $this->cancelReceivePayment();
+
+            return;
+        }
+
+        $allocations = [];
+
+        foreach ($this->receiveRows as $row) {
+            $cents = Money::tryFromString(trim((string) $row['apply']))?->cents ?? 0;
+
+            if ($cents <= 0) {
+                continue;
+            }
+
+            if ($cents > (int) $row['balance']) {
+                $this->addError('receiveRows', __('Invoice :no cannot be paid more than its open balance.', ['no' => $row['invoice_no']]));
+
+                return;
+            }
+
+            $allocations[] = ['invoice_id' => (int) $row['invoice_id'], 'amount_cents' => $cents];
+        }
+
+        if (array_sum(array_column($allocations, 'amount_cents')) !== $this->receiveTargetCents) {
+            $this->addError('receiveRows', __('The amounts applied must add up to the transaction total.'));
+
+            return;
+        }
+
+        $this->lineInvoiceAllocations[$line->id] = $allocations;
+        $this->lineInvoice[$line->id] = 'allocations';
+
+        $this->cancelReceivePayment();
+        unset($this->rows, $this->invoiceCandidates);
+
+        Flux::toast(variant: 'success', text: __('Invoices chosen — accept the line to record the payment.'));
+    }
+
+    public function cancelReceivePayment(): void
+    {
+        $this->receiveLineId = null;
+        $this->receiveTargetCents = 0;
+        $this->receiveRows = [];
+        Flux::modal('receive-payment')->close();
+    }
+
+    /**
+     * "Pay :n invoices (:amount)" for a held allocation, or null.
+     */
+    public function invoiceAllocationLabel(BankStatementLine $line): ?string
+    {
+        $allocations = $this->lineInvoiceAllocations[$line->id] ?? [];
+
+        if (count($allocations) < 2 && ($this->lineInvoice[$line->id] ?? '') !== 'allocations') {
+            return null;
+        }
+
+        if ($allocations === []) {
+            return null;
+        }
+
+        return __('Pay :n invoices (:amount)', [
+            'n' => count($allocations),
+            'amount' => number_format(array_sum(array_column($allocations, 'amount_cents')) / 100, 2),
+        ]);
     }
 
     /**
@@ -489,9 +751,30 @@ new #[Title('For Review')] class extends Component {
 
         if ($contact === null) {
             $this->lineBill[$lineId] = '';
-            unset($this->lineHint[$lineId], $this->rows, $this->billCandidates);
+            $this->lineInvoice[$lineId] = '';
+            unset($this->lineInvoiceAllocations[$lineId], $this->lineHint[$lineId], $this->rows, $this->billCandidates, $this->invoiceCandidates);
 
             return;
+        }
+
+        if ($line->isInflow()) {
+            $invoiceMatcher = app(OpenInvoiceMatcher::class);
+            $freshInflow = $line->fresh() ?? $line;
+            $invoiceOffer = $invoiceMatcher->forLine($freshInflow, (int) $contact->id);
+            $invoiceSet = $invoiceOffer === null ? $invoiceMatcher->allocationFor($freshInflow, (int) $contact->id) : null;
+
+            if ($invoiceOffer !== null) {
+                $this->lineInvoice[$lineId] = $invoiceOffer->id;
+                $this->lineInvoiceAllocations[$lineId] = [['invoice_id' => (int) $invoiceOffer->id, 'amount_cents' => $invoiceOffer->balanceCents()]];
+            } elseif ($invoiceSet !== null) {
+                $this->lineInvoice[$lineId] = 'allocations';
+                $this->lineInvoiceAllocations[$lineId] = $invoiceSet;
+            } else {
+                $this->lineInvoice[$lineId] = '';
+                unset($this->lineInvoiceAllocations[$lineId]);
+            }
+
+            unset($this->invoiceCandidates, $this->openInvoiceCounts);
         }
 
         $category = (int) ($this->categories[$lineId] ?? $line->suggested_account_id ?? 0);
@@ -757,7 +1040,9 @@ new #[Title('For Review')] class extends Component {
     public function categoryOptions(): array
     {
         return Account::query()
-            ->selectableForItemAccount()
+            // Fork: a feed can bring in capital or take out drawings, so Equity is
+            // offered too (the control accounts stay out).
+            ->where(fn ($q) => $q->selectableForItemAccount()->orWhere('type', \App\Enums\AccountType::Equity->value))
             ->where('is_active', true)
             ->orderBy('code')
             ->get(['id', 'code', 'name'])
@@ -789,7 +1074,9 @@ new #[Title('For Review')] class extends Component {
         $allocations = $billRaw === 'allocations' ? $line->suggestedBillAllocations() : [];
         $billId = ($billRaw === '' || $billRaw === null || $billRaw === 'allocations') ? null : (int) $billRaw;
 
-        if (! $accountId && $billId === null && $allocations === []) {
+        $invoiceAllocations = ($this->lineInvoice[$lineId] ?? '') !== '' ? ($this->lineInvoiceAllocations[$lineId] ?? []) : [];
+
+        if (! $accountId && $billId === null && $allocations === [] && $invoiceAllocations === []) {
             Flux::toast(variant: 'danger', text: __('Choose a category first.'));
 
             return;
@@ -806,12 +1093,14 @@ new #[Title('For Review')] class extends Component {
                 taxCodeId: $taxCodeId,
                 secondaryTaxCodeId: $secondaryTaxCodeId,
                 billAllocations: $allocations !== [] ? $allocations : null,
+                invoiceAllocations: $invoiceAllocations !== [] ? $invoiceAllocations : null,
             );
 
-            unset($this->rows, $this->billCandidates, $this->contactNames, $this->openBillCounts, $this->lineHint[$lineId]);
+            unset($this->rows, $this->billCandidates, $this->invoiceCandidates, $this->contactNames, $this->openBillCounts, $this->openInvoiceCounts, $this->lineHint[$lineId], $this->lineInvoice[$lineId], $this->lineInvoiceAllocations[$lineId]);
             Flux::toast(variant: 'success', text: match ($entry->source_type) {
                 Expense::class => __('Recorded as an expense.'),
                 BillPayment::class => __('Bill payment recorded.'),
+                CustomerReceipt::class => __('Invoice payment recorded.'),
                 default => __('Added to your books.'),
             });
         } catch (\Throwable $e) {
@@ -984,7 +1273,10 @@ new #[Title('For Review')] class extends Component {
         </div>
     @endif
 
-    <div class="overflow-x-auto rounded-lg border border-border">
+    {{-- Fork: the wrapper scrolls sideways, which clips the Category / Customer pickers
+         that drop below a row. Keep enough height that their lists show even when only
+         one or two rows are waiting. --}}
+    <div class="min-h-[26rem] overflow-x-auto rounded-lg border border-border">
         <table class="w-full text-sm">
             <thead class="bg-muted">
                 <tr>
@@ -1076,6 +1368,21 @@ new #[Title('For Review')] class extends Component {
                                     @endforeach
                                 </flux:select>
                             @endif
+                            @php($invoiceOffers = $this->invoiceCandidates[$line->id] ?? null)
+                            @php($invoiceSetLabel = $this->invoiceAllocationLabel($line))
+                            @if ((($invoiceOffers && $invoiceOffers->isNotEmpty()) || $invoiceSetLabel) && ! $showExcluded)
+                                <flux:select wire:model.live="lineInvoice.{{ $line->id }}" size="sm" class="mt-1 min-w-[180px]" data-test="review-receive-as">
+                                    <flux:select.option value="">{{ __('Record as journal entry') }}</flux:select.option>
+                                    @if ($invoiceSetLabel && ($invoiceOffers === null || $invoiceOffers->count() !== 1 || count($lineInvoiceAllocations[$line->id] ?? []) > 1))
+                                        <flux:select.option value="allocations">{{ $invoiceSetLabel }}</flux:select.option>
+                                    @endif
+                                    @foreach ($invoiceOffers ?? [] as $invoice)
+                                        <flux:select.option :value="$invoice->id">
+                                            {{ __('Pay invoice :no (:amount)', ['no' => $invoice->invoice_no ?: '#'.$invoice->id, 'amount' => number_format($invoice->balanceCents() / 100, 2)]) }}
+                                        </flux:select.option>
+                                    @endforeach
+                                </flux:select>
+                            @endif
                             @if (($lineHint[$line->id] ?? '') !== '')
                                 <div class="mt-1 text-xs text-muted-foreground" data-test="review-hint">{{ $lineHint[$line->id] }}</div>
                             @endif
@@ -1101,6 +1408,11 @@ new #[Title('For Review')] class extends Component {
                                     @if ($line->isOutflow() && $contactId && ($this->openBillCounts[$contactId] ?? 0) > 0)
                                         <flux:tooltip :content="__('Pay one or more open bills with this transaction')">
                                             <flux:button size="xs" variant="ghost" icon="document-text" wire:click="openPayBills({{ $line->id }})" data-test="review-pay-bills" />
+                                        </flux:tooltip>
+                                    @endif
+                                    @if ($line->isInflow() && $contactId && ($this->openInvoiceCounts[$contactId] ?? 0) > 0)
+                                        <flux:tooltip :content="__('Receive payment for one or more open invoices with this transaction')">
+                                            <flux:button size="xs" variant="ghost" icon="document-currency-dollar" wire:click="openReceivePayment({{ $line->id }})" data-test="review-receive-payment" />
                                         </flux:tooltip>
                                     @endif
                                     @if ($categoryChosen)
@@ -1192,6 +1504,52 @@ new #[Title('For Review')] class extends Component {
             <div class="flex justify-end gap-2">
                 <flux:button variant="ghost" wire:click="cancelSplit">{{ __('Cancel') }}</flux:button>
                 <flux:button variant="primary" wire:click="saveSplit" :disabled="$splitSum !== $splitTargetCents" data-test="split-save">{{ __('Add split') }}</flux:button>
+            </div>
+        </div>
+    </flux:modal>
+
+    <flux:modal name="receive-payment" class="md:w-[680px]" wire:close="cancelReceivePayment" data-test="receive-payment-modal">
+        <div class="space-y-4">
+            <flux:heading size="lg">{{ __('Receive payment from this transaction') }}</flux:heading>
+            <flux:subheading>{{ __('Apply :amount across the open invoices below. The amounts must add up to the transaction; an invoice may be paid in part.', ['amount' => number_format($receiveTargetCents / 100, 2)]) }}</flux:subheading>
+
+            <div class="overflow-x-auto rounded-lg border border-border">
+                <table class="w-full text-sm">
+                    <thead class="bg-muted text-xs uppercase text-muted-foreground">
+                        <tr>
+                            <th class="px-3 py-2 text-left">{{ __('Invoice #') }}</th>
+                            <th class="px-3 py-2 text-left">{{ __('Due') }}</th>
+                            <th class="px-3 py-2 text-right">{{ __('Open balance') }}</th>
+                            <th class="px-3 py-2 text-right">{{ __('Apply') }}</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-border">
+                        @foreach ($receiveRows as $i => $row)
+                            <tr wire:key="receive-invoice-{{ $row['invoice_id'] }}" data-test="receive-payment-row">
+                                <td class="px-3 py-2">{{ $row['invoice_no'] }}</td>
+                                <td class="px-3 py-2 whitespace-nowrap text-muted-foreground">{{ $row['due_date'] }}</td>
+                                <td class="px-3 py-2 text-right font-mono">{{ number_format($row['balance'] / 100, 2) }}</td>
+                                <td class="px-3 py-2 text-right">
+                                    <x-amount-input model="receiveRows.{{ $i }}.apply" modifiers=".live.debounce.300ms" size="sm" placeholder="0.00" class="ml-auto w-32 text-right" data-test="receive-payment-apply" />
+                                </td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+
+            @error('receiveRows')
+                <flux:text class="text-red-600" data-test="receive-payment-error">{{ $message }}</flux:text>
+            @enderror
+
+            <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
+                <span class="font-mono {{ $this->receiveTotal() === $receiveTargetCents ? 'text-green-600 dark:text-green-500' : 'text-muted-foreground' }}" data-test="receive-payment-total">
+                    {{ __('Allocated :a of :t', ['a' => number_format($this->receiveTotal() / 100, 2), 't' => number_format($receiveTargetCents / 100, 2)]) }}
+                </span>
+                <div class="flex gap-2">
+                    <flux:button variant="ghost" wire:click="cancelReceivePayment" data-test="receive-payment-cancel">{{ __('Cancel') }}</flux:button>
+                    <flux:button variant="primary" wire:click="saveReceivePayment" :disabled="$this->receiveTotal() !== $receiveTargetCents" data-test="receive-payment-save">{{ __('Save') }}</flux:button>
+                </div>
             </div>
         </div>
     </flux:modal>

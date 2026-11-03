@@ -145,7 +145,9 @@ new #[Title('Import statement')] class extends Component {
     public function categoryOptions(): array
     {
         return Account::query()
-            ->selectableForItemAccount()
+            // Fork: a feed can bring in capital or take out drawings, so Equity is
+            // offered too (the control accounts stay out).
+            ->where(fn ($q) => $q->selectableForItemAccount()->orWhere('type', \App\Enums\AccountType::Equity->value))
             ->where('is_active', true)
             ->orderBy('code')
             ->get(['id', 'code', 'name'])
