@@ -1063,8 +1063,9 @@ reloads too) reveals the rest, so new accounts can be linked; there is deliberat
 everything is shown. (Files: `⚡feeds.blade.php`, `BankFeedProvidersTest.php`.)
 
 **Automatic sync schedule.** The `scheduler` container runs `bank-feeds:sync` for every linked, active feed account of every
-company, whichever provider feeds it (Actual or Akahu). It runs once a day at `BANK_FEEDS_SYNC_AT` (default `16:30`, app time zone
-**UTC**, which is early the next morning in NZ). Unlinked feed accounts are skipped. Each run re-reads the last
+company, whichever provider feeds it (Actual or Akahu). It runs several times a day: `BANK_FEEDS_SYNC_AT` takes one or more
+`HH:MM` times separated by commas (default `00:30,04:30,08:30,12:30,16:30,20:30`, every four hours, app time zone **UTC**, so 01:30, 05:30,
+09:30, 13:30, 17:30 and 21:30 in NZ summer time). Invalid entries are ignored. Unlinked feed accounts are skipped. Each run re-reads the last
 `BANK_FEEDS_OVERLAP_DAYS` (default 7) days, so late changes are picked up and duplicates are skipped. Changing a value in `.env`
 needs a stack redeploy (no image rebuild). Files: `app/Providers/BankFeedServiceProvider.php`, `config/bank_feeds.php`.
 

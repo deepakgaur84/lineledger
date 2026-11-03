@@ -31,8 +31,9 @@ return [
         'timeout' => (int) env('ACTUAL_BRIDGE_TIMEOUT', 600),
     ],
 
-    // Time of day (server/scheduler time) for the daily sync.
-    'sync_at' => env('BANK_FEEDS_SYNC_AT', '16:30'),
+    // Times of day (app time zone, UTC) the sync runs: one or more HH:MM values
+    // separated by commas. Every four hours by default.
+    'sync_at' => env('BANK_FEEDS_SYNC_AT', '00:30,04:30,08:30,12:30,16:30,20:30'),
 
     // Each sync re-reads this many days before the last one, so late edits to
     // recent transactions are picked up.
