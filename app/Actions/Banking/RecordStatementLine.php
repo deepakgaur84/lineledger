@@ -4,6 +4,7 @@ namespace App\Actions\Banking;
 
 use App\Actions\Purchasing\SaveBillPayment;
 use App\Actions\Purchasing\SaveExpense;
+use App\Actions\Sales\SaveReceipt;
 use App\Enums\BillType;
 use App\Enums\StatementLineMatchStatus;
 use App\Enums\StatementSuggestionSource;
@@ -15,10 +16,12 @@ use App\Models\Contact;
 use App\Models\JournalEntry;
 use App\Models\TaxCode;
 use App\Services\Banking\Import\OpenBillMatcher;
+use App\Services\Banking\Import\OpenInvoiceMatcher;
 use App\Services\Banking\StatementLineCategoryGuard;
 use App\Services\Banking\StatementLineCurrencyGuard;
 use App\Services\Posting\BillPaymentPoster;
 use App\Services\Posting\ExpensePoster;
+use App\Services\Posting\ReceiptPoster;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
@@ -31,6 +34,7 @@ use Illuminate\Support\Facades\DB;
  *                                    (vendor bills, or an employee's expense-claim reimbursement)
  *   outflow + vendor              → an Expense to that vendor (pay-now purchase)
  *   outflow + tax code, no payee  → a payee-less Expense (only an Expense can claim the tax)
+ *   inflow  + customer + open invoice(s) → one customer receipt applied to that invoice / those invoices (fork)
  *   inflow  + contact             → the plain journal entry, contact on the contra leg
  *   otherwise                     → the plain journal entry (unchanged behaviour)
  *
@@ -60,6 +64,9 @@ final class RecordStatementLine
         private readonly SaveBillPayment $saveBillPayment,
         private readonly BillPaymentPoster $billPaymentPoster,
         private readonly OpenBillMatcher $bills,
+        private readonly SaveReceipt $saveReceipt,
+        private readonly ReceiptPoster $receiptPoster,
+        private readonly OpenInvoiceMatcher $invoices,
         private readonly StatementLineCategoryGuard $categories,
         private readonly StatementLineCurrencyGuard $currencyGuard,
     ) {}
@@ -76,8 +83,9 @@ final class RecordStatementLine
         ?int $taxCodeId = null,
         ?int $secondaryTaxCodeId = null,
         ?array $billAllocations = null,
+        ?array $invoiceAllocations = null,
     ): JournalEntry {
-        return DB::transaction(function () use ($line, $accountId, $contactId, $billId, $rememberVendorDefault, $taxCodeId, $secondaryTaxCodeId, $billAllocations): JournalEntry {
+        return DB::transaction(function () use ($line, $accountId, $contactId, $billId, $rememberVendorDefault, $taxCodeId, $secondaryTaxCodeId, $billAllocations, $invoiceAllocations): JournalEntry {
             if ($line->created_journal_entry_id !== null) {
                 throw new PostingValidationException(__('This transaction has already been added to your books.'));
             }
@@ -101,6 +109,20 @@ final class RecordStatementLine
                 throw new PostingValidationException(__('Choose the vendor before paying one of their bills.'));
             }
 
+            $receivables = $invoiceAllocations !== null && $invoiceAllocations !== [] ? array_values($invoiceAllocations) : null;
+
+            if ($receivables !== null && $paysBills) {
+                throw new PostingValidationException(__('Choose either bills or invoices for one transaction, not both.'));
+            }
+
+            if ($receivables !== null && $contact === null) {
+                throw new PostingValidationException(__('Choose the customer before paying one of their invoices.'));
+            }
+
+            if ($receivables !== null && ! $line->isInflow()) {
+                throw new PostingValidationException(__('An invoice can only be paid by money coming in.'));
+            }
+
             if ($paysBills && ! $line->isOutflow()) {
                 throw new PostingValidationException(__('A bill can only be paid by money going out.'));
             }
@@ -109,7 +131,9 @@ final class RecordStatementLine
                 ? $this->resolveTaxCodes($line, $taxCodeId, $secondaryTaxCodeId)
                 : [null, null];
 
-            if ($line->isOutflow() && $contact !== null && $paysBills) {
+            if ($receivables !== null) {
+                $entry = $this->recordInvoiceReceipt($line, $account, $contact, $receivables);
+            } elseif ($line->isOutflow() && $contact !== null && $paysBills) {
                 $entry = $this->recordBillPayment($line, $account, $contact, $allocations === null ? $billId : null, $allocations);
                 [$primaryTax, $secondaryTax] = [null, null]; // a bill already carries its tax
             } elseif ($line->isOutflow() && ($contact !== null || $primaryTax !== null)) {
@@ -266,6 +290,35 @@ final class RecordStatementLine
         ]);
 
         return $this->billPaymentPoster->post($payment);
+    }
+
+    /**
+     * One customer receipt, deposited straight into the bank account, applied to
+     * an exact-sum set of the customer's open invoices (partials allowed).
+     *
+     * @param  list<array{invoice_id: int, amount_cents: int}>  $allocations
+     */
+    private function recordInvoiceReceipt(BankStatementLine $line, Account $account, Contact $contact, array $allocations): JournalEntry
+    {
+        $this->invoices->assertReceivableSet($line, $contact, $allocations);
+
+        $receipt = $this->saveReceipt->handle([
+            'contact_id' => $contact->id,
+            // The amount is in the account's currency, which the matcher has
+            // checked is the invoices' — so the receipt is too.
+            'currency_code' => $account->currency_code ?: $account->company->currency_code,
+            'receipt_date' => CarbonImmutable::parse($line->txn_date)->toDateString(),
+            'deposit_to_account_id' => $account->id,
+            'reference' => $this->reference($line),
+            'amount_cents' => abs((int) $line->amount_cents),
+            'memo' => $this->memo($line),
+            'applications' => array_map(fn (array $a): array => [
+                'invoice_id' => (int) $a['invoice_id'],
+                'amount_cents' => (int) $a['amount_cents'],
+            ], $allocations),
+        ]);
+
+        return $this->receiptPoster->post($receipt);
     }
 
     private function resolveContact(BankStatementLine $line, int $contactId): Contact

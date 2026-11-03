@@ -784,6 +784,23 @@ covering the 15 constructs these two templates use stood in for it. The first pu
 **Known limits.** Seventeen columns render at 8px (about 6 pt): legible, but small. The page is A4 only, matching every other PDF in
 the app (there is no per-company paper setting).
 
+## 23. For Review: pay invoices from a bank-feed deposit, and Equity categories
+
+A deposit on For Review can now settle customer invoices, the same way an outflow can already pay bills.
+
+- Picking a customer on a deposit offers the open invoice whose balance equals the amount ("Pay invoice INV-0001 (1,150.00)"), or an exact-sum set of
+  that customer's open invoices. A "Receive payment…" button next to Accept opens a picker to split one deposit across several invoices (one may be
+  paid in part), like "Pay bills…".
+- Accept posts a customer receipt deposited straight into the bank account and applied to the chosen invoices, so the invoice is marked paid and the
+  feed line is stamped as created. Invoices are re-checked at post time (still open, same customer, same currency as the bank account, amounts add up).
+  A deposit with no invoice chosen still records as a plain journal entry.
+- Equity accounts (capital introduced, drawings) are now offered in the Category picker on For Review and Import. The posting code already allowed
+  them; only the list left them out.
+- The For Review table keeps a minimum height so the Category and Customer lists are not clipped when only a row or two is waiting.
+- Files: `app/Services/Banking/Import/OpenInvoiceMatcher.php`, `app/Actions/Banking/RecordStatementLine.php`,
+  `resources/views/pages/banking/⚡review.blade.php`, `⚡import.blade.php`.
+- Not covered: the Import wizard does not offer invoice payment (For Review does).
+
 ## Ongoing maintenance — now partially automated, still worth watching
 
 `reapply-fork-patches` (see §5) originally just *overwrote* on every
