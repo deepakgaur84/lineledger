@@ -1320,18 +1320,32 @@ new #[Title('For Review')] class extends Component {
 
         $payload = collect($this->splits)
             ->filter(fn (array $s): bool => $s['account_id'] && trim((string) $s['amount']) !== '')
-            ->map(function (array $s) use ($line): array {
+            ->map(function (array $s) use ($line): ?array {
+                // Fork: a half-typed or unparseable amount is a message, not a 500.
+                $cents = Money::tryFromString((string) $s['amount'])?->cents;
+
+                if ($cents === null) {
+                    return null;
+                }
+
                 $taxIds = array_values(array_unique(array_filter(array_map('intval', (array) ($s['tax_code_ids'] ?? [])))));
 
                 return [
                     'account_id' => (int) $s['account_id'],
-                    'amount_cents' => Money::fromString((string) $s['amount'])->cents,
+                    'amount_cents' => $cents,
                     'tax_code_id' => $line->isOutflow() ? ($taxIds[0] ?? null) : null,
                     'secondary_tax_code_id' => $line->isOutflow() ? ($taxIds[1] ?? null) : null,
                 ];
             })
-            ->values()
-            ->all();
+            ->values();
+
+        if ($payload->contains(null)) {
+            Flux::toast(variant: 'danger', text: __('One of the amounts is not a valid number — use digits with at most two decimals, e.g. 1,150.00.'));
+
+            return;
+        }
+
+        $payload = $payload->all();
 
         try {
             $action->handle($line, $payload, $this->lineContactId($line));
@@ -1627,7 +1641,7 @@ new #[Title('For Review')] class extends Component {
 
     {{-- Split modal --}}
     <flux:modal name="split-line" class="md:w-[760px]" wire:close="cancelSplit">
-        @php($splitSum = collect($splits)->sum(fn ($s) => trim((string) $s['amount']) === '' ? 0 : Money::fromString((string) $s['amount'])->cents))
+        @php($splitSum = collect($splits)->sum(fn ($s) => Money::tryFromString((string) $s['amount'])?->cents ?? 0))
         @php($splitLine = $splittingLineId ? $this->rows->firstWhere('id', $splittingLineId) : null)
         @php($splitIsOutflow = $splitLine !== null && $splitLine->isOutflow())
         <div class="space-y-4">
