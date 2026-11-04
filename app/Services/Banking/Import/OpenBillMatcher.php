@@ -268,12 +268,15 @@ final class OpenBillMatcher
      * Re-check, at post time and under row locks, that this line can settle
      * this set of bills with these amounts. Returns the bills keyed by id.
      *
+     * Fork: $mustEqualTotal = false lets one bank line pay bills for only part of
+     * its amount (a bill part of a split).
+     *
      * @param  list<array{bill_id: int, amount_cents: int}>  $allocations
      * @return Collection<int, Bill>
      *
      * @throws PostingValidationException
      */
-    public function assertPayableSet(BankStatementLine $line, Contact $contact, array $allocations): Collection
+    public function assertPayableSet(BankStatementLine $line, Contact $contact, array $allocations, bool $mustEqualTotal = true): Collection
     {
         if (! $line->isOutflow()) {
             throw new PostingValidationException(__('A bill can only be paid by money going out.'));
@@ -338,7 +341,7 @@ final class OpenBillMatcher
             }
         }
 
-        if (array_sum($amountByBill) !== abs((int) $line->amount_cents)) {
+        if ($mustEqualTotal && array_sum($amountByBill) !== abs((int) $line->amount_cents)) {
             throw new PostingValidationException(__('The amounts applied must add up to the transaction total.'));
         }
 
