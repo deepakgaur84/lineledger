@@ -3,15 +3,20 @@
 namespace App\Actions\Banking;
 
 use App\Actions\Purchasing\SaveExpense;
+use App\Actions\Sales\SaveReceipt;
+use App\Enums\AccountSubtype;
 use App\Enums\StatementLineMatchStatus;
 use App\Exceptions\Posting\PostingValidationException;
+use App\Models\Account;
 use App\Models\BankStatementLine;
 use App\Models\Contact;
 use App\Models\TaxCode;
+use App\Services\Banking\Import\OpenInvoiceMatcher;
 use App\Services\Banking\StatementLineCategoryGuard;
 use App\Services\Banking\StatementLineCurrencyGuard;
 use App\Services\Posting\DepositPoster;
 use App\Services\Posting\ExpensePoster;
+use App\Services\Posting\ReceiptPoster;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
@@ -44,10 +49,13 @@ final class SplitStatementLine
         private readonly ExpensePoster $expensePoster,
         private readonly StatementLineCategoryGuard $categories,
         private readonly StatementLineCurrencyGuard $currencyGuard,
+        private readonly SaveReceipt $saveReceipt,
+        private readonly ReceiptPoster $receiptPoster,
+        private readonly OpenInvoiceMatcher $invoices,
     ) {}
 
     /**
-     * @param  array<int, array{account_id: int, contact_id?: int|null, amount_cents: int, description?: string|null, tax_code_id?: int|null, secondary_tax_code_id?: int|null}>  $splits
+     * @param  array<int, array{account_id?: int|null, invoice_id?: int|null, contact_id?: int|null, amount_cents: int, description?: string|null, tax_code_id?: int|null, secondary_tax_code_id?: int|null}>  $splits
      */
     public function handle(BankStatementLine $line, array $splits, ?int $payeeContactId = null): void
     {
@@ -67,11 +75,25 @@ final class SplitStatementLine
             throw new PostingValidationException(__('Each split amount must be greater than zero.'));
         }
 
-        $this->categories->assertUsable($line, array_map(fn (array $s): int => (int) $s['account_id'], $splits));
+        $invoiceParts = array_filter($splits, fn (array $s): bool => ! empty($s['invoice_id']));
+        $categoryParts = array_filter($splits, fn (array $s): bool => empty($s['invoice_id']));
 
-        DB::transaction(function () use ($line, $splits, $payeeContactId): void {
+        if ($invoiceParts !== [] && (int) $line->amount_cents < 0) {
+            throw new PostingValidationException(__('An invoice can only be paid by money coming in.'));
+        }
+
+        foreach ($categoryParts as $part) {
+            if (empty($part['account_id'])) {
+                throw new PostingValidationException(__('Choose a category or an invoice for every part.'));
+            }
+        }
+
+        $categoryIds = array_values(array_map(fn (array $s): int => (int) $s['account_id'], $categoryParts));
+        $this->categories->assertUsable($line, $categoryIds);
+
+        DB::transaction(function () use ($line, $splits, $payeeContactId, $categoryIds, $invoiceParts): void {
             $account = $line->account()->firstOrFail();
-            $this->currencyGuard->assertCategoriesFit($account, array_map(fn (array $s): int => (int) $s['account_id'], $splits));
+            $this->currencyGuard->assertCategoriesFit($account, $categoryIds);
 
             $date = CarbonImmutable::parse($line->txn_date)->toDateString();
             $memo = ($line->description !== null && $line->description !== '') ? $line->description : null;
@@ -79,17 +101,22 @@ final class SplitStatementLine
             $taxCodes = $this->resolveTaxCodes($line, $splits);
 
             if ((int) $line->amount_cents >= 0) {
+                $receiptLines = $this->receiptsForInvoiceParts($line, $account, $invoiceParts, $date, $memo);
+
                 $deposit = $this->saveDeposit->handle([
                     'bank_account_id' => $account->id,
                     'deposit_no' => null,
                     'deposit_date' => $date,
                     'memo' => $memo,
-                    'lines' => array_map(fn (array $s): array => [
-                        'account_id' => $s['account_id'],
-                        'contact_id' => $s['contact_id'] ?? $payee?->id,
-                        'amount_cents' => (int) $s['amount_cents'],
-                        'description' => $s['description'] ?? $memo,
-                    ], $splits),
+                    'lines' => array_values(array_merge(
+                        $receiptLines,
+                        array_map(fn (array $s): array => [
+                            'account_id' => $s['account_id'],
+                            'contact_id' => $s['contact_id'] ?? $payee?->id,
+                            'amount_cents' => (int) $s['amount_cents'],
+                            'description' => $s['description'] ?? $memo,
+                        ], array_values(array_filter($splits, fn (array $s): bool => empty($s['invoice_id'])))),
+                    )),
                 ]);
                 $entry = $this->depositPoster->post($deposit);
             } else {
@@ -120,6 +147,70 @@ final class SplitStatementLine
                 'match_status' => StatementLineMatchStatus::Created->value,
             ])->save();
         });
+    }
+
+    /**
+     * One posted customer receipt (into Undeposited Funds) per invoice part;
+     * returns the deposit lines that bank them.
+     *
+     * @param  array<int, array<string, mixed>>  $parts
+     * @return list<array{customer_receipt_id: int, amount_cents: int, description: ?string}>
+     */
+    private function receiptsForInvoiceParts(BankStatementLine $line, Account $bank, array $parts, string $date, ?string $memo): array
+    {
+        if ($parts === []) {
+            return [];
+        }
+
+        if ($bank->currency_code && ! $bank->company->isHomeCurrency((string) $bank->currency_code)) {
+            throw new PostingValidationException(__('Invoices can\'t be paid inside a split on a foreign-currency account — record the payment from the invoice instead.'));
+        }
+
+        $perInvoice = [];
+
+        foreach ($parts as $part) {
+            $id = (int) $part['invoice_id'];
+            $perInvoice[$id] = ($perInvoice[$id] ?? 0) + (int) $part['amount_cents'];
+        }
+
+        $invoices = $this->invoices->assertPartsPayable($line, $perInvoice);
+
+        $undeposited = Account::withoutGlobalScopes()
+            ->where('company_id', $line->company_id)
+            ->where('subtype', AccountSubtype::UndepositedFunds->value)
+            ->where('is_system', true)
+            ->first();
+
+        if ($undeposited === null) {
+            throw new PostingValidationException(__('The Undeposited Funds account is missing — it is needed to record an invoice payment in a split.'));
+        }
+
+        $lines = [];
+
+        foreach ($parts as $part) {
+            $invoice = $invoices->get((int) $part['invoice_id']);
+            $cents = (int) $part['amount_cents'];
+
+            $receipt = $this->saveReceipt->handle([
+                'contact_id' => (int) $invoice->contact_id,
+                'currency_code' => $bank->currency_code ?: $bank->company->currency_code,
+                'receipt_date' => $date,
+                'deposit_to_account_id' => $undeposited->id,
+                'reference' => null,
+                'amount_cents' => $cents,
+                'memo' => $memo,
+                'applications' => [['invoice_id' => (int) $invoice->id, 'amount_cents' => $cents]],
+            ]);
+            $this->receiptPoster->post($receipt);
+
+            $lines[] = [
+                'customer_receipt_id' => (int) $receipt->id,
+                'amount_cents' => $cents,
+                'description' => $memo,
+            ];
+        }
+
+        return $lines;
     }
 
     private function resolvePayee(BankStatementLine $line, int $contactId): Contact

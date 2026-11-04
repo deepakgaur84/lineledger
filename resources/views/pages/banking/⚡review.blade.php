@@ -1281,14 +1281,79 @@ new #[Title('For Review')] class extends Component {
 
         $this->splittingLineId = $lineId;
         $this->splitTargetCents = abs((int) $line->amount_cents);
-        $this->splits = [['account_id' => null, 'amount' => number_format($this->splitTargetCents / 100, 2, '.', ''), 'tax_code_ids' => []]];
+        $this->splits = [['kind' => 'category', 'account_id' => null, 'invoice_id' => null, 'amount' => number_format($this->splitTargetCents / 100, 2, '.', ''), 'tax_code_ids' => []]];
 
         Flux::modal('split-line')->show();
     }
 
     public function addSplit(): void
     {
-        $this->splits[] = ['account_id' => null, 'amount' => '', 'tax_code_ids' => []];
+        $this->splits[] = ['kind' => 'category', 'account_id' => null, 'invoice_id' => null, 'amount' => '', 'tax_code_ids' => []];
+    }
+
+    /**
+     * Fork: open invoices a part of an inflow split can pay — the row's customer
+     * when one is chosen, otherwise every customer's, in the bank account's
+     * currency, oldest due first.
+     *
+     * @return array<int, array{id: int, label: string, balance_cents: int}>
+     */
+    #[Computed]
+    public function splitInvoiceOptions(): array
+    {
+        $line = $this->splittingLineId ? $this->lineForReview($this->splittingLineId) : null;
+
+        if ($line === null || ! $line->isInflow()) {
+            return [];
+        }
+
+        $contactId = $this->lineContactId($line);
+        $account = $line->account()->first();
+        $home = mb_strtoupper((string) $account?->company?->currency_code);
+        $bankCode = mb_strtoupper((string) ($account?->currency_code ?: $home));
+
+        $query = Invoice::query()
+            ->where('company_id', $line->company_id)
+            ->openWithBalance()
+            ->with('contact:id,display_name')
+            ->orderBy('due_date')
+            ->orderBy('id');
+
+        if ($contactId) {
+            $query->where('contact_id', $contactId);
+        }
+
+        return $query->limit(300)->get()
+            ->filter(fn (Invoice $i): bool => mb_strtoupper((string) ($i->getAttribute('currency_code') ?: $home)) === $bankCode)
+            ->map(fn (Invoice $i): array => [
+                'id' => (int) $i->id,
+                'label' => ($i->invoice_no ?: '#'.$i->id).' · '.($i->contact?->display_name ?? '').' · '.number_format($i->balanceCents() / 100, 2),
+                'balance_cents' => $i->balanceCents(),
+            ])
+            ->values()
+            ->all();
+    }
+
+    /** Picking an invoice for a part pre-fills its amount with what's left of the line (up to the invoice's balance). */
+    public function updatedSplits(mixed $value, string $key): void
+    {
+        if (! str_ends_with($key, '.invoice_id') || $value === null || $value === '') {
+            return;
+        }
+
+        $i = (int) explode('.', $key)[0];
+
+        if (trim((string) ($this->splits[$i]['amount'] ?? '')) !== '') {
+            return;
+        }
+
+        $option = collect($this->splitInvoiceOptions)->firstWhere('id', (int) $value);
+        $others = collect($this->splits)->except($i)->sum(fn ($s) => Money::tryFromString((string) ($s['amount'] ?? ''))?->cents ?? 0);
+        $left = max(0, $this->splitTargetCents - $others);
+
+        if ($option !== null) {
+            $this->splits[$i]['amount'] = number_format(min($left, $option['balance_cents']) / 100, 2, '.', '');
+        }
     }
 
     /** The payee the split will be recorded against — the row's chosen contact. */
@@ -1319,7 +1384,7 @@ new #[Title('For Review')] class extends Component {
         $this->createPendingLineContact($line->id);
 
         $payload = collect($this->splits)
-            ->filter(fn (array $s): bool => $s['account_id'] && trim((string) $s['amount']) !== '')
+            ->filter(fn (array $s): bool => (($s['kind'] ?? 'category') === 'invoice' ? ! empty($s['invoice_id']) : ! empty($s['account_id'])) && trim((string) $s['amount']) !== '')
             ->map(function (array $s) use ($line): ?array {
                 // Fork: a half-typed or unparseable amount is a message, not a 500.
                 $cents = Money::tryFromString((string) $s['amount'])?->cents;
@@ -1329,6 +1394,10 @@ new #[Title('For Review')] class extends Component {
                 }
 
                 $taxIds = array_values(array_unique(array_filter(array_map('intval', (array) ($s['tax_code_ids'] ?? [])))));
+
+                if (($s['kind'] ?? 'category') === 'invoice' && $line->isInflow()) {
+                    return ['invoice_id' => (int) $s['invoice_id'], 'amount_cents' => $cents];
+                }
 
                 return [
                     'account_id' => (int) $s['account_id'],
@@ -1662,7 +1731,22 @@ new #[Title('For Review')] class extends Component {
             @foreach ($splits as $i => $split)
                 @php($splitTaxIds = array_values(array_filter(array_map('intval', (array) ($split['tax_code_ids'] ?? [])))))
                 <div class="grid grid-cols-12 gap-2" wire:key="split-{{ $i }}" data-test="split-row">
-                    <x-account-combo model="splits.{{ $i }}.account_id" options="categories" :live="false" class="{{ $splitIsOutflow ? 'col-span-5' : 'col-span-7' }}" :placeholder="__('— category —')" data-test="split-account" />
+                    @if (! $splitIsOutflow)
+                        <flux:select wire:model.live="splits.{{ $i }}.kind" class="col-span-2" data-test="split-kind">
+                            <flux:select.option value="category">{{ __('Category') }}</flux:select.option>
+                            <flux:select.option value="invoice">{{ __('Invoice') }}</flux:select.option>
+                        </flux:select>
+                    @endif
+                    @if (! $splitIsOutflow && ($split['kind'] ?? 'category') === 'invoice')
+                        <flux:select wire:model.live="splits.{{ $i }}.invoice_id" class="col-span-5" data-test="split-invoice">
+                            <flux:select.option value="">{{ __('— open invoice —') }}</flux:select.option>
+                            @foreach ($this->splitInvoiceOptions as $option)
+                                <flux:select.option value="{{ $option['id'] }}">{{ $option['label'] }}</flux:select.option>
+                            @endforeach
+                        </flux:select>
+                    @else
+                        <x-account-combo model="splits.{{ $i }}.account_id" options="categories" :live="false" class="{{ $splitIsOutflow ? 'col-span-5' : 'col-span-5' }}" :placeholder="__('— category —')" data-test="split-account" />
+                    @endif
                     @if ($splitIsOutflow)
                         <flux:dropdown class="col-span-3">
                             <flux:button variant="outline" icon:trailing="chevron-down" class="w-full justify-between font-normal" data-test="split-tax">
