@@ -801,6 +801,17 @@ A deposit on For Review can now settle customer invoices, the same way an outflo
   `resources/views/pages/banking/⚡review.blade.php`, `⚡import.blade.php`.
 - Not covered: the Import wizard does not offer invoice payment (For Review does).
 
+## 24. For Review: faster suggested transfers, and recording them in bulk
+
+The "Suggested transfers" panel pairs an outflow on one bank / card account with an equal inflow on another.
+
+- It used to load every waiting line and compare each outflow with every inflow on every render, so a queue of a few thousand lines made each
+  click on the page (not only Record transfer) take many seconds. The matcher now reads four columns, groups inflows by amount and builds models only
+  for the pairs it keeps: 3,000 lines went from about 21 seconds to about 0.14 seconds, with identical pairs.
+- Each suggested transfer has a tick box. "Select all / none", "Record selected" and "Record all" (asks first) record many at once. Each pair posts on
+  its own, so one that can no longer be recorded (a leg already categorized, a locked period) is skipped and reported; the rest still go through.
+- Files: `app/Services/Banking/TransferPairMatcher.php`, `resources/views/pages/banking/⚡review.blade.php`.
+
 ## Ongoing maintenance — now partially automated, still worth watching
 
 `reapply-fork-patches` (see §5) originally just *overwrote* on every
