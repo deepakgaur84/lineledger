@@ -784,38 +784,6 @@ covering the 15 constructs these two templates use stood in for it. The first pu
 **Known limits.** Seventeen columns render at 8px (about 6 pt): legible, but small. The page is A4 only, matching every other PDF in
 the app (there is no per-company paper setting).
 
-## 23. For Review: pay invoices from a bank-feed deposit, and Equity categories
-
-A deposit on For Review can now settle customer invoices, the same way an outflow can already pay bills.
-
-- Picking a customer on a deposit offers the open invoice whose balance equals the amount ("Pay invoice INV-0001 (1,150.00)"), or an exact-sum set of
-  that customer's open invoices. A "Receive payment…" button next to Accept opens a picker to split one deposit across several invoices (one may be
-  paid in part), like "Pay bills…".
-- Accept posts a customer receipt deposited straight into the bank account and applied to the chosen invoices, so the invoice is marked paid and the
-  feed line is stamped as created. Invoices are re-checked at post time (still open, same customer, same currency as the bank account, amounts add up).
-  A deposit with no invoice chosen still records as a plain journal entry.
-- Equity accounts (capital introduced, drawings) are now offered in the Category picker on For Review and Import. The posting code already allowed
-  them; only the list left them out.
-- The For Review table keeps a minimum height so the Category and Customer lists are not clipped when only a row or two is waiting.
-- Files: `app/Services/Banking/Import/OpenInvoiceMatcher.php`, `app/Actions/Banking/RecordStatementLine.php`,
-  `resources/views/pages/banking/⚡review.blade.php`, `⚡import.blade.php`.
-- Not covered: the Import wizard does not offer invoice payment (For Review does).
-
-## 24. For Review: faster suggested transfers, and recording them in bulk
-
-The "Suggested transfers" panel pairs an outflow on one bank / card account with an equal inflow on another.
-
-- It used to load every waiting line and compare each outflow with every inflow on every render, so a queue of a few thousand lines made each
-  click on the page (not only Record transfer) take many seconds. The matcher now reads four columns, groups inflows by amount and builds models only
-  for the pairs it keeps: 3,000 lines went from about 21 seconds to about 0.14 seconds, with identical pairs.
-- Each suggested transfer has a tick box. "Select all / none", "Record selected" and "Record all" (asks first) record many at once. Each pair posts on
-  its own, so one that can no longer be recorded (a leg already categorized, a locked period) is skipped and reported; the rest still go through.
-- Bulk recording works in batches of 8 per request, and the page asks for the next batch until none are left ("Recording… N left"). One request for
-  hundreds of pairs ran past the web server's time limit and ended in a 500, even though most pairs had posted.
-- The panel draws only the first 10 suggestions ("Show more" adds 25 at a time); Select all and Record all still cover every suggestion. Every drawn
-  row is rendered again on each click anywhere on the page, so hundreds of rows made every request slow (about 3.4 s down to 0.6 s on a 2,400-line queue).
-- Files: `app/Services/Banking/TransferPairMatcher.php`, `resources/views/pages/banking/⚡review.blade.php`.
-
 ## Ongoing maintenance — now partially automated, still worth watching
 
 `reapply-fork-patches` (see §5) originally just *overwrote* on every
@@ -1214,3 +1182,96 @@ The full Pest suite took ~40 minutes per push. Now:
 - Files: `.github/workflows/tests.yml`, `.github/workflows/lint.yml`, `.github/scripts/select-tests.sh` (these three are committed straight to `.github/`,
   not under `.fork-patches/`).
 - Trade-off: a change can break a test the script did not pick; the nightly full run is the safety net.
+
+## 23. For Review: pay invoices from a bank-feed deposit, and Equity categories
+
+A deposit on For Review can now settle customer invoices, the same way an outflow can already pay bills.
+
+- Picking a customer on a deposit offers the open invoice whose balance equals the amount ("Pay invoice INV-0001 (1,150.00)"), or an exact-sum set of
+  that customer's open invoices. A "Receive payment…" button next to Accept opens a picker to split one deposit across several invoices (one may be
+  paid in part), like "Pay bills…".
+- Accept posts a customer receipt deposited straight into the bank account and applied to the chosen invoices, so the invoice is marked paid and the
+  feed line is stamped as created. Invoices are re-checked at post time (still open, same customer, same currency as the bank account, amounts add up).
+  A deposit with no invoice chosen still records as a plain journal entry.
+- Equity accounts (capital introduced, drawings) are now offered in the Category picker on For Review and Import. The posting code already allowed
+  them; only the list left them out.
+- The For Review table keeps a minimum height so the Category and Customer lists are not clipped when only a row or two is waiting.
+- Files: `app/Services/Banking/Import/OpenInvoiceMatcher.php`, `app/Actions/Banking/RecordStatementLine.php`,
+  `resources/views/pages/banking/⚡review.blade.php`, `⚡import.blade.php`.
+- Not covered: the Import wizard does not offer invoice payment (For Review does).
+
+## 24. For Review: record suggested transfers in bulk
+
+The "Suggested transfers" panel pairs an outflow on one bank / card account with an equal inflow on another.
+
+- Each suggestion has a tick box. "Select all / none", "Record selected" and "Record all" (asks first) record many at once. Each pair posts on
+  its own, so one that can no longer be recorded (a leg already categorized, a locked period) is skipped and reported; the rest still go through.
+- Recording runs in batches of 8 per request, and the page asks for the next batch until none are left ("Recording… N left"), so a long list never
+  holds one request open.
+- The panel draws the first 10 suggestions ("Show more" adds 25 at a time); Select all and Record all still cover every suggestion.
+- Files: `resources/views/pages/banking/⚡review.blade.php`, `tests/Feature/Banking/TransferSuggestionsTest.php`. (The matcher's speed-up is F7.)
+
+## Fixes
+
+Bugs in **upstream's own code** that this fork fixed. Fixes to the fork's own features are not listed here (they are part of the feature's section).
+Each entry says what upstream got wrong, what the fork changed, and which files. When upstream fixes the same thing, the fork's copy can be dropped.
+
+### F1. Employee Reimbursements Payable account missing
+
+Upstream's `ChartTemplateBuilder` only seeds this control account when Employees is on *at company creation*. Turning Employees on later left the
+account missing for good, which broke posting a reimbursement bill. The fork backfills it (and promotes a manually created stand-in account in
+place instead of duplicating it), the same way upstream's `EnsureInventoryAccounts` does for inventory.
+Files: `app/Actions/Payroll/EnsureEmployeeReimbursementAccount.php` (new), `app/Models/Company.php` (`usesEmployees()`),
+`resources/views/pages/companies/⚡edit.blade.php`.
+
+### F2. Foreign-currency data lost on a bill payment and on a reversal
+
+Two posting bugs, found by investigating real data and confirmed against upstream's code.
+- `BillPaymentPoster`: the bank (paid-from) line was the only line in the method without the `Currency::lineMemo(...)` spread, so a foreign-currency
+  bill payment always recorded the bank side's foreign amount as zero. (The fork's copy of this file now matches upstream's.)
+- `JournalPoster` (void / reversal): the reversal line copied the home debit and credit but not `currency_code`, `fx_rate` or the foreign
+  debit and credit, so voiding any foreign-currency transaction silently dropped its foreign data. The fork mirrors the debit/credit swap on the
+  foreign side.
+Files: `app/Services/Posting/BillPaymentPoster.php`, `app/Services/Posting/JournalPoster.php`.
+
+### F3. A blank Class / Location / Fund made saves fail with a 500
+
+A select left on "—" submits `''`. Upstream passes it on as `$line['class_id'] ?? null` (`??` only catches a missing value), and validation
+(`nullable|integer`) lets an empty string through, so MySQL in strict mode refused it for an integer column. Post and Save draft on a journal entry
+both ended in a blank 500. Upstream's tests missed it because SQLite accepts `''` in an integer column. One of upstream's three sibling actions
+(`SaveJournalEntryTemplate`) had already fixed it.
+The fork fixes it in two layers: `SaveJournalEntry` and `SaveRecurringJournalEntry` normalise optional ids through an `optionalId()` helper, and a
+small listener turns an empty-string `class_id`, `location_id` or `fund_id` into `NULL` on every model save (about 20 other save paths had the same
+pattern). The listener never blocks a save and touches only those three columns.
+Files: `app/Actions/Accounting/SaveJournalEntry.php`, `app/Actions/Accounting/SaveRecurringJournalEntry.php`,
+`app/Providers/BlankTrackingIdsServiceProvider.php` (new, registered first in `bootstrap/providers.php`),
+`tests/Feature/Journal/JournalBlankOptionalIdsTest.php`, `tests/Feature/Support/BlankTrackingIdsGuardTest.php`.
+
+### F4. `npm audit` failing on `shell-quote`
+
+`concurrently` pins `shell-quote` to exactly 1.9.0, which has a critical advisory (GHSA-pqg4-j6r4-53mv); npm's only suggestion was a breaking
+downgrade of `concurrently`. The fork adds `"overrides": { "shell-quote": "^1.11.0" }` to `package.json` and moves the lockfile entry to 1.12.0.
+To retire it, once `npm view concurrently dependencies` shows `shell-quote` at 1.11.0 or later, take upstream's copies of both files.
+Files: `package.json`, `package-lock.json`.
+
+### F5. Print on the Transactions drill-down page returned 404
+
+The Transactions page (reached by drilling down from a report such as the balance sheet) has a Print button, but `reports.transactions` is not in
+the report catalog and upstream's `PrintReportController` refuses any report that is not in the catalog. Download PDF worked; Print answered 404.
+The fork lets the controller print reports on a short drill-only list (`DRILL_ONLY_REPORTS`, currently just this one) without the catalog check.
+Files: `app/Http/Controllers/Reports/PrintReportController.php`, `tests/Feature/Reporting/ReportPrintDrillTest.php`.
+
+### F6. Half-typed amount in the For Review split dialog returned a 500
+
+The dialog turned every amount into a number with `Money::fromString` on each keystroke and on save, which throws on anything not yet complete ("6.",
+"-", a calculator entry such as 1050+52.50), so the page answered 500. The fork uses `Money::tryFromString` (as the Pay bills and Receive payment
+pickers do) and shows a message for an unreadable amount on save.
+Files: `resources/views/pages/banking/⚡review.blade.php`, `tests/Feature/Banking/SplitAmountInputTest.php`.
+
+### F7. Suggested transfers made the whole For Review page slow
+
+Upstream's `TransferPairMatcher` loaded every waiting line and compared each outflow with every inflow, and it ran on every render of the page,
+so with a long queue every click took many seconds (3,000 lines: about 21 s). The fork reads four columns, groups inflows by amount and builds
+models only for the pairs it keeps (about 0.14 s, identical pairs), and draws only the first 10 suggestions.
+Files: `app/Services/Banking/TransferPairMatcher.php`, `resources/views/pages/banking/⚡review.blade.php`,
+`tests/Feature/Banking/TransferSuggestionsTest.php`. (The bulk Record selected / Record all buttons are a fork feature: §24.)
