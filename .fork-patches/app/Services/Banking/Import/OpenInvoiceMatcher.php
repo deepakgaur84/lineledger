@@ -292,6 +292,60 @@ final class OpenInvoiceMatcher
         return $invoices;
     }
 
+    /**
+     * For a split: each invoice part must fit its invoice. Locks the invoices,
+     * and checks they are open, in the bank account's currency, and that the
+     * parts naming one invoice together stay within its balance. Returns the
+     * invoices keyed by id.
+     *
+     * @param  array<int, int>  $amountByInvoice  invoice id => cents applied (summed over parts)
+     * @return Collection<int, Invoice>
+     *
+     * @throws PostingValidationException
+     */
+    public function assertPartsPayable(BankStatementLine $line, array $amountByInvoice): Collection
+    {
+        if (! $line->isInflow()) {
+            throw new PostingValidationException(__('An invoice can only be paid by money coming in.'));
+        }
+
+        $invoices = Invoice::query()
+            ->where('company_id', $line->company_id)
+            ->whereIn('id', array_keys($amountByInvoice))
+            ->lockForUpdate()
+            ->get()
+            ->keyBy('id');
+
+        /** @var Account $account */
+        $account = $line->account()->firstOrFail();
+        $company = $account->company;
+
+        foreach ($amountByInvoice as $invoiceId => $amount) {
+            /** @var Invoice|null $invoice */
+            $invoice = $invoices->get($invoiceId);
+
+            if ($invoice === null) {
+                throw new PostingValidationException(__('That invoice no longer exists — choose another.'));
+            }
+
+            $no = $invoice->invoice_no ?: '#'.$invoice->id;
+
+            if (! $invoice->isOpen()) {
+                throw new PostingValidationException(__('Invoice :no is no longer open.', ['no' => $no]));
+            }
+
+            if (! $this->currencyCompatible($company, $account, $invoice)) {
+                throw new PostingValidationException(__('Invoice :no and the bank account use different currencies — record the payment from the invoice instead.', ['no' => $no]));
+            }
+
+            if ($amount > $invoice->balanceCents()) {
+                throw new PostingValidationException(__('Invoice :no only has :balance outstanding.', ['no' => $no, 'balance' => number_format($invoice->balanceCents() / 100, 2)]));
+            }
+        }
+
+        return $invoices;
+    }
+
     private function currencyCompatible(Company $company, Account $account, Invoice $invoice): bool
     {
         $home = mb_strtoupper((string) $company->currency_code);
