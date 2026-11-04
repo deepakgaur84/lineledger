@@ -810,6 +810,10 @@ The "Suggested transfers" panel pairs an outflow on one bank / card account with
   for the pairs it keeps: 3,000 lines went from about 21 seconds to about 0.14 seconds, with identical pairs.
 - Each suggested transfer has a tick box. "Select all / none", "Record selected" and "Record all" (asks first) record many at once. Each pair posts on
   its own, so one that can no longer be recorded (a leg already categorized, a locked period) is skipped and reported; the rest still go through.
+- Bulk recording works in batches of 8 per request, and the page asks for the next batch until none are left ("Recording… N left"). One request for
+  hundreds of pairs ran past the web server's time limit and ended in a 500, even though most pairs had posted.
+- The panel draws only the first 10 suggestions ("Show more" adds 25 at a time); Select all and Record all still cover every suggestion. Every drawn
+  row is rendered again on each click anywhere on the page, so hundreds of rows made every request slow (about 3.4 s down to 0.6 s on a 2,400-line queue).
 - Files: `app/Services/Banking/TransferPairMatcher.php`, `resources/views/pages/banking/⚡review.blade.php`.
 
 ## Ongoing maintenance — now partially automated, still worth watching

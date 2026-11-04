@@ -34,6 +34,7 @@ use Flux\Flux;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Computed;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
@@ -955,82 +956,151 @@ new #[Title('For Review')] class extends Component {
     public array $selectedTransfers = [];
 
     /**
-     * Fork: record several suggested transfers in one go — the ticked ones, or
-     * every suggestion. Each pair posts on its own, so one that fails (a locked
-     * period, a leg already categorized) does not stop the rest.
+     * Fork: how many suggested transfers to draw. Every drawn row is a handful of
+     * components the server renders again on each click anywhere on the page, so a
+     * few hundred suggestions made every request slow. "Select all" and "Record
+     * all" still cover every suggestion, drawn or not.
      */
+    public int $transferLimit = 10;
+
+    public function showMoreTransfers(): void
+    {
+        $this->transferLimit += 25;
+    }
+
+    /**
+     * Fork: record several suggested transfers — the ticked ones, or every
+     * suggestion — a few per request. Doing them all in one request ran past the
+     * web server's time limit and ended in a 500 once there were a few hundred, so
+     * the pairs are queued and the page asks for the next batch (the
+     * `transfers-continue` event) until the queue is empty. Each pair posts on its
+     * own, so one that fails (a locked period, a leg already categorized) does not
+     * stop the rest; the totals are reported once, at the end.
+     */
+    private const TRANSFER_BATCH = 8;
+
+    private const TRANSFER_BATCH_SECONDS = 12;
+
+    /** @var list<string> "outId:inId" still to record */
+    #[Locked]
+    public array $transferQueue = [];
+
+    #[Locked]
+    public int $transferDone = 0;
+
+    #[Locked]
+    public int $transferFailed = 0;
+
+    #[Locked]
+    public ?string $transferError = null;
+
     public function recordSelectedTransfers(PairStatementTransfer $action): void
     {
-        $this->recordTransferPairs($action, $this->selectedTransfers);
+        $this->startTransferQueue($this->selectedTransfers, $action);
     }
 
     public function recordAllTransfers(PairStatementTransfer $action): void
     {
-        $this->recordTransferPairs($action, $this->transferCandidates
+        $this->startTransferQueue($this->transferCandidates
             ->map(fn (array $pair): string => $pair['out']->id.':'.$pair['in']->id)
-            ->all());
+            ->all(), $action);
     }
 
     /**
      * @param  array<int, string>  $pairs  "outId:inId"
      */
-    private function recordTransferPairs(PairStatementTransfer $action, array $pairs): void
+    private function startTransferQueue(array $pairs, PairStatementTransfer $action): void
     {
-        $wanted = [];
+        $queue = [];
 
         foreach ($pairs as $pair) {
             [$outId, $inId] = array_pad(array_map('intval', explode(':', (string) $pair, 2)), 2, 0);
 
             if ($outId > 0 && $inId > 0) {
-                $wanted[] = [$outId, $inId];
+                $queue[] = $outId.':'.$inId;
             }
         }
 
-        if ($wanted === []) {
+        if ($queue === []) {
             Flux::toast(variant: 'danger', text: __('Tick the transfers to record first.'));
 
             return;
         }
 
-        $lines = BankStatementLine::query()
-            ->forReview()
-            ->whereIn('id', array_merge(array_column($wanted, 0), array_column($wanted, 1)))
-            ->get()
-            ->keyBy('id');
+        $this->transferQueue = $queue;
+        $this->transferDone = 0;
+        $this->transferFailed = 0;
+        $this->transferError = null;
 
-        $done = 0;
-        $failed = 0;
-        $firstError = null;
+        $this->processTransferQueue($action);
+    }
 
-        foreach ($wanted as [$outId, $inId]) {
+    /**
+     * Record the next batch of queued transfers; asks the page for another batch
+     * while any are left, and reports the totals when the queue is empty.
+     */
+    public function processTransferQueue(PairStatementTransfer $action): void
+    {
+        if ($this->transferQueue === []) {
+            return;
+        }
+
+        $batch = array_slice($this->transferQueue, 0, self::TRANSFER_BATCH);
+        $ids = [];
+
+        foreach ($batch as $pair) {
+            [$outId, $inId] = array_map('intval', explode(':', $pair, 2));
+            $ids[] = $outId;
+            $ids[] = $inId;
+        }
+
+        $lines = BankStatementLine::query()->forReview()->whereIn('id', $ids)->get()->keyBy('id');
+        $started = microtime(true);
+        $handled = 0;
+
+        foreach ($batch as $pair) {
+            if ($handled > 0 && microtime(true) - $started > self::TRANSFER_BATCH_SECONDS) {
+                break;
+            }
+
+            [$outId, $inId] = array_map('intval', explode(':', $pair, 2));
             $out = $lines->get($outId);
             $in = $lines->get($inId);
+            $handled++;
 
             if ($out === null || $in === null) {
-                $failed++;
-                $firstError ??= __('One of these transactions has already been categorized.');
+                $this->transferFailed++;
+                $this->transferError ??= __('One of these transactions has already been categorized.');
 
                 continue;
             }
 
             try {
                 $action->handle($out, $in);
-                $done++;
+                $this->transferDone++;
             } catch (\Throwable $e) {
-                $failed++;
-                $firstError ??= $e->getMessage();
+                $this->transferFailed++;
+                $this->transferError ??= $e->getMessage();
             }
         }
 
-        $this->selectedTransfers = [];
+        $this->transferQueue = array_slice($this->transferQueue, $handled);
         unset($this->rows, $this->transferCandidates);
 
-        if ($done > 0) {
-            Flux::toast(variant: 'success', text: $failed > 0
-                ? __(':done transfers recorded, :failed could not be: :error', ['done' => $done, 'failed' => $failed, 'error' => $firstError])
-                : trans_choice(':count transfer recorded.|:count transfers recorded.', $done, ['count' => $done]));
+        if ($this->transferQueue !== []) {
+            $this->dispatch('transfers-continue');
+
+            return;
+        }
+
+        $this->selectedTransfers = [];
+
+        if ($this->transferDone > 0) {
+            Flux::toast(variant: 'success', text: $this->transferFailed > 0
+                ? __(':done transfers recorded, :failed could not be: :error', ['done' => $this->transferDone, 'failed' => $this->transferFailed, 'error' => $this->transferError])
+                : trans_choice(':count transfer recorded.|:count transfers recorded.', $this->transferDone, ['count' => $this->transferDone]));
         } else {
-            Flux::toast(variant: 'danger', text: (string) $firstError);
+            Flux::toast(variant: 'danger', text: (string) $this->transferError);
         }
     }
 
@@ -1307,7 +1377,7 @@ new #[Title('For Review')] class extends Component {
 
     {{-- Suggested transfers --}}
     @if ($this->transferCandidates->isNotEmpty())
-        <div class="mb-4 overflow-hidden rounded-lg border border-border" data-test="transfer-suggestions">
+        <div class="mb-4 overflow-hidden rounded-lg border border-border" data-test="transfer-suggestions" x-data x-on:transfers-continue.window="$wire.processTransferQueue()">
             @php
                 $transferKeys = $this->transferCandidates->map(fn (array $p): string => $p['out']->id.':'.$p['in']->id)->all();
             @endphp
@@ -1315,14 +1385,18 @@ new #[Title('For Review')] class extends Component {
                 <span>{{ __('Suggested transfers') }} <span class="font-normal text-muted-foreground">({{ count($transferKeys) }})</span></span>
                 <div class="flex flex-wrap items-center gap-2">
                     <flux:button size="xs" variant="ghost" x-data x-on:click="$wire.selectedTransfers = $wire.selectedTransfers.length ? [] : {{ \Illuminate\Support\Js::from($transferKeys) }}" data-test="transfer-select-all">{{ __('Select all') }} / {{ __('none') }}</flux:button>
-                    <flux:button size="xs" variant="primary" wire:click="recordSelectedTransfers" wire:loading.attr="disabled" wire:target="recordSelectedTransfers,recordAllTransfers,recordTransfer" data-test="record-selected-transfers">{{ __('Record selected') }}</flux:button>
-                    <flux:button size="xs" variant="outline" wire:click="recordAllTransfers" wire:confirm="{{ __('Record every suggested transfer?') }}" wire:loading.attr="disabled" wire:target="recordSelectedTransfers,recordAllTransfers,recordTransfer" data-test="record-all-transfers">{{ __('Record all') }}</flux:button>
-                    <span wire:loading wire:target="recordSelectedTransfers,recordAllTransfers,recordTransfer" class="text-xs font-normal text-muted-foreground">{{ __('Recording…') }}</span>
+                    <flux:button size="xs" variant="primary" wire:click="recordSelectedTransfers" wire:loading.attr="disabled" wire:target="recordSelectedTransfers,recordAllTransfers,recordTransfer,processTransferQueue" :disabled="$transferQueue !== []" data-test="record-selected-transfers">{{ __('Record selected') }}</flux:button>
+                    <flux:button size="xs" variant="outline" wire:click="recordAllTransfers" wire:confirm="{{ __('Record every suggested transfer?') }}" wire:loading.attr="disabled" wire:target="recordSelectedTransfers,recordAllTransfers,recordTransfer,processTransferQueue" :disabled="$transferQueue !== []" data-test="record-all-transfers">{{ __('Record all') }}</flux:button>
+                    @if ($transferQueue !== [])
+                        <span class="text-xs font-normal text-muted-foreground" data-test="transfer-progress">{{ __('Recording… :n left', ['n' => count($transferQueue)]) }}</span>
+                    @else
+                        <span wire:loading wire:target="recordTransfer" class="text-xs font-normal text-muted-foreground">{{ __('Recording…') }}</span>
+                    @endif
                 </div>
             </div>
             <table class="w-full text-sm">
                 <tbody class="divide-y divide-border">
-                    @foreach ($this->transferCandidates as $pair)
+                    @foreach ($this->transferCandidates->take($transferLimit) as $pair)
                         <tr data-test="transfer-pair" wire:key="xfer-{{ $pair['out']->id }}-{{ $pair['in']->id }}">
                             <td class="w-8 px-4 py-2"><flux:checkbox wire:model="selectedTransfers" value="{{ $pair['out']->id }}:{{ $pair['in']->id }}" data-test="transfer-select" /></td>
                             <td class="px-4 py-2">
@@ -1337,6 +1411,11 @@ new #[Title('For Review')] class extends Component {
                     @endforeach
                 </tbody>
             </table>
+            @if (count($transferKeys) > $transferLimit)
+                <div class="border-t border-border px-4 py-2 text-center">
+                    <flux:button size="xs" variant="ghost" wire:click="showMoreTransfers" data-test="transfers-show-more">{{ __('Show :n more', ['n' => min(25, count($transferKeys) - $transferLimit)]) }} ({{ count($transferKeys) - $transferLimit }} {{ __('not shown') }})</flux:button>
+                </div>
+            @endif
         </div>
     @endif
 
