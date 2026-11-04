@@ -108,7 +108,7 @@ final class SplitStatementLine
                     'deposit_no' => null,
                     'deposit_date' => $date,
                     'memo' => $memo,
-                    'lines' => array_values(array_merge(
+                    'lines' => array_merge(
                         $receiptLines,
                         array_map(fn (array $s): array => [
                             'account_id' => $s['account_id'],
@@ -116,7 +116,7 @@ final class SplitStatementLine
                             'amount_cents' => (int) $s['amount_cents'],
                             'description' => $s['description'] ?? $memo,
                         ], array_values(array_filter($splits, fn (array $s): bool => empty($s['invoice_id'])))),
-                    )),
+                    ),
                 ]);
                 $entry = $this->depositPoster->post($deposit);
             } else {
