@@ -951,6 +951,89 @@ new #[Title('For Review')] class extends Component {
         }
     }
 
+    /** @var array<int, string> "outId:inId" of the suggested transfers ticked for a bulk record */
+    public array $selectedTransfers = [];
+
+    /**
+     * Fork: record several suggested transfers in one go — the ticked ones, or
+     * every suggestion. Each pair posts on its own, so one that fails (a locked
+     * period, a leg already categorized) does not stop the rest.
+     */
+    public function recordSelectedTransfers(PairStatementTransfer $action): void
+    {
+        $this->recordTransferPairs($action, $this->selectedTransfers);
+    }
+
+    public function recordAllTransfers(PairStatementTransfer $action): void
+    {
+        $this->recordTransferPairs($action, $this->transferCandidates
+            ->map(fn (array $pair): string => $pair['out']->id.':'.$pair['in']->id)
+            ->all());
+    }
+
+    /**
+     * @param  array<int, string>  $pairs  "outId:inId"
+     */
+    private function recordTransferPairs(PairStatementTransfer $action, array $pairs): void
+    {
+        $wanted = [];
+
+        foreach ($pairs as $pair) {
+            [$outId, $inId] = array_pad(array_map('intval', explode(':', (string) $pair, 2)), 2, 0);
+
+            if ($outId > 0 && $inId > 0) {
+                $wanted[] = [$outId, $inId];
+            }
+        }
+
+        if ($wanted === []) {
+            Flux::toast(variant: 'danger', text: __('Tick the transfers to record first.'));
+
+            return;
+        }
+
+        $lines = BankStatementLine::query()
+            ->forReview()
+            ->whereIn('id', array_merge(array_column($wanted, 0), array_column($wanted, 1)))
+            ->get()
+            ->keyBy('id');
+
+        $done = 0;
+        $failed = 0;
+        $firstError = null;
+
+        foreach ($wanted as [$outId, $inId]) {
+            $out = $lines->get($outId);
+            $in = $lines->get($inId);
+
+            if ($out === null || $in === null) {
+                $failed++;
+                $firstError ??= __('One of these transactions has already been categorized.');
+
+                continue;
+            }
+
+            try {
+                $action->handle($out, $in);
+                $done++;
+            } catch (\Throwable $e) {
+                $failed++;
+                $firstError ??= $e->getMessage();
+            }
+        }
+
+        $this->selectedTransfers = [];
+        unset($this->rows, $this->transferCandidates);
+
+        if ($done > 0) {
+            Flux::toast(variant: 'success', text: $failed > 0
+                ? __(':done transfers recorded, :failed could not be: :error', ['done' => $done, 'failed' => $failed, 'error' => $firstError])
+                : trans_choice(':count transfer recorded.|:count transfers recorded.', $done, ['count' => $done]));
+        } else {
+            Flux::toast(variant: 'danger', text: (string) $firstError);
+        }
+    }
+
     public function updatedShowExcluded(): void
     {
         $this->selected = [];
@@ -1225,18 +1308,30 @@ new #[Title('For Review')] class extends Component {
     {{-- Suggested transfers --}}
     @if ($this->transferCandidates->isNotEmpty())
         <div class="mb-4 overflow-hidden rounded-lg border border-border" data-test="transfer-suggestions">
-            <div class="border-b border-border bg-muted px-4 py-2 text-sm font-medium">{{ __('Suggested transfers') }}</div>
+            @php
+                $transferKeys = $this->transferCandidates->map(fn (array $p): string => $p['out']->id.':'.$p['in']->id)->all();
+            @endphp
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted px-4 py-2 text-sm font-medium">
+                <span>{{ __('Suggested transfers') }} <span class="font-normal text-muted-foreground">({{ count($transferKeys) }})</span></span>
+                <div class="flex flex-wrap items-center gap-2">
+                    <flux:button size="xs" variant="ghost" x-data x-on:click="$wire.selectedTransfers = $wire.selectedTransfers.length ? [] : {{ \Illuminate\Support\Js::from($transferKeys) }}" data-test="transfer-select-all">{{ __('Select all') }} / {{ __('none') }}</flux:button>
+                    <flux:button size="xs" variant="primary" wire:click="recordSelectedTransfers" wire:loading.attr="disabled" wire:target="recordSelectedTransfers,recordAllTransfers,recordTransfer" data-test="record-selected-transfers">{{ __('Record selected') }}</flux:button>
+                    <flux:button size="xs" variant="outline" wire:click="recordAllTransfers" wire:confirm="{{ __('Record every suggested transfer?') }}" wire:loading.attr="disabled" wire:target="recordSelectedTransfers,recordAllTransfers,recordTransfer" data-test="record-all-transfers">{{ __('Record all') }}</flux:button>
+                    <span wire:loading wire:target="recordSelectedTransfers,recordAllTransfers,recordTransfer" class="text-xs font-normal text-muted-foreground">{{ __('Recording…') }}</span>
+                </div>
+            </div>
             <table class="w-full text-sm">
                 <tbody class="divide-y divide-border">
                     @foreach ($this->transferCandidates as $pair)
                         <tr data-test="transfer-pair" wire:key="xfer-{{ $pair['out']->id }}-{{ $pair['in']->id }}">
+                            <td class="w-8 px-4 py-2"><flux:checkbox wire:model="selectedTransfers" value="{{ $pair['out']->id }}:{{ $pair['in']->id }}" data-test="transfer-select" /></td>
                             <td class="px-4 py-2">
                                 {{ $pair['out']->account?->displayName() }} → {{ $pair['in']->account?->displayName() }}
                                 <span class="text-muted-foreground">· {{ $pair['out']->txn_date?->toDateString() }}</span>
                             </td>
                             <td class="px-4 py-2 text-right font-mono">{{ number_format(abs($pair['out']->amount_cents) / 100, 2) }}</td>
                             <td class="px-4 py-2 text-right">
-                                <flux:button size="xs" variant="primary" wire:click="recordTransfer({{ $pair['out']->id }}, {{ $pair['in']->id }})" data-test="record-transfer">{{ __('Record transfer') }}</flux:button>
+                                <flux:button size="xs" variant="primary" wire:click="recordTransfer({{ $pair['out']->id }}, {{ $pair['in']->id }})" wire:loading.attr="disabled" wire:target="recordTransfer({{ $pair['out']->id }}, {{ $pair['in']->id }})" data-test="record-transfer">{{ __('Record transfer') }}</flux:button>
                             </td>
                         </tr>
                     @endforeach
