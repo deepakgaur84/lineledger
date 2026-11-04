@@ -1335,9 +1335,9 @@ new #[Title('For Review')] class extends Component {
     }
 
     /** Picking an invoice for a part pre-fills its amount with what's left of the line (up to the invoice's balance). */
-    public function updatedSplits(mixed $value, string $key): void
+    public function updatedSplits(mixed $value = null, ?string $key = null): void
     {
-        if (! str_ends_with($key, '.invoice_id') || $value === null || $value === '') {
+        if ($key === null || ! str_ends_with($key, '.invoice_id') || $value === null || $value === '') {
             return;
         }
 
