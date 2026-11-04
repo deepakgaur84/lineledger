@@ -38,10 +38,40 @@ new class extends Component
 
         $today = $this->company->currentDateTime();
 
-        return DailyInsight::query()
+        $insight = DailyInsight::query()
             ->whereIn('insight_date', [$today->toDateString(), $today->subDay()->toDateString()])
             ->orderByDesc('insight_date')
             ->first();
+
+        return $insight === null ? null : $this->refreshedIfStale($insight);
+    }
+
+    /**
+     * Fork: the stored insight is written once a day, so the "N bank lines are
+     * waiting" card kept its count after the lines were cleared. For that
+     * insight only, check the live count: hide the card once it no longer fires,
+     * and show the current numbers (not the stored ones) when the count moved.
+     * Nothing is saved; other insights are untouched.
+     */
+    private function refreshedIfStale(DailyInsight $insight): ?DailyInsight
+    {
+        if ($insight->type !== 'unmatched-bank-lines' || $this->company === null) {
+            return $insight;
+        }
+
+        $candidate = InsightDetectorRegistry::detectorFor($insight->type)
+            ?->detect($this->company, $this->company->currentDateTime()->toImmutable())[0] ?? null;
+
+        if ($candidate === null) {
+            return null;
+        }
+
+        if ((int) ($insight->facts['total_count'] ?? -1) !== (int) ($candidate->facts['total_count'] ?? -2)) {
+            $insight->headline = $candidate->headline;
+            $insight->body = $candidate->body;
+        }
+
+        return $insight;
     }
 
     /**
