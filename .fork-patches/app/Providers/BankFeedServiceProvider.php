@@ -7,45 +7,53 @@ use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\ServiceProvider;
 
 /**
- * Fork: registers the scheduled bank-feed sync (several times a day). Kept in its own provider (rather than
+ * Fork: registers the scheduled bank-feed sync. Kept in its own provider (rather than
  * routes/console.php) so upstream edits to the scheduler file never conflict.
  */
 class BankFeedServiceProvider extends ServiceProvider
 {
+    public const DEFAULT_EVERY_HOURS = 4;
+
     public function boot(): void
     {
         $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
-            foreach (self::syncTimes() as $time) {
-                $schedule->command('bank-feeds:sync')
-                    ->dailyAt($time)
-                    ->withoutOverlapping()
-                    ->onOneServer()
-                    ->onFailure(SchedulerFailureAlert::for('bank-feeds:sync'));
-            }
+            $schedule->command('bank-feeds:sync')
+                ->cron(self::cronExpression())
+                ->withoutOverlapping()
+                ->onOneServer()
+                ->onFailure(SchedulerFailureAlert::for('bank-feeds:sync'));
         });
     }
 
     /**
-     * The times of day (app time zone) the sync runs: BANK_FEEDS_SYNC_AT holds
-     * one or several HH:MM values separated by commas. Anything that is not a
-     * valid time is ignored; with nothing valid left the sync runs at 16:30.
-     *
-     * @return list<string>
+     * BANK_FEEDS_SYNC_EVERY_HOURS: run every N hours, counting from 00:00 in the
+     * app time zone (UTC) — 4 gives 00:00, 04:00, 08:00, 12:00, 16:00 and 20:00.
+     * A whole number from 1 to 24 (24 = once a day, at 00:00); anything else
+     * falls back to every 4 hours.
      */
-    public static function syncTimes(): array
+    public static function everyHours(): int
     {
-        $times = [];
+        $value = config('bank_feeds.sync_every_hours', self::DEFAULT_EVERY_HOURS);
+        $hours = filter_var($value, FILTER_VALIDATE_INT);
 
-        foreach (explode(',', (string) config('bank_feeds.sync_at', '16:30')) as $candidate) {
-            $candidate = trim($candidate);
+        return $hours !== false && $hours >= 1 && $hours <= 24 ? $hours : self::DEFAULT_EVERY_HOURS;
+    }
 
-            if (preg_match('/^([01]?\d|2[0-3]):([0-5]\d)$/', $candidate, $m) === 1) {
-                $times[] = sprintf('%02d:%s', (int) $m[1], $m[2]);
-            }
-        }
+    /**
+     * The hours of the day the sync runs, counting from 00:00. When N does not
+     * divide 24 evenly the last gap of the day is shorter (5 → 0, 5, 10, 15, 20).
+     *
+     * @return list<int>
+     */
+    public static function syncHours(): array
+    {
+        $step = self::everyHours();
 
-        $times = array_values(array_unique($times));
+        return $step >= 24 ? [0] : range(0, 23, $step);
+    }
 
-        return $times === [] ? ['16:30'] : $times;
+    public static function cronExpression(): string
+    {
+        return '0 '.implode(',', self::syncHours()).' * * *';
     }
 }
