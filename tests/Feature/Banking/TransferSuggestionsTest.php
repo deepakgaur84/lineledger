@@ -127,3 +127,45 @@ it('asks for a tick when nothing is selected', function () {
 
     expect(Transfer::count())->toBe(0);
 });
+
+it('records a long list in batches, one request at a time, instead of all in one', function () {
+    foreach (range(1, 20) as $i) {
+        xferLine($this->bank, $this->importBank, -($i * 1000), '2026-06-10');
+        xferLine($this->card, $this->importCard, $i * 1000, '2026-06-10');
+    }
+
+    $page = Livewire::test('pages::banking.review', ['company' => $this->company])
+        ->call('recordAllTransfers')
+        ->assertDispatched('transfers-continue');
+
+    // The first request did one batch, not all twenty.
+    expect(Transfer::count())->toBe(8)
+        ->and($page->instance()->transferQueue)->toHaveCount(12);
+
+    $page->call('processTransferQueue')->assertDispatched('transfers-continue');
+    expect(Transfer::count())->toBe(16);
+
+    $page->call('processTransferQueue');
+    expect(Transfer::count())->toBe(20)
+        ->and($page->instance()->transferQueue)->toBe([])
+        ->and(BankStatementLine::query()->forReview()->count())->toBe(0);
+
+    // Nothing left: a stray call does nothing.
+    $page->call('processTransferQueue')->assertHasNoErrors();
+    expect(Transfer::count())->toBe(20);
+});
+
+it('draws only the first suggested transfers and shows more on request', function () {
+    foreach (range(1, 14) as $i) {
+        xferLine($this->bank, $this->importBank, -($i * 1000), '2026-06-10');
+        xferLine($this->card, $this->importCard, $i * 1000, '2026-06-10');
+    }
+
+    $page = Livewire::test('pages::banking.review', ['company' => $this->company]);
+
+    expect(substr_count($page->html(), 'data-test="transfer-pair"'))->toBe(10);
+
+    $page->call('showMoreTransfers');
+
+    expect(substr_count($page->html(), 'data-test="transfer-pair"'))->toBe(14);
+});
