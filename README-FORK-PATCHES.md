@@ -1287,3 +1287,16 @@ so with a long queue every click took many seconds (3,000 lines: about 21 s). Th
 models only for the pairs it keeps (about 0.14 s, identical pairs), and draws only the first 10 suggestions.
 Files: `app/Services/Banking/TransferPairMatcher.php`, `resources/views/pages/banking/⚡review.blade.php`,
 `tests/Feature/Banking/TransferSuggestionsTest.php`. (The bulk Record selected / Record all buttons are a fork feature: §24.)
+
+### F8. Composer security audit failed on Symfony advisories
+
+Several Symfony components (http-foundation, http-kernel, routing, serializer, yaml, filesystem) were hit by advisories published on 2026-11-04, so the
+`security` workflow's `composer audit` failed on every push. The fork updates the Symfony packages in `composer.lock` to the patched 8.1.10/8.1.11
+releases (no `composer.json` change); `composer audit` is then clean. Drop the lock copy once upstream's lockfile is past those versions.
+Files: `composer.lock`.
+
+### F9. Dashboard "N bank lines are waiting" insight kept its count after the lines were cleared
+
+The daily insight is stored once a day, so clearing For Review did not change the card until the next morning's job. For this one insight the card
+now checks the live count: it disappears once fewer than 10 lines wait and shows the current numbers if the count moved. Nothing is saved.
+Files: `resources/views/components/⚡daily-insight.blade.php`.
