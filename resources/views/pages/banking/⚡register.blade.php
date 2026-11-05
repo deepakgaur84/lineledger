@@ -292,6 +292,23 @@ new #[Title('Bank register')] class extends Component {
             }
         }
 
+        // Fork: further entries a split line was matched to (e.g. its bill payment).
+        $extra = DB::table('bank_statement_line_entries')
+            ->whereIn('journal_entry_id', $entryIds)
+            ->pluck('bank_statement_line_id', 'journal_entry_id');
+
+        if ($extra->isNotEmpty()) {
+            $kinds = BankStatementLine::query()
+                ->with('import:id,bank_feed_account_id')
+                ->whereIn('id', $extra->values()->unique()->all())
+                ->get(['id', 'bank_statement_import_id'])
+                ->mapWithKeys(fn ($sl) => [$sl->id => $sl->import?->bank_feed_account_id !== null ? 'feed' : 'import']);
+
+            foreach ($extra as $entryId => $statementLineId) {
+                $createdBy[(int) $entryId] ??= $kinds[$statementLineId] ?? 'import';
+            }
+        }
+
         $sources = [];
 
         foreach ($this->lines as $line) {

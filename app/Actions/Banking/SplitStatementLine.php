@@ -2,19 +2,24 @@
 
 namespace App\Actions\Banking;
 
+use App\Actions\Purchasing\SaveBillPayment;
 use App\Actions\Purchasing\SaveExpense;
 use App\Actions\Sales\SaveReceipt;
 use App\Enums\AccountSubtype;
+use App\Enums\BillType;
 use App\Enums\StatementLineMatchStatus;
 use App\Exceptions\Posting\PostingValidationException;
 use App\Models\Account;
 use App\Models\BankStatementLine;
 use App\Models\Contact;
+use App\Models\JournalEntry;
 use App\Models\TaxCode;
+use App\Services\Banking\Import\OpenBillMatcher;
 use App\Services\Banking\Import\OpenInvoiceMatcher;
 use App\Services\Banking\StatementLineCategoryGuard;
 use App\Services\Banking\StatementLineCurrencyGuard;
 use App\Services\Posting\DepositPoster;
+use App\Services\Posting\BillPaymentPoster;
 use App\Services\Posting\ExpensePoster;
 use App\Services\Posting\ReceiptPoster;
 use Carbon\CarbonImmutable;
@@ -52,10 +57,13 @@ final class SplitStatementLine
         private readonly SaveReceipt $saveReceipt,
         private readonly ReceiptPoster $receiptPoster,
         private readonly OpenInvoiceMatcher $invoices,
+        private readonly SaveBillPayment $saveBillPayment,
+        private readonly BillPaymentPoster $billPaymentPoster,
+        private readonly OpenBillMatcher $bills,
     ) {}
 
     /**
-     * @param  array<int, array{account_id?: int|null, invoice_id?: int|null, contact_id?: int|null, amount_cents: int, description?: string|null, tax_code_id?: int|null, secondary_tax_code_id?: int|null}>  $splits
+     * @param  array<int, array{account_id?: int|null, invoice_id?: int|null, bill_id?: int|null, contact_id?: int|null, amount_cents: int, description?: string|null, tax_code_id?: int|null, secondary_tax_code_id?: int|null}>  $splits
      */
     public function handle(BankStatementLine $line, array $splits, ?int $payeeContactId = null): void
     {
@@ -76,25 +84,31 @@ final class SplitStatementLine
         }
 
         $invoiceParts = array_filter($splits, fn (array $s): bool => ! empty($s['invoice_id']));
-        $categoryParts = array_filter($splits, fn (array $s): bool => empty($s['invoice_id']));
+        $billParts = array_filter($splits, fn (array $s): bool => ! empty($s['bill_id']));
+        $categoryParts = array_filter($splits, fn (array $s): bool => empty($s['invoice_id']) && empty($s['bill_id']));
 
         if ($invoiceParts !== [] && (int) $line->amount_cents < 0) {
             throw new PostingValidationException(__('An invoice can only be paid by money coming in.'));
         }
 
+        if ($billParts !== [] && (int) $line->amount_cents >= 0) {
+            throw new PostingValidationException(__('A bill can only be paid by money going out.'));
+        }
+
         foreach ($categoryParts as $part) {
             if (empty($part['account_id'])) {
-                throw new PostingValidationException(__('Choose a category or an invoice for every part.'));
+                throw new PostingValidationException(__('Choose a category, an invoice or a bill for every part.'));
             }
         }
 
         $categoryIds = array_values(array_map(fn (array $s): int => (int) $s['account_id'], $categoryParts));
         $this->categories->assertUsable($line, $categoryIds);
 
-        DB::transaction(function () use ($line, $splits, $payeeContactId, $categoryIds, $invoiceParts): void {
+        DB::transaction(function () use ($line, $splits, $payeeContactId, $categoryIds, $invoiceParts, $billParts): void {
             $account = $line->account()->firstOrFail();
             $this->currencyGuard->assertCategoriesFit($account, $categoryIds);
 
+            $billEntry = null;
             $date = CarbonImmutable::parse($line->txn_date)->toDateString();
             $memo = ($line->description !== null && $line->description !== '') ? $line->description : null;
             $payee = $payeeContactId !== null ? $this->resolvePayee($line, $payeeContactId) : null;
@@ -120,22 +134,30 @@ final class SplitStatementLine
                 ]);
                 $entry = $this->depositPoster->post($deposit);
             } else {
-                $expense = $this->saveExpense->handle([
-                    'payment_account_id' => $account->id,
-                    'expense_date' => $date,
-                    'payee_contact_id' => $payee?->id,
-                    'payee_name' => $payee->display_name ?? ($memo ?? __('Bank transaction')),
-                    'memo' => $memo,
-                    'lines' => array_map(fn (array $s): array => [
-                        'account_id' => $s['account_id'],
-                        'amount_cents' => (int) $s['amount_cents'], // the gross for this part
-                        'description' => $s['description'] ?? $memo,
-                        'tax_code_id' => $taxCodes[(int) ($s['tax_code_id'] ?? 0)] ?? null,
-                        'secondary_tax_code_id' => $taxCodes[(int) ($s['secondary_tax_code_id'] ?? 0)] ?? null,
-                        'amount_includes_tax' => isset($taxCodes[(int) ($s['tax_code_id'] ?? 0)]),
-                    ], $splits),
-                ]);
-                $entry = $this->expensePoster->post($expense);
+                $billEntry = $this->payBillParts($line, $account, $payee, $billParts, $date, $memo);
+                $categorySplits = array_values(array_filter($splits, fn (array $s): bool => empty($s['bill_id'])));
+
+                if ($categorySplits === []) {
+                    $entry = $billEntry; // only bills: the bill payment is the whole split
+                    $billEntry = null;
+                } else {
+                    $expense = $this->saveExpense->handle([
+                        'payment_account_id' => $account->id,
+                        'expense_date' => $date,
+                        'payee_contact_id' => $payee?->id,
+                        'payee_name' => $payee->display_name ?? ($memo ?? __('Bank transaction')),
+                        'memo' => $memo,
+                        'lines' => array_map(fn (array $s): array => [
+                            'account_id' => $s['account_id'],
+                            'amount_cents' => (int) $s['amount_cents'], // the gross for this part
+                            'description' => $s['description'] ?? $memo,
+                            'tax_code_id' => $taxCodes[(int) ($s['tax_code_id'] ?? 0)] ?? null,
+                            'secondary_tax_code_id' => $taxCodes[(int) ($s['secondary_tax_code_id'] ?? 0)] ?? null,
+                            'amount_includes_tax' => isset($taxCodes[(int) ($s['tax_code_id'] ?? 0)]),
+                        ], $categorySplits),
+                    ]);
+                    $entry = $this->expensePoster->post($expense);
+                }
             }
 
             $bankLine = $entry->lines()->where('account_id', $account->id)->firstOrFail();
@@ -146,6 +168,19 @@ final class SplitStatementLine
                 'matched_journal_line_id' => $bankLine->id,
                 'match_status' => StatementLineMatchStatus::Created->value,
             ])->save();
+
+            // The bill payment has its own bank leg: the line is matched to it too.
+            if ($billEntry !== null) {
+                $billLeg = $billEntry->lines()->where('account_id', $account->id)->firstOrFail();
+
+                DB::table('bank_statement_line_entries')->insert([
+                    'bank_statement_line_id' => $line->id,
+                    'journal_entry_id' => $billEntry->id,
+                    'journal_line_id' => $billLeg->id,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
         });
     }
 
@@ -211,6 +246,55 @@ final class SplitStatementLine
         }
 
         return $lines;
+    }
+
+    /**
+     * Fork: the bill parts of an outflow split. One bill payment from the bank
+     * account settles all the parts' bills (one payee), as "Pay bills" does on a
+     * whole line, but for the parts' sum only. It has its own bank leg, which
+     * the statement line is matched to alongside the expense's.
+     *
+     * @param  array<int, array<string, mixed>>  $parts
+     */
+    private function payBillParts(BankStatementLine $line, Account $bank, ?Contact $payee, array $parts, string $date, ?string $memo): ?JournalEntry
+    {
+        if ($parts === []) {
+            return null;
+        }
+
+        if ($payee === null) {
+            throw new PostingValidationException(__('Pick the vendor on the row before paying a bill in a split.'));
+        }
+
+        $perBill = [];
+
+        foreach ($parts as $part) {
+            $id = (int) $part['bill_id'];
+            $perBill[$id] = ($perBill[$id] ?? 0) + (int) $part['amount_cents'];
+        }
+
+        $allocations = [];
+
+        foreach ($perBill as $billId => $cents) {
+            $allocations[] = ['bill_id' => $billId, 'amount_cents' => $cents];
+        }
+
+        $bills = $this->bills->assertPayableSet($line, $payee, $allocations, false);
+        $type = $bills->first()?->getAttribute('bill_type');
+
+        $payment = $this->saveBillPayment->handle([
+            'contact_id' => $payee->id,
+            'payment_type' => ($type instanceof BillType ? $type : BillType::Vendor)->value,
+            'currency_code' => $bank->currency_code ?: $bank->company->currency_code,
+            'payment_date' => $date,
+            'paid_from_account_id' => $bank->id,
+            'reference' => null,
+            'amount_cents' => array_sum($perBill),
+            'memo' => $memo,
+            'applications' => $allocations,
+        ]);
+
+        return $this->billPaymentPoster->post($payment);
     }
 
     private function resolvePayee(BankStatementLine $line, int $contactId): Contact

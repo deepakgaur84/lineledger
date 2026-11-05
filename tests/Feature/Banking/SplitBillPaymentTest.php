@@ -15,6 +15,7 @@ use App\Models\Contact;
 use App\Models\JournalLine;
 use App\Models\User;
 use App\Services\Posting\BillPoster;
+use Illuminate\Support\Facades\DB;
 
 beforeEach(function () {
     $this->user = User::factory()->create();
@@ -58,7 +59,7 @@ function splitOpenBill(Contact $vendor, int $cents)
     return $bill->fresh();
 }
 
-it('pays a bill as one part of an outflow split with a single bank leg', function () {
+it('pays a bill as one part of an outflow split, matching the line to both bank legs', function () {
     $bill = splitOpenBill($this->vendor, 40000);
     $line = splitOutflow(100000);
 
@@ -68,18 +69,32 @@ it('pays a bill as one part of an outflow split with a single bank leg', functio
     ], $this->vendor->id);
 
     $line->refresh();
-    $bankLegs = JournalLine::query()->where('account_id', $this->bank->id)->where('credit_cents', '>', 0)->get();
+    $payment = BillPayment::query()->firstOrFail();
+    $extra = DB::table('bank_statement_line_entries')->where('bank_statement_line_id', $line->id)->first();
+    $credits = JournalLine::query()->where('account_id', $this->bank->id)->where('credit_cents', '>', 0)->pluck('credit_cents')->map(fn ($c) => (int) $c)->sort()->values()->all();
 
     expect($line->match_status)->toBe(StatementLineMatchStatus::Created)
-        ->and($line->matchedJournalLine->credit_cents)->toBe(100000)
-        ->and($bankLegs)->toHaveCount(1)
+        ->and($line->matchedJournalLine->credit_cents)->toBe(60000)
+        ->and($credits)->toBe([40000, 60000])
         ->and(BillPayment::query()->count())->toBe(1)
+        ->and($extra->journal_entry_id)->toBe($payment->journal_entry_id)
+        ->and(JournalLine::query()->findOrFail($extra->journal_line_id)->credit_cents)->toBe(40000)
         ->and($bill->fresh()->balanceCents())->toBe(0);
+});
 
-    // The clearing account nets to nothing.
-    $clearing = Account::query()->where('subtype', AccountSubtype::UndepositedFunds->value)->firstOrFail();
-    $net = JournalLine::query()->where('account_id', $clearing->id)->selectRaw('sum(debit_cents) - sum(credit_cents) as net')->value('net');
-    expect((int) $net)->toBe(0);
+it('records a split of only bills as the bill payment alone', function () {
+    $a = splitOpenBill($this->vendor, 10000);
+    $b = splitOpenBill($this->vendor, 20000);
+    $line = splitOutflow(30000);
+
+    app(SplitStatementLine::class)->handle($line, [
+        ['bill_id' => $a->id, 'amount_cents' => 10000],
+        ['bill_id' => $b->id, 'amount_cents' => 20000],
+    ], $this->vendor->id);
+
+    expect($line->fresh()->matchedJournalLine->credit_cents)->toBe(30000)
+        ->and(DB::table('bank_statement_line_entries')->count())->toBe(0)
+        ->and($a->fresh()->balanceCents() + $b->fresh()->balanceCents())->toBe(0);
 });
 
 it('allows a partial bill payment inside a split', function () {
