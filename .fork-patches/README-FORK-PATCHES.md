@@ -1223,6 +1223,19 @@ that is no longer open or is paid beyond its balance. Nothing is left behind on 
 Files: `app/Actions/Banking/SplitStatementLine.php`, `app/Services/Banking/Import/OpenInvoiceMatcher.php` (`assertPartsPayable`),
 `resources/views/pages/banking/⚡review.blade.php`, `tests/Feature/Banking/SplitInvoicePaymentTest.php`.
 
+## 26. For Review: pay a bill as one part of a split
+
+The Split dialog on a payment (money going out) now also offers **Bill** per part, the payables twin of §25. Pick the vendor on the row first;
+a bill part lists that vendor's open bills, pre-fills the amount (what is left of the line, up to the bill's balance) and may pay in full or in part.
+On save, the bills are paid by one ordinary bill payment from the bank account for the bill parts' sum, and the category parts are booked as one
+expense from the bank for the rest, so the split has **two bank legs** and no clearing account. The statement line keeps the expense as its main entry
+(`created_journal_entry_id`, `matched_journal_line_id`) and the bill payment's bank leg is recorded in the new table `bank_statement_line_entries`
+(migration `2026_11_05_000001`); the bank register shows both entries as coming from the feed. A split of only bills is just the bill payment.
+Refused with a message: no vendor chosen, a bill of another vendor or no longer open, an overpayment, or a bill part on money coming in; nothing is left behind.
+Files: `app/Actions/Banking/SplitStatementLine.php`, `app/Services/Banking/Import/OpenBillMatcher.php` (`assertPayableSet(..., $mustEqualTotal)`),
+`resources/views/pages/banking/⚡review.blade.php`, `resources/views/pages/banking/⚡register.blade.php`,
+`database/migrations/2026_11_05_000001_create_bank_statement_line_entries_table.php`, `tests/Feature/Banking/SplitBillPaymentTest.php`.
+
 ## Fixes
 
 Bugs in **upstream's own code** that this fork fixed. Fixes to the fork's own features are not listed here (they are part of the feature's section).

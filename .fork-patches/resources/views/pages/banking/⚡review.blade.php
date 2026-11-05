@@ -1281,14 +1281,14 @@ new #[Title('For Review')] class extends Component {
 
         $this->splittingLineId = $lineId;
         $this->splitTargetCents = abs((int) $line->amount_cents);
-        $this->splits = [['kind' => 'category', 'account_id' => null, 'invoice_id' => null, 'amount' => number_format($this->splitTargetCents / 100, 2, '.', ''), 'tax_code_ids' => []]];
+        $this->splits = [['kind' => 'category', 'account_id' => null, 'invoice_id' => null, 'bill_id' => null, 'amount' => number_format($this->splitTargetCents / 100, 2, '.', ''), 'tax_code_ids' => []]];
 
         Flux::modal('split-line')->show();
     }
 
     public function addSplit(): void
     {
-        $this->splits[] = ['kind' => 'category', 'account_id' => null, 'invoice_id' => null, 'amount' => '', 'tax_code_ids' => []];
+        $this->splits[] = ['kind' => 'category', 'account_id' => null, 'invoice_id' => null, 'bill_id' => null, 'amount' => '', 'tax_code_ids' => []];
     }
 
     /**
@@ -1334,10 +1334,39 @@ new #[Title('For Review')] class extends Component {
             ->all();
     }
 
+    /**
+     * Fork: the payee's open bills a part of an outflow split can pay. Needs a
+     * vendor chosen on the row.
+     *
+     * @return array<int, array{id: int, label: string, balance_cents: int}>
+     */
+    #[Computed]
+    public function splitBillOptions(): array
+    {
+        $line = $this->splittingLineId ? $this->lineForReview($this->splittingLineId) : null;
+        $contactId = $line && $line->isOutflow() ? $this->lineContactId($line) : null;
+        $contact = $contactId ? Contact::query()->find($contactId) : null;
+
+        if ($line === null || $contact === null) {
+            return [];
+        }
+
+        return app(OpenBillMatcher::class)->openBillsFor($line, $contact)
+            ->map(fn (Bill $b): array => [
+                'id' => (int) $b->id,
+                'label' => ($b->bill_no ?: '#'.$b->id).' · '.number_format($b->balanceCents() / 100, 2),
+                'balance_cents' => $b->balanceCents(),
+            ])
+            ->values()
+            ->all();
+    }
+
     /** Picking an invoice for a part pre-fills its amount with what's left of the line (up to the invoice's balance). */
     public function updatedSplits(mixed $value = null, ?string $key = null): void
     {
-        if ($key === null || ! str_ends_with($key, '.invoice_id') || $value === null || $value === '') {
+        $isBill = $key !== null && str_ends_with($key, '.bill_id');
+
+        if ($key === null || (! $isBill && ! str_ends_with($key, '.invoice_id')) || $value === null || $value === '') {
             return;
         }
 
@@ -1347,7 +1376,7 @@ new #[Title('For Review')] class extends Component {
             return;
         }
 
-        $option = collect($this->splitInvoiceOptions)->firstWhere('id', (int) $value);
+        $option = collect($isBill ? $this->splitBillOptions : $this->splitInvoiceOptions)->firstWhere('id', (int) $value);
         $others = collect($this->splits)->except($i)->sum(fn ($s) => Money::tryFromString((string) ($s['amount'] ?? ''))?->cents ?? 0);
         $left = max(0, $this->splitTargetCents - $others);
 
@@ -1384,7 +1413,7 @@ new #[Title('For Review')] class extends Component {
         $this->createPendingLineContact($line->id);
 
         $payload = collect($this->splits)
-            ->filter(fn (array $s): bool => (($s['kind'] ?? 'category') === 'invoice' ? ! empty($s['invoice_id']) : ! empty($s['account_id'])) && trim((string) $s['amount']) !== '')
+            ->filter(fn (array $s): bool => (match ($s['kind'] ?? 'category') { 'invoice' => ! empty($s['invoice_id']), 'bill' => ! empty($s['bill_id']), default => ! empty($s['account_id']) }) && trim((string) $s['amount']) !== '')
             ->map(function (array $s) use ($line): ?array {
                 // Fork: a half-typed or unparseable amount is a message, not a 500.
                 $cents = Money::tryFromString((string) $s['amount'])?->cents;
@@ -1397,6 +1426,10 @@ new #[Title('For Review')] class extends Component {
 
                 if (($s['kind'] ?? 'category') === 'invoice' && $line->isInflow()) {
                     return ['invoice_id' => (int) $s['invoice_id'], 'amount_cents' => $cents];
+                }
+
+                if (($s['kind'] ?? 'category') === 'bill' && $line->isOutflow()) {
+                    return ['bill_id' => (int) $s['bill_id'], 'amount_cents' => $cents];
                 }
 
                 return [
@@ -1731,35 +1764,45 @@ new #[Title('For Review')] class extends Component {
             @foreach ($splits as $i => $split)
                 @php($splitTaxIds = array_values(array_filter(array_map('intval', (array) ($split['tax_code_ids'] ?? [])))))
                 <div class="grid grid-cols-12 gap-2" wire:key="split-{{ $i }}" data-test="split-row">
-                    @if (! $splitIsOutflow)
-                        <flux:select wire:model.live="splits.{{ $i }}.kind" class="col-span-2" data-test="split-kind">
-                            <flux:select.option value="category">{{ __('Category') }}</flux:select.option>
+                    <flux:select wire:model.live="splits.{{ $i }}.kind" class="col-span-2" data-test="split-kind">
+                        <flux:select.option value="category">{{ __('Category') }}</flux:select.option>
+                        @if ($splitIsOutflow)
+                            <flux:select.option value="bill">{{ __('Bill') }}</flux:select.option>
+                        @else
                             <flux:select.option value="invoice">{{ __('Invoice') }}</flux:select.option>
-                        </flux:select>
-                    @endif
-                    @if (! $splitIsOutflow && ($split['kind'] ?? 'category') === 'invoice')
+                        @endif
+                    </flux:select>
+                    @php($splitKind = $split['kind'] ?? 'category')
+                    @if (! $splitIsOutflow && $splitKind === 'invoice')
                         <flux:select wire:model.live="splits.{{ $i }}.invoice_id" class="col-span-5" data-test="split-invoice">
                             <flux:select.option value="">{{ __('— open invoice —') }}</flux:select.option>
                             @foreach ($this->splitInvoiceOptions as $option)
                                 <flux:select.option value="{{ $option['id'] }}">{{ $option['label'] }}</flux:select.option>
                             @endforeach
                         </flux:select>
+                    @elseif ($splitIsOutflow && $splitKind === 'bill')
+                        <flux:select wire:model.live="splits.{{ $i }}.bill_id" class="col-span-6" data-test="split-bill">
+                            <flux:select.option value="">{{ $this->splitBillOptions === [] ? __('— pick a vendor on the row first —') : __('— open bill —') }}</flux:select.option>
+                            @foreach ($this->splitBillOptions as $option)
+                                <flux:select.option value="{{ $option['id'] }}">{{ $option['label'] }}</flux:select.option>
+                            @endforeach
+                        </flux:select>
                     @else
-                        <x-account-combo model="splits.{{ $i }}.account_id" options="categories" :live="false" class="{{ $splitIsOutflow ? 'col-span-5' : 'col-span-5' }}" :placeholder="__('— category —')" data-test="split-account" />
-                    @endif
-                    @if ($splitIsOutflow)
-                        <flux:dropdown class="col-span-3">
-                            <flux:button variant="outline" icon:trailing="chevron-down" class="w-full justify-between font-normal" data-test="split-tax">
-                                <span class="truncate">{{ $this->purchaseTaxCodes->whereIn('id', $splitTaxIds)->map->label()->implode(', ') ?: __('No tax') }}</span>
-                            </flux:button>
-                            <flux:menu>
-                                <flux:menu.checkbox.group wire:model.live="splits.{{ $i }}.tax_code_ids">
-                                    @foreach ($this->purchaseTaxCodes as $code)
-                                        <flux:menu.checkbox value="{{ $code->id }}" :disabled="count($splitTaxIds) === 2 && ! in_array($code->id, $splitTaxIds)" keep-open>{{ $code->label() }}</flux:menu.checkbox>
-                                    @endforeach
-                                </flux:menu.checkbox.group>
-                            </flux:menu>
-                        </flux:dropdown>
+                        <x-account-combo model="splits.{{ $i }}.account_id" options="categories" :live="false" class="{{ $splitIsOutflow ? 'col-span-3' : 'col-span-5' }}" :placeholder="__('— category —')" data-test="split-account" />
+                        @if ($splitIsOutflow)
+                            <flux:dropdown class="col-span-3">
+                                <flux:button variant="outline" icon:trailing="chevron-down" class="w-full justify-between font-normal" data-test="split-tax">
+                                    <span class="truncate">{{ $this->purchaseTaxCodes->whereIn('id', $splitTaxIds)->map->label()->implode(', ') ?: __('No tax') }}</span>
+                                </flux:button>
+                                <flux:menu>
+                                    <flux:menu.checkbox.group wire:model.live="splits.{{ $i }}.tax_code_ids">
+                                        @foreach ($this->purchaseTaxCodes as $code)
+                                            <flux:menu.checkbox value="{{ $code->id }}" :disabled="count($splitTaxIds) === 2 && ! in_array($code->id, $splitTaxIds)" keep-open>{{ $code->label() }}</flux:menu.checkbox>
+                                        @endforeach
+                                    </flux:menu.checkbox.group>
+                                </flux:menu>
+                            </flux:dropdown>
+                        @endif
                     @endif
                     <x-amount-input model="splits.{{ $i }}.amount" class="{{ $splitIsOutflow ? 'col-span-3' : 'col-span-4' }}" placeholder="0.00" data-test="split-amount" />
                     <flux:button size="sm" variant="ghost" icon="trash" wire:click="removeSplit({{ $i }})" class="col-span-1" />
