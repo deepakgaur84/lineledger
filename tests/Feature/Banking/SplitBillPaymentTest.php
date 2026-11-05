@@ -3,6 +3,7 @@
 use App\Actions\Banking\SplitStatementLine;
 use App\Actions\Purchasing\SaveBill;
 use App\Enums\AccountSubtype;
+use App\Enums\AccountType;
 use App\Enums\CompanyRole;
 use App\Enums\StatementLineMatchStatus;
 use App\Exceptions\Posting\PostingValidationException;
@@ -27,7 +28,7 @@ beforeEach(function () {
     $this->bank = Account::query()->where('subtype', AccountSubtype::Bank->value)->where('is_active', true)->orderBy('code')->firstOrFail();
     $this->import = BankStatementImport::factory()->create(['account_id' => $this->bank->id]);
     $this->vendor = Contact::factory()->vendor()->create();
-    $this->expense = Account::query()->where('is_active', true)->selectableForItemAccount()->orderBy('code')->firstOrFail();
+    $this->expense = Account::query()->where('type', AccountType::Expense->value)->where('is_active', true)->orderBy('code')->firstOrFail();
 });
 
 afterEach(fn () => app()->forgetInstance('current_company'));

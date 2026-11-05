@@ -2,6 +2,7 @@
 
 use App\Actions\Banking\SplitStatementLine;
 use App\Enums\AccountSubtype;
+use App\Enums\AccountType;
 use App\Enums\CompanyRole;
 use App\Enums\InvoiceStatus;
 use App\Enums\StatementLineMatchStatus;
@@ -26,7 +27,7 @@ beforeEach(function () {
     $this->bank = Account::query()->where('subtype', AccountSubtype::Bank->value)->where('is_active', true)->orderBy('code')->firstOrFail();
     $this->import = BankStatementImport::factory()->create(['account_id' => $this->bank->id]);
     $this->customer = Contact::factory()->customer()->create();
-    $this->income = Account::query()->where('is_active', true)->selectableForItemAccount()->orderBy('code')->firstOrFail();
+    $this->income = Account::query()->where('type', AccountType::Income->value)->where('is_active', true)->orderBy('code')->firstOrFail();
 });
 
 afterEach(fn () => app()->forgetInstance('current_company'));
