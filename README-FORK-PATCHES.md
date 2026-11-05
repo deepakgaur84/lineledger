@@ -1213,13 +1213,15 @@ The "Suggested transfers" panel pairs an outflow on one bank / card account with
 
 ## 25. For Review: pay an invoice as one part of a split
 
-In the Split dialog on a deposit, each part can now be a **Category** or an **Invoice**. An invoice part lists the open invoices (the row's customer
+In the Split dialog on a deposit, each part can be a **Category** or an **Invoice**. An invoice part lists the open invoices (the row's customer
 when one is chosen, otherwise everyone's, in the bank account's currency); picking one pre-fills the amount with what is left, capped at the
 invoice's balance, and a part may pay an invoice in full or in part.
-On save, each invoice part becomes a posted customer receipt into Undeposited Funds applied to that invoice, and one deposit into the bank banks
-those receipts together with the category parts. The bank therefore gets a single leg for the whole amount and the feed line ties to it, as for any split.
-Refused with a message: an invoice part on money going out, on a foreign-currency bank account (its deposits cannot batch receipts), an invoice
-that is no longer open or is paid beyond its balance. Nothing is left behind on a refusal.
+On save, the invoice parts are settled by one customer receipt per customer, deposited straight to the bank account, and the category parts are
+booked as one deposit for the rest, so the split has **two bank legs** and no Undeposited Funds step. It is the receivables twin of §26: the
+statement line keeps the deposit as its main entry and the receipt's bank leg is recorded in `bank_statement_line_entries`. A split of only
+invoices is just the receipt(s).
+Refused with a message: an invoice part on money going out, an invoice that is no longer open, in another currency than the bank account, or
+paid beyond its balance. Nothing is left behind on a refusal.
 Files: `app/Actions/Banking/SplitStatementLine.php`, `app/Services/Banking/Import/OpenInvoiceMatcher.php` (`assertPartsPayable`),
 `resources/views/pages/banking/⚡review.blade.php`, `tests/Feature/Banking/SplitInvoicePaymentTest.php`.
 

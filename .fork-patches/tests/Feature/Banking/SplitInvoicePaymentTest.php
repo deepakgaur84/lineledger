@@ -12,7 +12,9 @@ use App\Models\BankStatementLine;
 use App\Models\Company;
 use App\Models\Contact;
 use App\Models\CustomerReceipt;
+use App\Models\JournalLine;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 
 beforeEach(function () {
     $this->user = User::factory()->create();
@@ -42,7 +44,7 @@ function splitLine(int $cents): BankStatementLine
     ]);
 }
 
-it('pays an invoice as one part of a split and books the rest to a category', function () {
+it('pays an invoice as one part of a split, matching the line to both bank legs', function () {
     $invoice = overpaymentInvoice($this->customer, 40000);
     $line = splitLine(115000);
 
@@ -52,11 +54,32 @@ it('pays an invoice as one part of a split and books the rest to a category', fu
     ]);
 
     $line->refresh();
+    $receipt = CustomerReceipt::query()->firstOrFail();
+    $extra = DB::table('bank_statement_line_entries')->where('bank_statement_line_id', $line->id)->first();
+    $debits = JournalLine::query()->where('account_id', $this->bank->id)->where('debit_cents', '>', 0)->pluck('debit_cents')->map(fn ($c) => (int) $c)->sort()->values()->all();
+
     expect($line->match_status)->toBe(StatementLineMatchStatus::Created)
-        ->and($line->matchedJournalLine->account_id)->toBe($this->bank->id)
-        ->and($line->matchedJournalLine->debit_cents)->toBe(115000)
+        ->and($line->matchedJournalLine->debit_cents)->toBe(75000)
+        ->and($debits)->toBe([40000, 75000])
         ->and(CustomerReceipt::query()->count())->toBe(1)
+        ->and($receipt->deposit_to_account_id)->toBe($this->bank->id)
+        ->and($extra->journal_entry_id)->toBe($receipt->journal_entry_id)
         ->and($invoice->fresh()->status)->toBe(InvoiceStatus::Paid);
+});
+
+it('records a split of only invoices as the receipt alone', function () {
+    $a = overpaymentInvoice($this->customer, 10000);
+    $b = overpaymentInvoice($this->customer, 20000);
+    $line = splitLine(30000);
+
+    app(SplitStatementLine::class)->handle($line, [
+        ['invoice_id' => $a->id, 'amount_cents' => 10000],
+        ['invoice_id' => $b->id, 'amount_cents' => 20000],
+    ]);
+
+    expect($line->fresh()->matchedJournalLine->debit_cents)->toBe(30000)
+        ->and(CustomerReceipt::query()->count())->toBe(1)
+        ->and(DB::table('bank_statement_line_entries')->count())->toBe(0);
 });
 
 it('allows a partial payment of an invoice inside a split', function () {
