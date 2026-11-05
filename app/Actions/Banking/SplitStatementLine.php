@@ -5,7 +5,6 @@ namespace App\Actions\Banking;
 use App\Actions\Purchasing\SaveBillPayment;
 use App\Actions\Purchasing\SaveExpense;
 use App\Actions\Sales\SaveReceipt;
-use App\Enums\AccountSubtype;
 use App\Enums\BillType;
 use App\Enums\StatementLineMatchStatus;
 use App\Exceptions\Posting\PostingValidationException;
@@ -109,37 +108,41 @@ final class SplitStatementLine
             $this->currencyGuard->assertCategoriesFit($account, $categoryIds);
 
             $billEntry = null;
+            $extraEntries = [];
             $date = CarbonImmutable::parse($line->txn_date)->toDateString();
             $memo = ($line->description !== null && $line->description !== '') ? $line->description : null;
             $payee = $payeeContactId !== null ? $this->resolvePayee($line, $payeeContactId) : null;
             $taxCodes = $this->resolveTaxCodes($line, $splits);
 
             if ((int) $line->amount_cents >= 0) {
-                $receiptLines = $this->receiptsForInvoiceParts($line, $account, $invoiceParts, $date, $memo);
+                $extraEntries = $this->receiveInvoiceParts($line, $account, $invoiceParts, $date, $memo);
+                $categorySplits = array_values(array_filter($splits, fn (array $s): bool => empty($s['invoice_id'])));
 
-                $deposit = $this->saveDeposit->handle([
-                    'bank_account_id' => $account->id,
-                    'deposit_no' => null,
-                    'deposit_date' => $date,
-                    'memo' => $memo,
-                    'lines' => array_merge(
-                        $receiptLines,
-                        array_map(fn (array $s): array => [
+                if ($categorySplits === []) {
+                    $entry = array_shift($extraEntries); // only invoices: the receipt(s) are the whole split
+                } else {
+                    $deposit = $this->saveDeposit->handle([
+                        'bank_account_id' => $account->id,
+                        'deposit_no' => null,
+                        'deposit_date' => $date,
+                        'memo' => $memo,
+                        'lines' => array_map(fn (array $s): array => [
                             'account_id' => $s['account_id'],
                             'contact_id' => $s['contact_id'] ?? $payee?->id,
                             'amount_cents' => (int) $s['amount_cents'],
                             'description' => $s['description'] ?? $memo,
-                        ], array_values(array_filter($splits, fn (array $s): bool => empty($s['invoice_id'])))),
-                    ),
-                ]);
-                $entry = $this->depositPoster->post($deposit);
+                        ], $categorySplits),
+                    ]);
+                    $entry = $this->depositPoster->post($deposit);
+                }
             } else {
                 $billEntry = $this->payBillParts($line, $account, $payee, $billParts, $date, $memo);
                 $categorySplits = array_values(array_filter($splits, fn (array $s): bool => empty($s['bill_id'])));
 
+                $extraEntries = $billEntry === null ? [] : [$billEntry];
+
                 if ($categorySplits === []) {
-                    $entry = $billEntry; // only bills: the bill payment is the whole split
-                    $billEntry = null;
+                    $entry = array_shift($extraEntries); // only bills: the bill payment is the whole split
                 } else {
                     $expense = $this->saveExpense->handle([
                         'payment_account_id' => $account->id,
@@ -169,14 +172,14 @@ final class SplitStatementLine
                 'match_status' => StatementLineMatchStatus::Created->value,
             ])->save();
 
-            // The bill payment has its own bank leg: the line is matched to it too.
-            if ($billEntry !== null) {
-                $billLeg = $billEntry->lines()->where('account_id', $account->id)->firstOrFail();
+            // Each bill payment / receipt has its own bank leg: the line is matched to it too.
+            foreach ($extraEntries as $extra) {
+                $extraLeg = $extra->lines()->where('account_id', $account->id)->firstOrFail();
 
                 DB::table('bank_statement_line_entries')->insert([
                     'bank_statement_line_id' => $line->id,
-                    'journal_entry_id' => $billEntry->id,
-                    'journal_line_id' => $billLeg->id,
+                    'journal_entry_id' => $extra->id,
+                    'journal_line_id' => $extraLeg->id,
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
@@ -185,20 +188,19 @@ final class SplitStatementLine
     }
 
     /**
-     * One posted customer receipt (into Undeposited Funds) per invoice part;
-     * returns the deposit lines that bank them.
+     * Fork: the invoice parts of an inflow split. One customer receipt per
+     * customer, deposited straight to the bank account, settles that customer's
+     * invoices for the parts' sum, as "Receive payment" does on a whole line.
+     * Each has its own bank leg, which the statement line is matched to
+     * alongside the deposit's.
      *
      * @param  array<int, array<string, mixed>>  $parts
-     * @return list<array{customer_receipt_id: int, amount_cents: int, description: ?string}>
+     * @return list<JournalEntry>
      */
-    private function receiptsForInvoiceParts(BankStatementLine $line, Account $bank, array $parts, string $date, ?string $memo): array
+    private function receiveInvoiceParts(BankStatementLine $line, Account $bank, array $parts, string $date, ?string $memo): array
     {
         if ($parts === []) {
             return [];
-        }
-
-        if ($bank->currency_code && ! $bank->company->isHomeCurrency((string) $bank->currency_code)) {
-            throw new PostingValidationException(__('Invoices can\'t be paid inside a split on a foreign-currency account — record the payment from the invoice instead.'));
         }
 
         $perInvoice = [];
@@ -210,42 +212,31 @@ final class SplitStatementLine
 
         $invoices = $this->invoices->assertPartsPayable($line, $perInvoice);
 
-        $undeposited = Account::withoutGlobalScopes()
-            ->where('company_id', $line->company_id)
-            ->where('subtype', AccountSubtype::UndepositedFunds->value)
-            ->where('is_system', true)
-            ->first();
+        $perCustomer = [];
 
-        if ($undeposited === null) {
-            throw new PostingValidationException(__('The Undeposited Funds account is missing — it is needed to record an invoice payment in a split.'));
+        foreach ($perInvoice as $invoiceId => $cents) {
+            $customerId = (int) $invoices->get($invoiceId)->contact_id;
+            $perCustomer[$customerId][] = ['invoice_id' => $invoiceId, 'amount_cents' => $cents];
         }
 
-        $lines = [];
+        $entries = [];
 
-        foreach ($parts as $part) {
-            $invoice = $invoices->get((int) $part['invoice_id']);
-            $cents = (int) $part['amount_cents'];
-
+        foreach ($perCustomer as $customerId => $applications) {
             $receipt = $this->saveReceipt->handle([
-                'contact_id' => (int) $invoice->contact_id,
+                'contact_id' => $customerId,
                 'currency_code' => $bank->currency_code ?: $bank->company->currency_code,
                 'receipt_date' => $date,
-                'deposit_to_account_id' => $undeposited->id,
+                'deposit_to_account_id' => $bank->id,
                 'reference' => null,
-                'amount_cents' => $cents,
+                'amount_cents' => array_sum(array_column($applications, 'amount_cents')),
                 'memo' => $memo,
-                'applications' => [['invoice_id' => (int) $invoice->id, 'amount_cents' => $cents]],
+                'applications' => $applications,
             ]);
-            $this->receiptPoster->post($receipt);
 
-            $lines[] = [
-                'customer_receipt_id' => (int) $receipt->id,
-                'amount_cents' => $cents,
-                'description' => $memo,
-            ];
+            $entries[] = $this->receiptPoster->post($receipt);
         }
 
-        return $lines;
+        return $entries;
     }
 
     /**
