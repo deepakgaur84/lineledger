@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
+      - next
   pull_request:
     branches:
       - main
+      - next
   # Fork: "Run workflow" checks every file with Pint; pushes check only changed PHP files.
   workflow_dispatch:
 
