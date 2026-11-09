@@ -1175,13 +1175,13 @@ The full Pest suite took ~40 minutes per push. Now:
   that matches the changed path (skipped for folders over 60 files). Changed test files always run. Anything global (composer files,
   `phpunit.xml`, `tests/Pest.php`, `tests/TestCase.php`, `routes/`, `bootstrap/`) or a selection over 400 files runs everything; a push that
   touches no code runs no tests.
-- **The full suite still runs**: nightly at 12:00 UTC (1am NZ), and from Actions → tests → Run workflow with "Run the whole test suite" ticked.
+- **The full suite still runs**: weekly on Sundays at 12:00 UTC (Monday 1am NZ), and from Actions → tests → Run workflow with "Run the whole test suite" ticked.
 - xdebug coverage was switched off (nothing used it); JS unit tests run only when JS/package files changed (or on a full run).
 - `.github/workflows/lint.yml`: Pint checks only the PHP files changed by the push (full Pint on "Run workflow" or when `pint.json` changes). PHPStan is
   unchanged (it analyses the whole project in about a minute and caught the baseline-count failures).
 - Files: `.github/workflows/tests.yml`, `.github/workflows/lint.yml`, `.github/scripts/select-tests.sh` (these three are committed straight to `.github/`,
   not under `.fork-patches/`).
-- Trade-off: a change can break a test the script did not pick; the nightly full run is the safety net.
+- Trade-off: a change can break a test the script did not pick; the weekly full run is the safety net.
 
 ## 23. For Review: pay invoices from a bank-feed deposit, and Equity categories
 

@@ -20,9 +20,9 @@ on:
         type: boolean
         default: false
   # Fork: the whole suite is slow, so pushes run only the tests that matter (see
-  # .github/scripts/select-tests.sh) and the full suite runs here, nightly (1am NZ).
+  # .github/scripts/select-tests.sh) and the full suite runs here weekly (Sunday 12:00 UTC, Monday 1am NZ).
   schedule:
-    - cron: '0 12 * * *'
+    - cron: '0 12 * * 0'
 
 # Least privilege: the test job only reads the tree.
 permissions:
