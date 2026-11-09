@@ -2,6 +2,7 @@
 
 namespace App\Services\BulkImport\Importers;
 
+use App\Enums\BillStatus;
 use App\Actions\Purchasing\SaveBillPayment;
 use App\Models\Account;
 use App\Models\Bill;
@@ -138,7 +139,7 @@ class BillPaymentImporter implements GroupedImporterDefinition
                 ->where('company_id', $company->id)
                 ->where('contact_id', $vendor->id)
                 ->where('bill_no', $row['bill_no'])
-                ->whereIn('status', ['posted', 'partial'])
+                ->whereIn('status', [BillStatus::Posted->value, BillStatus::Partial->value])
                 ->first();
 
             if ($bill === null) {

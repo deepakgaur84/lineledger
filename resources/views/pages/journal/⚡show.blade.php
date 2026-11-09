@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\AssetStatus;
 use App\Actions\Accounting\DeleteDraftJournalEntry;
 use App\Actions\Accounting\ReverseJournalEntry;
 use App\Enums\AccountSubtype;
@@ -120,7 +121,7 @@ new #[Title('Journal entry')] class extends Component {
 
         $candidates = Asset::withoutGlobalScopes()
             ->where('company_id', $this->company->id)
-            ->where('status', 'in-service')
+            ->where('status', AssetStatus::InService->value)
             ->where(function ($q) use ($accountIds) {
                 $q->whereIn('asset_account_id', $accountIds)
                     ->orWhereIn('accumulated_depreciation_account_id', $accountIds);

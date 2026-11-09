@@ -69,7 +69,7 @@ it('limits rows to a date range, either end optional', function () {
 });
 
 it('combines text and dates, and clears back to every row', function () {
-    $c = ($this->ids)()->set('search', 'work')->set('dateFrom', '2026-05-01');
+    $c = ($this->ids)()->set('search', 'invoice')->set('dateFrom', '2026-05-01');
     expect(($this->bankLineCents)($c))->toBe([22222]);
 
     $c->call('clearFilters');
