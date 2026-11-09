@@ -116,7 +116,8 @@ enum Section: string
             'insights' => [],
             'lists' => [self::Lists],
             'documents' => [self::Documents],
-            'settings', 'migration' => [self::Settings],
+            // Fork: the standalone Bulk Import tool is Settings-gated like the QuickBooks migration it sits beside.
+            'settings', 'migration', 'tools' => [self::Settings],
             default => [],
         };
     }
