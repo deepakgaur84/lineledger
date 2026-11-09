@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\AssetStatus;
 use App\Concerns\EmailsReport;
 use App\Concerns\HasCustomReportHeader;
 use App\Concerns\HasReportDateRange;
@@ -149,7 +150,7 @@ new #[Title('Depreciation Schedule')] class extends Component {
 
         $assets = Asset::withoutGlobalScopes()
             ->where('company_id', $this->company->id)
-            ->when(! $this->includeDisposed, fn ($q) => $q->where('status', 'in-service'))
+            ->when(! $this->includeDisposed, fn ($q) => $q->where('status', AssetStatus::InService->value))
             ->with('category')
             ->get();
 
