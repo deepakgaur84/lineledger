@@ -1331,3 +1331,10 @@ Files: `composer.lock`.
 The daily insight is stored once a day, so clearing For Review did not change the card until the next morning's job. For this one insight the card
 now checks the live count: it disappears once fewer than 10 lines wait and shows the current numbers if the count moved. Nothing is saved.
 Files: `resources/views/components/⚡daily-insight.blade.php`.
+
+### F10. Bulk Import was reachable by every member, whatever their sections
+
+The Tools → Bulk Import page had no permission section, so a member limited to a few sections could still open it and import records across the books.
+Upstream now fails its tests on any company route without a section, so Bulk Import is gated by **Settings**, like the QuickBooks migration beside it
+(`tools.*` routes map to Settings; the sidebar group shows only with Settings access). Members without Settings no longer see or reach it.
+Files: `app/Enums/Section.php`, `app/Support/Navigation/SidebarNavCatalog.php`, `tests/Feature/BulkImport/BulkImportSectionGateTest.php`.
