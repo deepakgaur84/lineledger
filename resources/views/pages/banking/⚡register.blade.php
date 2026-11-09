@@ -8,6 +8,7 @@ use App\Models\JournalEntry;
 use App\Models\JournalLine;
 use App\Services\Banking\AccountCurrencyAmounts;
 use App\Support\Banking\LastBankAccount;
+use App\Support\Money;
 use App\Support\Preferences\UserPreferences;
 use Illuminate\Support\Facades\DB;
 use Livewire\Attributes\Computed;
@@ -40,6 +41,17 @@ new #[Title('Bank register')] class extends Component {
     public string $sortDir = 'desc';
 
     public ?int $account_id = null;
+
+    /** Fork: free-text search over description, entry number and amount. */
+    #[Url(as: 'q')]
+    public string $search = '';
+
+    /** Fork: inclusive date range (Y-m-d). */
+    #[Url(as: 'from')]
+    public string $dateFrom = '';
+
+    #[Url(as: 'to')]
+    public string $dateTo = '';
 
     public bool $showCleared = true;
 
@@ -94,6 +106,80 @@ new #[Title('Bank register')] class extends Component {
         }
 
         $this->resetPage();
+    }
+
+    public function updatedSearch(): void
+    {
+        $this->resetPage();
+    }
+
+    public function updatedDateFrom(): void
+    {
+        $this->resetPage();
+    }
+
+    public function updatedDateTo(): void
+    {
+        $this->resetPage();
+    }
+
+    public function clearFilters(): void
+    {
+        $this->reset('search', 'dateFrom', 'dateTo');
+        $this->resetPage();
+    }
+
+    /**
+     * Fork: narrow the rows to the search text and date range. Only the listed
+     * rows are filtered; balances and the running balance still count every line.
+     * The text matches the line's or entry's description, the entry number, or — when it reads as an amount — either side's amount.
+     */
+    protected function applyFilters($query): void
+    {
+        $from = $this->validDate($this->dateFrom);
+        $to = $this->validDate($this->dateTo);
+
+        if ($from !== null) {
+            $query->where('journal_lines.entry_date', '>=', $from);
+        }
+
+        if ($to !== null) {
+            $query->where('journal_lines.entry_date', '<=', $to);
+        }
+
+        $term = trim($this->search);
+
+        if ($term === '') {
+            return;
+        }
+
+        $like = '%'.addcslashes($term, '\\%_').'%';
+        $money = Money::tryFromString($term);
+
+        $query->where(function ($q) use ($like, $money) {
+            $q->where('journal_lines.memo', 'like', $like)
+                ->orWhereHas('journalEntry', fn ($e) => $e
+                    ->where('memo', 'like', $like)
+                    ->orWhere('entry_no', 'like', $like));
+
+            if ($money !== null && $money->cents !== 0) {
+                $cents = abs($money->cents);
+
+                if ($this->amounts?->foreign) {
+                    [$signed, $bindings] = $this->amounts->signedSql();
+                    $q->orWhereRaw("ABS({$signed}) = ?", [...$bindings, $cents]);
+                } else {
+                    $q->orWhere('journal_lines.debit_cents', $cents)->orWhere('journal_lines.credit_cents', $cents);
+                }
+            }
+        });
+    }
+
+    protected function validDate(string $value): ?string
+    {
+        $value = trim($value);
+
+        return preg_match('/^\d{4}-\d{2}-\d{2}$/', $value) === 1 && strtotime($value) !== false ? $value : null;
     }
 
     public function updatedShowCleared(): void
@@ -155,6 +241,7 @@ new #[Title('Bank register')] class extends Component {
             // voided cheque and its reversal never are: neither reaches the bank.
             ->when(! $this->showCleared, fn ($q) => $q->whereNull('cleared_at')->withoutUnsettledVoids())
             ->when($this->amounts, fn ($q, AccountCurrencyAmounts $amounts) => $amounts->withAmounts($q))
+            ->tap(fn ($q) => $this->applyFilters($q))
             ->tap(fn ($q) => $this->applySort($q))
             ->paginate(self::PER_PAGE);
     }
@@ -435,7 +522,13 @@ new #[Title('Bank register')] class extends Component {
         </div>
     </div>
 
-    <div class="mb-4 flex items-center gap-4">
+    <div class="mb-4 flex flex-wrap items-end gap-3">
+        <flux:input wire:model.live.debounce.400ms="search" type="search" icon="magnifying-glass" :placeholder="__('Search description, entry #, amount…')" class="min-w-[280px] flex-1" data-test="register-search" />
+        <flux:input wire:model.live="dateFrom" type="date" :label="__('From')" data-test="register-date-from" />
+        <flux:input wire:model.live="dateTo" type="date" :label="__('To')" data-test="register-date-to" />
+        @if ($search !== '' || $dateFrom !== '' || $dateTo !== '')
+            <flux:button variant="ghost" wire:click="clearFilters" data-test="register-clear-filters">{{ __('Clear') }}</flux:button>
+        @endif
         <flux:switch wire:model.live="showCleared" :label="__('Show cleared')" />
     </div>
 

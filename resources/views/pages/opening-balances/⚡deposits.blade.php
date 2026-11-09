@@ -45,7 +45,7 @@ new #[Title('Deposits in transit')] class extends Component {
 
     public function mount(Company $company): void
     {
-        abort_unless(auth()->user()?->ownsCompany($company), 403);
+        abort_unless(auth()->user()?->canManageOpeningBalances($company), 403);
 
         $this->company = $company;
         $this->resolveObState();

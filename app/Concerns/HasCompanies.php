@@ -113,6 +113,14 @@ trait HasCompanies
         return $this->companyRole($company) === CompanyRole::Owner;
     }
 
+    /**
+     * Fork: the opening-balances workspace is open to owners and admins.
+     */
+    public function canManageOpeningBalances(Company $company): bool
+    {
+        return $this->companyRole($company)?->isAtLeast(CompanyRole::Admin) === true;
+    }
+
     public function companyMembership(Company $company): ?Membership
     {
         return $this->companyMemberships()

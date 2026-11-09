@@ -483,28 +483,28 @@ Route::prefix('{company}')
         // wizard above. See app/Services/BulkImport/.
         Route::livewire('bulk-import', 'pages::tools.bulk-import')->name('tools.bulk-import');
 
-        // Opening balances workspace (owner only): the continuously-editable
+        // Opening balances workspace (owners and admins; fork): the continuously-editable
         // post-setup home for the draft trial balance and its sub-ledger detail.
         Route::livewire('opening-balances', 'pages::opening-balances.index')
-            ->middleware(EnsureCompanyMembership::class.':owner')
+            ->middleware(EnsureCompanyMembership::class.':admin')
             ->name('opening-balances.index');
         Route::livewire('opening-balances/trial-balance', 'pages::opening-balances.trial-balance')
-            ->middleware(EnsureCompanyMembership::class.':owner')
+            ->middleware(EnsureCompanyMembership::class.':admin')
             ->name('opening-balances.trial-balance');
         Route::livewire('opening-balances/receivables', 'pages::opening-balances.receivables')
-            ->middleware(EnsureCompanyMembership::class.':owner')
+            ->middleware(EnsureCompanyMembership::class.':admin')
             ->name('opening-balances.receivables');
         Route::livewire('opening-balances/payables', 'pages::opening-balances.payables')
-            ->middleware(EnsureCompanyMembership::class.':owner')
+            ->middleware(EnsureCompanyMembership::class.':admin')
             ->name('opening-balances.payables');
         Route::livewire('opening-balances/cheques', 'pages::opening-balances.cheques')
-            ->middleware(EnsureCompanyMembership::class.':owner')
+            ->middleware(EnsureCompanyMembership::class.':admin')
             ->name('opening-balances.cheques');
         Route::livewire('opening-balances/deposits', 'pages::opening-balances.deposits')
-            ->middleware(EnsureCompanyMembership::class.':owner')
+            ->middleware(EnsureCompanyMembership::class.':admin')
             ->name('opening-balances.deposits');
         Route::get('opening-balances/templates/{step}', OpeningBalanceTemplateController::class)
-            ->middleware(EnsureCompanyMembership::class.':owner')
+            ->middleware(EnsureCompanyMembership::class.':admin')
             ->where('step', '[a-z_]+')
             ->name('opening-balances.template');
 

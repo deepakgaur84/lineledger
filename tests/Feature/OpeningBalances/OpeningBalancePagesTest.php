@@ -43,16 +43,18 @@ $routes = [
     'opening-balances.deposits',
 ];
 
-it('lets the owner reach every workspace page', function () use ($routes) {
-    $company = ($this->companyAs)(CompanyRole::Owner);
+it('lets owners and admins reach every workspace page', function () use ($routes) {
+    foreach ([CompanyRole::Owner, CompanyRole::Admin] as $role) {
+        $company = ($this->companyAs)($role);
 
-    foreach ($routes as $route) {
-        $this->get(route($route, ['company' => $company->slug]))->assertOk();
+        foreach ($routes as $route) {
+            $this->get(route($route, ['company' => $company->slug]))->assertOk();
+        }
     }
 });
 
-it('refuses every non-owner role on every workspace page', function () use ($routes) {
-    foreach ([CompanyRole::Admin, CompanyRole::Accountant, CompanyRole::Custom] as $role) {
+it('refuses every role below admin on every workspace page', function () use ($routes) {
+    foreach ([CompanyRole::Accountant, CompanyRole::Custom] as $role) {
         $company = ($this->companyAs)($role);
 
         foreach ($routes as $route) {
@@ -304,10 +306,12 @@ it('streams a CSV template for every workspace step', function () {
         ->assertNotFound();
 });
 
-it('shows the sidebar item to owners only', function () {
-    $owned = ($this->companyAs)(CompanyRole::Owner);
-    $keys = array_keys(SidebarNavCatalog::flattenKeys($owned, $this->user));
-    expect($keys)->toContain('accounting.opening_balances');
+it('shows the sidebar item to owners and admins only', function () {
+    foreach ([CompanyRole::Owner, CompanyRole::Admin] as $role) {
+        $company = ($this->companyAs)($role);
+        $keys = array_keys(SidebarNavCatalog::flattenKeys($company, $this->user));
+        expect($keys)->toContain('accounting.opening_balances');
+    }
 
     $accountantCompany = ($this->companyAs)(CompanyRole::Accountant);
     $keys = array_keys(SidebarNavCatalog::flattenKeys($accountantCompany, $this->user));
