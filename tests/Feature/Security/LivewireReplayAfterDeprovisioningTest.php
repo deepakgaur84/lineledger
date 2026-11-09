@@ -151,11 +151,11 @@ it('refuses a snapshot whose page URL now names a different company', function (
     expect($bank->fresh()->is_active)->toBe($wasActive);
 });
 
-it('refuses an owner downgraded to admin who replays an owner-only page', function () {
+it('refuses an owner downgraded below admin who replays an owners-and-admins page', function () {
     $url = route('opening-balances.index', ['company' => $this->company->slug]);
     $snapshot = livewireReplayCapture($this->owner, $url, 'pages::opening-balances.index');
 
-    $this->company->memberships()->where('user_id', $this->owner->id)->update(['role' => CompanyRole::Admin->value]);
+    $this->company->memberships()->where('user_id', $this->owner->id)->update(['role' => CompanyRole::Accountant->value]);
     app(AccessRevoker::class)->revokeForDowngrade($this->owner, $this->company);
     $this->actingAs($this->owner->fresh());
 
