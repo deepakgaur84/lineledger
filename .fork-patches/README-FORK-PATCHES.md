@@ -1238,6 +1238,22 @@ Files: `app/Actions/Banking/SplitStatementLine.php`, `app/Services/Banking/Impor
 `resources/views/pages/banking/⚡review.blade.php`, `resources/views/pages/banking/⚡register.blade.php`,
 `database/migrations/2026_11_05_000001_create_bank_statement_line_entries_table.php`, `tests/Feature/Banking/SplitBillPaymentTest.php`.
 
+## 27. Opening balances for admins
+
+The Opening balances workspace (sidebar item, all its pages, the template download and the "opening balances" shortcuts on Customers and Chart of
+Accounts) was limited to the company's Owner role. It is now open to **Owner and Admin**; Accountant and Custom roles still get a 403 and no sidebar
+item. A new `User::canManageOpeningBalances()` (in `HasCompanies`) is the one check behind all of it.
+Files: `app/Concerns/HasCompanies.php`, `routes/web.php`, `app/Support/Navigation/SidebarNavCatalog.php`, the `opening-balances/*` pages,
+`customers/⚡index`, `accounts/⚡index`, `tests/Feature/OpeningBalances/OpeningBalancePagesTest.php`.
+
+## 28. Bank register: search and date range
+
+The Bank register has a search box and From/To date fields above the table. The search matches the line's or entry's description, the entry number, or
+an amount (either the payment or deposit side, typed the way you read it: `1,234.50`). The date range is inclusive and either end may be left empty.
+They combine; "Clear" resets them. Only the listed rows are filtered: the ledger and cleared balances and each row's running balance still count every
+line. Filters ride in the URL (`q`, `from`, `to`) so a filtered view can be bookmarked.
+Files: `resources/views/pages/banking/⚡register.blade.php`, `tests/Feature/Banking/BankRegisterSearchTest.php`.
+
 ## Fixes
 
 Bugs in **upstream's own code** that this fork fixed. Fixes to the fork's own features are not listed here (they are part of the feature's section).
