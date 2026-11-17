@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `./deploy.sh --tag next`, and Forge by deploying the `next` branch. Stable
   installs never see a release candidate. README → Release channels explains
   both channels, and the new `RELEASING.md` is the maintainer's runbook.
+- **A GIFI file for tax software.** The GIFI Statement's Download menu now
+  writes the standard GIFI file (.gfi, the "fichier IGRF" in French) that
+  DT Max, Taxprep, ProFile, TaxCycle and Pro Tax import Schedule 100 and
+  Schedule 125 from. It is refused, with the reason, while an account is under
+  Unassigned accounts, the balance sheet is out of balance, or the period is
+  not a fiscal year. Notes to the financial statements are not included.
 
 ### Changed
 
@@ -37,7 +43,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   account, now gets a 422** and needs to use one of those. A document already saved
   on another account can keep it when updated.
 
+- Dependency updates: `stripe/stripe-php` 23.0 (the Stripe API version moves
+  to 2026-10-28.endive; LineLedger already passes the connected account on every
+  call, which 23.0 now requires), `laravel/fortify` 1.42, `laravel/mcp` 1.2,
+  `laravel/tinker` 3.1, `resend/resend-php` 1.18, `openspout/openspout` 5.14,
+  `laravel/nightwatch` 1.30.6, Larastan 3.15, `laravel/boost` 2.10.4,
+  `@laravel/passkeys` 0.4.1, Vite 8.3.8, Tailwind CSS 4.3.5,
+  `laravel-vite-plugin` 3.2.1, Chart.js 4.6.1, `concurrently` 10.0.7,
+  Autoprefixer 10.6.2, `@rollup/rollup-linux-x64-gnu` 4.68.2,
+  `docker/login-action` 4.8.0 and the CodeQL SARIF upload action 4.39.3.
+  ([#182](https://github.com/lineledger/lineledger/pull/182)–[#227](https://github.com/lineledger/lineledger/pull/227))
+
 ### Fixed
+
+- **GIFI codes match the CRA's.** Checked against the CRA's guide RC4088, the
+  GIFI catalog put the wrong name on 18 codes: "8620 Insurance" is Employee
+  benefits to the CRA, "8690 Interest and bank charges" is Insurance, and six
+  were CRA totals such as 2589 Total long-term assets and 9367 Total operating
+  expenses. Every name is now the CRA's, in English and French, and totals are
+  no longer offered. An upgrade moves each account to the code the CRA uses
+  for the name it showed, so an account on "8620 Insurance" lands on 8690
+  Insurance, and restoring an older backup does the same. Bank accounts now
+  default to 1000 Cash and deposits, other assets to 2420, other liabilities to
+  3320, and retained earnings to 3600. Anyone who keyed an earlier GIFI
+  Statement into a T2 return should check it against the corrected one.
 
 - **Inbox review's Paid from matches the Expense form (#198).** It missed accounts
   switched on with Use to pay expenses, such as a Shareholder Loan, and offered
@@ -79,6 +108,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on an invoice, or a deactivated code. A document now only takes a code its own
   picker offers, and a second code moves up if the first doesn't apply. Invoices from
   time entries do the same.
+
+### Security
+
+- **`laravel/framework` updated to 13.42 and `phpseclib/phpseclib` to 4.0.3.**
+  Only `composer.lock` changed. The advisories they fix:
+  - `laravel/framework`: a `Concurrency` task that prints user-controlled text
+    could forge the framework's result message (CVE-2026-128083,
+    [GHSA-63hm-g96r-2m2q](https://github.com/advisories/GHSA-63hm-g96r-2m2q)).
+    LineLedger does not call `Concurrency`, so it was not exposed.
+  - `phpseclib/phpseclib`, which Passport uses for its OAuth keys: no limit on
+    the PBKDF iteration count when parsing an encrypted key, PFX or CMS file
+    ([GHSA-w3p9-g4p2-h3rr](https://github.com/phpseclib/phpseclib/security/advisories/GHSA-w3p9-g4p2-h3rr)).
 
 ## [1.4.3] - 2026-11-05
 
