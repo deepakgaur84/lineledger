@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.4] - 2026-11-17
+
+**Highlights.** The GIFI Statement now uses the CRA's codes and names, and
+downloads as a GIFI file (.gfi) that tax software imports. QuickBooks
+sub-accounts keep their parents on import, payment and tax pickers accept only
+what they offer, and release candidates get a next channel of their own.
+`laravel/framework` and `phpseclib` are updated for two advisories. One
+migration, which moves accounts off mislabelled GIFI codes; no backfills and no
+configuration changes. An API integration that records a receipt or bill
+payment on an account other than a bank, card or Undeposited Funds now gets a
+422. See `UPGRADING.md`.
+
 ### Added
 
 - **A next channel for release candidates.** Release candidates such as
@@ -35,14 +47,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Current assets can use the Use to pay expenses switch.** It is off by
   default. A petty-cash account kept as a current asset now works under Paid from
   on both the Expense form and inbox review, once switched on.
-
 - **The API holds receipts and bill payments to the accounts it documents.**
   `deposit_to_account_id` must be a bank or Undeposited Funds account, and
   `paid_from_account_id` a bank or credit card. Any account in the organization used
   to be accepted. **An integration that posts to another account, such as a clearing
   account, now gets a 422** and needs to use one of those. A document already saved
   on another account can keep it when updated.
-
 - Dependency updates: `stripe/stripe-php` 23.0 (the Stripe API version moves
   to 2026-10-28.endive; LineLedger already passes the connected account on every
   call, which 23.0 now requires), `laravel/fortify` 1.42, `laravel/mcp` 1.2,
@@ -56,6 +66,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **QuickBooks sub-accounts keep their parents (#229).** Importing a QuickBooks
+  Account Listing into the Chart of Accounts placed every sub-account, such as
+  Pass Through Expense:Hosting, at the top level. If an account had no number
+  and shared its name with another account, the import stopped with a
+  duplicate-code error. Sub-accounts now go under their parent, and the preview
+  shows each account's parent. An account with no number gets a code from its
+  name, ending in -2, -3 and so on when another account already has that code.
+  Importing a newer listing skips the accounts an earlier import made, matching
+  them by name and parent, and never merges an account into a seeded one that
+  shares its name. An import now stops with an error when a row's parent is
+  missing, is listed below it, or is a different account type. The template's
+  parent_code used to be dropped silently in those cases. The transaction
+  history import keeps two accounts with the same name apart by their parents.
 - **GIFI codes match the CRA's.** Checked against the CRA's guide RC4088, the
   GIFI catalog put the wrong name on 18 codes: "8620 Insurance" is Employee
   benefits to the CRA, "8690 Interest and bank charges" is Insurance, and six
@@ -67,7 +90,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default to 1000 Cash and deposits, other assets to 2420, other liabilities to
   3320, and retained earnings to 3600. Anyone who keyed an earlier GIFI
   Statement into a T2 return should check it against the corrected one.
-
 - **Inbox review's Paid from matches the Expense form (#198).** It missed accounts
   switched on with Use to pay expenses, such as a Shareholder Loan, and offered
   every current asset, including Prepaid Expenses. **If you pay from a petty-cash
@@ -1695,7 +1717,8 @@ general ledger as the single source of truth.
   set them only if you're moving to object storage, then run
   `php artisan storage:check`. See the README's **Object storage** section.
 
-[Unreleased]: https://github.com/lineledger/lineledger/compare/v1.4.3...HEAD
+[Unreleased]: https://github.com/lineledger/lineledger/compare/v1.4.4...HEAD
+[1.4.4]: https://github.com/lineledger/lineledger/compare/v1.4.3...v1.4.4
 [1.4.3]: https://github.com/lineledger/lineledger/compare/v1.4.2...v1.4.3
 [1.4.2]: https://github.com/lineledger/lineledger/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/lineledger/lineledger/compare/v1.4.0...v1.4.1
